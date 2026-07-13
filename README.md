@@ -49,5 +49,8 @@ The first implementation is expected to use:
 - **Review:** assess the result by acceptance criterion, logical change, file,
   raw diff, risk, and test evidence.
 
-More detail is captured in [docs/PRODUCT_BRIEF.md](docs/PRODUCT_BRIEF.md) and
-[docs/GUIDED_BUILD.md](docs/GUIDED_BUILD.md).
+More detail is captured in:
+
+- [docs/PRODUCT_BRIEF.md](docs/PRODUCT_BRIEF.md)
+- [docs/GUIDED_BUILD.md](docs/GUIDED_BUILD.md)
+- [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md)
