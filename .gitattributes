@@ -1,0 +1,2 @@
+# Unified diffs require a one-character context prefix on otherwise blank lines.
+*.patch whitespace=-trailing-space

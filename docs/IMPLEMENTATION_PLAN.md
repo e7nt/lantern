@@ -2,10 +2,11 @@
 
 ## Document status
 
-- **Status:** Proposed
+- **Status:** Active; frontend decision accepted in ADR 001
 - **Target:** Open-source-quality `v0.1`
 - **Primary user:** One experienced developer onboarding into unfamiliar code
-- **Initial frontend:** VSCodium extension
+- **Initial frontend:** Pinned Helix, a narrow Lazygit rail, and a full-width
+  terminal agent pane
 - **Core runtime:** Local editor-independent daemon
 - **Reference ecosystems:** TypeScript and Rust
 - **Estimated solo effort:** 28–40 full-time engineer-weeks
@@ -13,6 +14,17 @@
 This plan turns the product brief into implementable work. It is intentionally
 bounded: the first release proves that understanding-first agent interaction is
 useful before Lantern attempts to become a general-purpose editor platform.
+
+All implementation and roadmap decisions must pass the product decision test in
+[PRODUCT_CONSTITUTION.md](PRODUCT_CONSTITUTION.md).
+Every deliverable must also pass the shared Definition of Done in
+[ENGINEERING_STANDARD.md](ENGINEERING_STANDARD.md); phase exit criteria add to
+that standard rather than replacing it.
+
+Permanent protocol and interaction work must also follow the
+[reference-project adoption discipline](REFERENCE_REPOSITORIES.md): inspect the
+relevant upstream behavior, record what Lantern adopts and rejects, and attach
+the behavior to a Lantern-owned test or evaluation.
 
 ## Release definition
 
@@ -35,23 +47,31 @@ local by default.
 ## Planning assumptions
 
 - One experienced engineer is working full-time with AI-assisted development.
-- VSCodium compatibility is validated against a pinned Code OSS API baseline.
-- macOS and Linux are release-blocking; Windows is best effort until `v0.2`.
+- Helix and Lazygit revisions and every Lantern patch are pinned and auditable.
+- Linux is release-blocking for `v0.1`; macOS is validated before the public
+  release gate. Windows is deferred while the tmux composition is primary.
 - TypeScript and Rust fixtures receive full end-to-end coverage.
 - Other languages may work through editor language features but are not claimed
   as supported in `v0.1`.
-- A user supplies their own model credentials.
+- A user explicitly authenticates a supported model driver. The Phase 0 Pi RPC
+  experiment may use eligible ChatGPT subscription access; generic API billing
+  and subscription access are never presented as interchangeable.
 - No open-source license is selected until the owner makes that legal decision.
 - The repository stays private until the security model and contributor setup
   pass the public-release gate.
+- Lantern's core product remains open source and does not depend on a paid
+  Lantern service.
+- Implementations prefer a single explicit primary path and surface failures
+  rather than accumulating silent fallback behavior.
 
 ## Architecture decisions
 
 ### Separate the frontend and runtime
 
-The VSCodium extension is a thin presentation adapter. It owns editor-native
-operations such as selections, navigation, decorations, hovers, diffs, commands,
-and plan views. It does not own agent state or security policy.
+The Lantern terminal client is the editor-facing presentation and integration layer.
+It owns editor-native operations such as selections, navigation, decorations,
+hovers, diffs, commands, and plan views. It does not own agent state or security
+policy. Lantern-specific Helix changes remain narrow, pinned, and documented.
 
 The daemon owns:
 
@@ -64,14 +84,14 @@ The daemon owns:
 - Durable storage and migrations.
 - Audit events and redaction.
 
-This boundary makes a future Helix or terminal client possible without moving
-security-critical behavior into each editor integration.
+This boundary keeps the Helix client replaceable without moving security-critical
+behavior into the editor integration.
 
 ### Use a small, typed protocol
 
-The extension starts the daemon and communicates over JSON-RPC 2.0 on standard
-input/output for `v0.1`. This avoids ports, discovery, and persistent background
-processes while preserving process isolation.
+The Lantern workbench starts the daemon and communicates over JSON-RPC 2.0 on
+standard input/output for `v0.1`. This avoids ports, discovery, and persistent
+background processes while preserving process isolation.
 
 Protocol requirements:
 
@@ -98,9 +118,10 @@ Lantern uses deterministic evidence before semantic retrieval:
 6. Git history and diff context.
 7. Embedding-based retrieval only after measured need.
 
-The initial VSCodium adapter normalizes editor language features into the
-editor-neutral protocol. The daemon also provides search and syntax fallbacks so
-core workflows are testable without launching VSCodium.
+The Helix adapter normalizes editor language features into the editor-neutral
+protocol. Quick Ask fails explicitly when required LSP evidence is unavailable;
+literal search remains a separately invoked diagnostic operation, never a
+substitute for symbol intelligence.
 
 ### Keep the agent harness replaceable
 
@@ -114,9 +135,11 @@ The first driver is a minimal single-agent loop with:
 - Tool-result size limits.
 - Deterministic mock models for tests.
 
-Pi inspires the small harness and extension model, but Lantern core does not
-depend on Pi session formats or prompts. A Pi RPC adapter can be evaluated as an
-optional driver after the first vertical slice.
+Pi inspires the small harness, but Lantern core does not depend on Pi session
+formats, extensions, tools, or prompts. Phase 0 evaluates a pinned Pi RPC
+adapter for the selection-only `/agent` path before committing to a permanent
+driver. Driver selection is explicit; failure never triggers an automatic
+provider fallback.
 
 ### Store local state in SQLite
 
@@ -140,8 +163,9 @@ Raw model reasoning is not treated as a durable product artifact.
 
 ```text
 lantern/
+├── frontend/
+│   └── helix/                   # pinned patches, terminal config, integration
 ├── apps/
-│   ├── vscode-extension/        # VSCodium/Code OSS frontend
 │   └── daemon/                  # Rust executable
 ├── crates/
 │   ├── agent-runtime/           # agent loop and provider abstractions
@@ -152,9 +176,6 @@ lantern/
 │   ├── policy-engine/           # capabilities and permission enforcement
 │   ├── protocol/                # Rust protocol types
 │   └── storage/                 # SQLite schema and migrations
-├── packages/
-│   ├── protocol/                # generated TypeScript protocol types
-│   └── plan-schema/             # portable plan validation
 ├── fixtures/
 │   ├── rust-service/
 │   └── typescript-service/
@@ -171,7 +192,7 @@ should not be created before their first real module exists.
 | Phase | Scope | Effort | Depends on |
 | --- | --- | ---: | --- |
 | 0 | Product and architecture spikes | 2 weeks | — |
-| 1 | Extension/daemon foundation | 3 weeks | Phase 0 |
+| 1 | Terminal client/daemon foundation | 3 weeks | Phase 0 |
 | 2 | Quick Ask vertical slice | 3 weeks | Phase 1 |
 | 3 | Repository understanding | 5–7 weeks | Phase 2 |
 | 4 | Guided learning | 4–6 weeks | Phase 3 |
@@ -196,35 +217,48 @@ Remove the highest-risk assumptions before building permanent infrastructure.
   latency.
 - `P0-02` Select two non-trivial public fixture repositories: one TypeScript and
   one Rust project.
-- `P0-03` Prototype extension-to-daemon JSON-RPC with cancellation and streamed
-  events.
+- `P0-03` Prototype workbench-to-daemon JSON-RPC with cancellation and
+  streamed events.
 - `P0-04` Compare a minimal native agent loop with a Pi RPC adapter on one
   read-only repository question.
 - `P0-05` Prototype editor hover, decoration, navigation, and selection capture.
 - `P0-06` Prototype one Markdown-backed plan with structured task metadata.
 - `P0-07` Write the initial threat model and identify all trust boundaries.
 - `P0-08` Record architecture decisions as short ADRs.
+- `P0-09` Prototype interruptible Live Collaboration using a realtime voice
+  model, one read-only editor-context tool, visible transcript truncation, and
+  the existing policy boundary.
 
 ### Exit criteria
 
 - A selection can cross the process boundary and stream a mock response back.
 - Cancelling the editor request terminates daemon work.
+- A real Helix language-server session supplies bounded definition/reference
+  evidence to a read-only answer with no evidence fallback.
 - The plan format round-trips without losing hand edits.
 - Security-sensitive operations have named enforcement points.
+- The voice spike measures interruption latency, grounding, cost, privacy, and
+  whether voice improves understanding over the text-only workflow.
 - The chosen architecture is documented with rejected alternatives.
 
-## Phase 1: extension and daemon foundation
+The frontend portion of this gate passed on 2026-07-15 and is accepted in
+[ADR 001](decisions/001-helix-terminal-frontend.md). Plan, threat-model, and
+voice artifacts remain separately gated; they do not reopen the frontend
+decision unless ADR 001's revisit conditions occur.
+
+## Phase 1: editor and daemon foundation
 
 ### Tasks
 
-- `P1-01` Scaffold the TypeScript extension with strict type checking, formatting,
-  linting, and extension-host tests.
+- `P1-01` Promote the pinned Helix/Lazygit preparation flow, terminal
+  composition, patch inventory, clean-replay check, and editor integration
+  tests from the spike into maintained infrastructure.
 - `P1-02` Scaffold the Rust workspace with formatting, Clippy, denied unsafe code
   where practical, and unit tests.
 - `P1-03` Implement daemon lifecycle management, health checks, graceful shutdown,
   crash reporting, and version negotiation.
-- `P1-04` Define protocol schemas and generate TypeScript types from the canonical
-  schema.
+- `P1-04` Define canonical protocol schemas and generate or validate Rust client
+  and daemon types from the same source.
 - `P1-05` Add structured errors, correlation IDs, cancellation, and event
   back-pressure.
 - `P1-06` Create SQLite migrations and transactional repository initialization.
@@ -234,13 +268,22 @@ Remove the highest-risk assumptions before building permanent infrastructure.
 - `P1-09` Add provider credential resolution without copying secrets into the
   database.
 
+Foundation progress on 2026-07-16: the first `P1-03`/`P1-04` lifecycle slice is
+implemented in the spike runtime and [Protocol v2](../protocol/v2/README.md).
+It provides hard version negotiation, bounded recoverable JSONL framing,
+explicit admission and settlement, duplicate-submit protection, idempotent
+cancellation, and joined shutdown. This is not completion of daemon health,
+crash supervision, structured schema generation, back-pressure, or the other
+Phase 1 tasks.
+
 ### Exit criteria
 
-- Extension activation is lazy and does not start the daemon until needed.
+- Lantern starts the session-scoped daemon only with the agent pane.
 - Daemon failure does not crash or block normal editing.
 - Protocol compatibility failures produce actionable errors.
 - A workspace begins read-only and untrusted.
-- CI tests the protocol contract on macOS and Linux.
+- CI tests protocol and patch replay on Linux, then adds macOS at the public
+  release gate.
 
 ## Phase 2: Quick Ask vertical slice
 
@@ -248,7 +291,7 @@ Remove the highest-risk assumptions before building permanent infrastructure.
 
 - `P2-01` Capture the active document, selection, language, and repository root.
 - `P2-02` Normalize document symbols, definitions, references, and diagnostics
-  from VSCodium.
+  from Helix's active language-server sessions.
 - `P2-03` Implement bounded file reading, file discovery, and text search tools.
 - `P2-04` Build a context assembler that records why each context item was
   selected.
@@ -283,7 +326,8 @@ Remove the highest-risk assumptions before building permanent infrastructure.
 - `P3-02` Detect languages, frameworks, build tools, entry points, tests, generated
   code, and deployment surfaces.
 - `P3-03` Build an incremental file, package, import, and symbol inventory.
-- `P3-04` Add syntax-tree fallbacks for the two reference ecosystems.
+- `P3-04` Add an explicit syntax-only inspection mode for the two reference
+  ecosystems, with its reduced evidence capabilities visible to the user.
 - `P3-05` Model executable entry points and representative runtime handoffs.
 - `P3-06` Add test-to-symbol and test-to-feature relationships.
 - `P3-07` Classify architectural claims as observed, inferred, unknown, or
@@ -459,7 +503,8 @@ The detailed interaction contract is in
 - `P8-14` Provide a one-command development bootstrap and fixture setup.
 - `P8-15` Publish protocol and storage compatibility policies.
 - `P8-16` Produce signed or checksummed daemon binaries for macOS and Linux.
-- `P8-17` Package the extension as a VSIX and validate installation in VSCodium.
+- `P8-17` Package, checksum, and validate installable Lantern builds containing
+  the supported Helix, Lazygit, pane, and daemon revisions.
 - `P8-18` Add dependency, license, secret, and vulnerability checks to CI.
 - `P8-19` Write user documentation for trust, model configuration, learning,
   planning, Guided Build, review, and recovery.
@@ -481,6 +526,11 @@ The repository can become public only after:
 
 ## Test strategy
 
+The behavioral evaluation contract is defined in
+[EVALUATION_STRATEGY.md](EVALUATION_STRATEGY.md). DeepEval is the initial
+open-source harness for model-mediated evaluations and remains isolated from
+the production editor and daemon.
+
 ### Deterministic tests
 
 - Unit tests for policy, planning, learning, anchoring, replay, and migrations.
@@ -494,7 +544,7 @@ The repository can become public only after:
 
 ### Model evaluations
 
-Model evaluations run outside required CI and record:
+DeepEval-based model evaluations record:
 
 - Evidence precision and unsupported-claim rate.
 - Repository question answer quality.
@@ -506,6 +556,12 @@ Model evaluations run outside required CI and record:
 
 Evaluations store prompts, model identifiers, tool traces, costs, and judgments
 without committing proprietary model output or secrets to the repository.
+
+Small offline cases, hard invariants, dataset validation, and rubric validation
+run in required CI. Networked model-judge runs are advisory at first and run
+fully for scheduled and release-candidate evaluation. A semantic release gate
+requires calibrated human rubrics, repeated samples, and regression review
+rather than one stochastic score.
 
 ## Product measurements
 
@@ -523,6 +579,25 @@ The private alpha should measure:
 - Local indexing time, steady-state memory, and model cost.
 
 Metrics remain local unless the user explicitly exports them.
+
+## Live Collaboration evaluation track
+
+The detailed product and evaluation contract is in
+[LIVE_COLLABORATION.md](LIVE_COLLABORATION.md).
+
+This track evaluates an OpenAI Realtime voice collaborator that can discuss
+visible code, narrate semantic implementation stages, call constrained Lantern
+tools, and be interrupted naturally. It is not a v0.1 release commitment until
+the evaluation gate passes.
+
+The spike begins read-only. Voice must reuse the same session coordinator,
+policy engine, evidence model, plan state, and Guided Build checkpoints as text.
+It must not create a second agent state or allow spoken requests to bypass
+approval.
+
+If promoted, implementation should begin after Quick Ask and before Guided
+Build playback is finalized, so interruption and narration become inputs to the
+shared operation state machine rather than a late presentation layer.
 
 ## Milestone checkpoints
 
@@ -572,23 +647,20 @@ or destructive defaults.
 - General-purpose autonomous computer control.
 - A Helix fork or custom editor renderer.
 - Broad extension marketplace.
-- Voice narration and generated course media.
+- Generated course media.
+- Production Live Collaboration unless its latency, grounding, privacy, cost,
+  and user-value evaluation gate passes.
 - Organization analytics and learner ranking.
 - Claims of universal language support.
 
 ## First implementation slice
 
-The first pull request should contain only:
+The authoritative scope, contracts, delivery sequence, exclusions, and
+acceptance criteria are defined in
+[FIRST_USEFUL_SLICE.md](FIRST_USEFUL_SLICE.md).
 
-1. The minimal extension command `Lantern: Ask About Selection`.
-2. A daemon process with `initialize`, `askSelection`, `cancel`, and `shutdown`.
-3. Generated protocol types.
-4. A mock streaming model.
-5. Read-only selection context.
-6. A native answer view with one evidence link.
-7. Contract and end-to-end tests.
-
-It should not contain indexing, planning, Guided Build, SQLite, or real provider
-integration. Its purpose is to establish the process boundary, event flow,
-cancellation behavior, and contributor feedback loop with the smallest possible
-surface.
+The first internally useful milestone is a Lantern editor connected to a
+streaming mock daemon. The first externally meaningful slice adds enforced
+read-only tools, one explicit provider, validated evidence, DeepEval behavioral
+tests, and a usefulness gate. It does not include indexing, SQLite, planning,
+Guided Build, file mutation, command execution, voice, or provider fallbacks.

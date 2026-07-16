@@ -1,0 +1,11 @@
+# Prepared upstream editor source and local build output.
+/.lantern/
+
+# Local evaluation output.
+/evaluations/reports/
+/evaluations/.venv/
+**/__pycache__/
+
+# Isolated Rust spike build output.
+/spikes/helix-terminal/runtime/target/
+/spikes/helix-terminal/fixtures/*/target/

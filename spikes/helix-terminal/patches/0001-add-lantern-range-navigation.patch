@@ -1,0 +1,366 @@
+diff --git a/helix-term/src/commands/typed.rs b/helix-term/src/commands/typed.rs
+index 9a5bf971..51a85f3a 100644
+--- a/helix-term/src/commands/typed.rs
++++ b/helix-term/src/commands/typed.rs
+@@ -3,6 +3,7 @@
+ use std::ops::{self, Deref};
+ 
+ use crate::job::Job;
++use futures_util::{stream::FuturesUnordered, StreamExt};
+ 
+ use super::*;
+ 
+@@ -176,6 +177,313 @@ fn open_impl(cx: &mut compositor::Context, args: Args, action: Action) -> anyhow
+     Ok(())
+ }
+ 
++fn lantern_navigate(
++    cx: &mut compositor::Context,
++    args: Args,
++    event: PromptEvent,
++) -> anyhow::Result<()> {
++    if event != PromptEvent::Validate {
++        return Ok(());
++    }
++
++    let path = helix_stdx::path::expand_tilde(Path::new(&args[0]));
++    let parse_coordinate = |value: &str, name: &str| -> anyhow::Result<usize> {
++        value
++            .parse::<usize>()?
++            .checked_sub(1)
++            .with_context(|| format!("{name} must be one or greater"))
++    };
++    let start_line = parse_coordinate(&args[1], "start line")?;
++    let start_column = parse_coordinate(&args[2], "start column")?;
++    let end_line = parse_coordinate(&args[3], "end line")?;
++    let end_column = parse_coordinate(&args[4], "end column")?;
++
++    cx.editor.open(&path, Action::Replace)?;
++    let (view, doc) = current!(cx.editor);
++    let text = doc.text().slice(..);
++    let start = pos_at_coords(text, (start_line, start_column).into(), true);
++    let end = pos_at_coords(text, (end_line, end_column).into(), true);
++    if end <= start {
++        bail!("Lantern evidence range must end after it starts");
++    }
++
++    doc.set_selection(view.id, Selection::single(start, end));
++    align_view(doc, view, Align::Center);
++    Ok(())
++}
++
++fn lantern_export_selection(
++    cx: &mut compositor::Context,
++    _args: Args,
++    event: PromptEvent,
++) -> anyhow::Result<()> {
++    if event != PromptEvent::Validate {
++        return Ok(());
++    }
++    let destination = std::env::var_os("LANTERN_SELECTION_PATH")
++        .context("LANTERN_SELECTION_PATH is not configured")?;
++    let repository = std::path::PathBuf::from(
++        std::env::var_os("LANTERN_REPO").context("LANTERN_REPO is not configured")?,
++    )
++    .canonicalize()?;
++    let (view, doc) = current!(cx.editor);
++    let path = doc
++        .path()
++        .context("save the buffer before asking Lantern")?;
++    let path = path.canonicalize()?;
++    let relative_path = path
++        .strip_prefix(&repository)
++        .context("selected buffer is outside the Lantern repository")?;
++    let relative_path = relative_path
++        .to_str()
++        .context("selected path is not valid UTF-8")?;
++    let range = doc.selection(view.id).primary();
++    if range.is_empty() {
++        bail!("select non-empty text before asking Lantern");
++    }
++    let text = doc.text().slice(..);
++    let selected_text = text.slice(range.from()..range.to()).to_string();
++    if selected_text.len() > 64 * 1024 {
++        bail!("Lantern selections are limited to 64 KiB");
++    }
++    let start = helix_core::coords_at_pos(text, range.from());
++    let end = helix_core::coords_at_pos(text, range.to());
++    let payload = serde_json::json!({
++        "relative_path": relative_path,
++        "language": doc.language_id(),
++        "start_line": start.row + 1,
++        "start_column": start.col + 1,
++        "end_line": end.row + 1,
++        "end_column": end.col + 1,
++        "text": selected_text,
++        "document_modified": doc.is_modified(),
++    });
++    let destination = std::path::PathBuf::from(destination);
++    let temporary = destination.with_extension("tmp");
++    std::fs::write(&temporary, serde_json::to_vec(&payload)?)?;
++    std::fs::rename(temporary, destination)?;
++    cx.editor.set_status("Selection captured for Lantern");
++    Ok(())
++}
++
++fn lantern_symbol_location(
++    repository: &Path,
++    location: helix_lsp::lsp::Location,
++    offset_encoding: helix_lsp::OffsetEncoding,
++) -> Option<Value> {
++    let path = location.uri.to_file_path().ok()?.canonicalize().ok()?;
++    let relative_path = path.strip_prefix(repository).ok()?;
++    let metadata = std::fs::metadata(&path).ok()?;
++    if metadata.len() > 512 * 1024 {
++        return None;
++    }
++    let source = std::fs::read_to_string(&path).ok()?;
++    let rope = helix_core::Rope::from(source);
++    let range = helix_lsp::util::lsp_range_to_range(&rope, location.range, offset_encoding)?;
++    if range.is_empty() {
++        return None;
++    }
++    let start = helix_core::coords_at_pos(rope.slice(..), range.from());
++    let end = helix_core::coords_at_pos(rope.slice(..), range.to());
++    Some(serde_json::json!({
++        "relative_path": relative_path,
++        "start_line": start.row + 1,
++        "start_column": start.col + 1,
++        "end_line": end.row + 1,
++        "end_column": end.col + 1,
++    }))
++}
++
++fn lantern_export_symbol_context(
++    cx: &mut compositor::Context,
++    _args: Args,
++    event: PromptEvent,
++) -> anyhow::Result<()> {
++    if event != PromptEvent::Validate {
++        return Ok(());
++    }
++
++    let destination = std::path::PathBuf::from(
++        std::env::var_os("LANTERN_SELECTION_PATH")
++            .context("LANTERN_SELECTION_PATH is not configured")?,
++    );
++    let repository = std::path::PathBuf::from(
++        std::env::var_os("LANTERN_REPO").context("LANTERN_REPO is not configured")?,
++    )
++    .canonicalize()?;
++    let (view, doc) = current!(cx.editor);
++    if doc.is_modified() {
++        bail!("save the buffer before asking Lantern for LSP symbol context");
++    }
++    let path = doc
++        .path()
++        .context("save the buffer before asking Lantern")?
++        .canonicalize()?;
++    let relative_path = path
++        .strip_prefix(&repository)
++        .context("selected buffer is outside the Lantern repository")?;
++    let range = doc.selection(view.id).primary();
++    if range.is_empty() {
++        bail!("select a non-empty symbol before asking Lantern");
++    }
++    let text = doc.text().slice(..);
++    let selected_text = text.slice(range.from()..range.to()).to_string();
++    if selected_text.len() > 64 * 1024 {
++        bail!("Lantern selections are limited to 64 KiB");
++    }
++    let start = helix_core::coords_at_pos(text, range.from());
++    let end = helix_core::coords_at_pos(text, range.to());
++    let selection = serde_json::json!({
++        "relative_path": relative_path,
++        "language": doc.language_id(),
++        "start_line": start.row + 1,
++        "start_column": start.col + 1,
++        "end_line": end.row + 1,
++        "end_column": end.col + 1,
++        "text": selected_text,
++        "document_modified": false,
++    });
++
++    let mut definitions = FuturesUnordered::new();
++    for language_server in doc.language_servers_with_feature(
++        helix_core::syntax::config::LanguageServerFeature::GotoDefinition,
++    ) {
++        let offset_encoding = language_server.offset_encoding();
++        let position = helix_lsp::util::pos_to_lsp_pos(doc.text(), range.from(), offset_encoding);
++        let request = language_server
++            .goto_definition(doc.identifier(), position, None)
++            .expect("feature-filtered language server must support definitions");
++        definitions.push(async move { (request.await, offset_encoding) });
++    }
++    if definitions.is_empty() {
++        bail!("no configured language server supports symbol definitions");
++    }
++
++    let mut references = FuturesUnordered::new();
++    for language_server in doc.language_servers_with_feature(
++        helix_core::syntax::config::LanguageServerFeature::GotoReference,
++    ) {
++        let offset_encoding = language_server.offset_encoding();
++        let position = helix_lsp::util::pos_to_lsp_pos(doc.text(), range.from(), offset_encoding);
++        let request = language_server
++            .goto_reference(doc.identifier(), position, false, None)
++            .expect("feature-filtered language server must support references");
++        references.push(async move { (request.await, offset_encoding) });
++    }
++    if references.is_empty() {
++        bail!("no configured language server supports symbol references");
++    }
++
++    cx.editor
++        .set_status("Resolving bounded LSP symbol context for Lantern");
++    let callback = async move {
++        let mut definition_locations = Vec::new();
++        let mut errors = Vec::new();
++        while let Some((response, offset_encoding)) = definitions.next().await {
++            match response {
++                Ok(Some(helix_lsp::lsp::GotoDefinitionResponse::Scalar(location))) => {
++                    definition_locations.push((location, offset_encoding));
++                }
++                Ok(Some(helix_lsp::lsp::GotoDefinitionResponse::Array(locations))) => {
++                    definition_locations.extend(
++                        locations
++                            .into_iter()
++                            .map(|location| (location, offset_encoding)),
++                    );
++                }
++                Ok(Some(helix_lsp::lsp::GotoDefinitionResponse::Link(links))) => {
++                    definition_locations.extend(links.into_iter().map(|link| {
++                        (
++                            helix_lsp::lsp::Location::new(link.target_uri, link.target_range),
++                            offset_encoding,
++                        )
++                    }));
++                }
++                Ok(None) => {}
++                Err(cause) => errors.push(format!("definition request failed: {cause}")),
++            }
++        }
++
++        let definition = definition_locations
++            .into_iter()
++            .find_map(|(location, encoding)| {
++                lantern_symbol_location(&repository, location, encoding)
++            });
++        let mut reference_values = Vec::new();
++        while let Some((response, offset_encoding)) = references.next().await {
++            match response {
++                Ok(Some(locations)) => {
++                    for location in locations {
++                        if reference_values.len() == 8 {
++                            break;
++                        }
++                        if let Some(value) =
++                            lantern_symbol_location(&repository, location, offset_encoding)
++                        {
++                            if !reference_values.contains(&value) {
++                                reference_values.push(value);
++                            }
++                        }
++                    }
++                }
++                Ok(None) => {}
++                Err(cause) => errors.push(format!("reference request failed: {cause}")),
++            }
++        }
++
++        let (payload, message, failed) = if !errors.is_empty() {
++            let detail = errors.join("; ");
++            (
++                serde_json::json!({
++                    "status": "error",
++                    "message": detail,
++                }),
++                detail,
++                true,
++            )
++        } else if let Some(definition) = definition {
++            (
++                serde_json::json!({
++                    "status": "resolved",
++                    "selection": selection,
++                    "definition": definition,
++                    "references": reference_values,
++                }),
++                format!(
++                    "Lantern captured one definition and {} reference{}",
++                    reference_values.len(),
++                    if reference_values.len() == 1 { "" } else { "s" }
++                ),
++                false,
++            )
++        } else {
++            let detail = "the language server returned no repository definition".to_owned();
++            (
++                serde_json::json!({
++                    "status": "error",
++                    "message": detail,
++                }),
++                detail,
++                true,
++            )
++        };
++        let temporary = destination.with_extension("tmp");
++        std::fs::write(&temporary, serde_json::to_vec(&payload)?)?;
++        std::fs::rename(temporary, destination)?;
++        Ok(job::Callback::EditorCompositor(Box::new(
++            move |editor, _compositor| {
++                if failed {
++                    editor.set_error(message);
++                } else {
++                    editor.set_status(message);
++                }
++            },
++        )))
++    };
++    cx.jobs.callback(callback);
++    Ok(())
++}
++
+ fn buffer_close_by_ids_impl(
+     cx: &mut compositor::Context,
+     doc_ids: &[DocumentId],
+@@ -3072,6 +3380,39 @@ fn noop(_cx: &mut compositor::Context, _args: Args, _event: PromptEvent) -> anyh
+             ..Signature::DEFAULT
+         },
+     },
++    TypableCommand {
++        name: "lantern-navigate",
++        aliases: &[],
++        doc: "Open and select a one-based evidence range for the Lantern spike.",
++        fun: lantern_navigate,
++        completer: CommandCompleter::positional(&[
++            completers::filename,
++            completers::none,
++            completers::none,
++            completers::none,
++            completers::none,
++        ]),
++        signature: Signature {
++            positionals: (5, Some(5)),
++            ..Signature::DEFAULT
++        },
++    },
++    TypableCommand {
++        name: "lantern-export-selection",
++        aliases: &[],
++        doc: "Export the primary selection to the session-scoped Lantern bridge.",
++        fun: lantern_export_selection,
++        completer: CommandCompleter::none(),
++        signature: Signature::DEFAULT,
++    },
++    TypableCommand {
++        name: "lantern-export-symbol-context",
++        aliases: &[],
++        doc: "Export one definition and bounded references through the active LSP session.",
++        fun: lantern_export_symbol_context,
++        completer: CommandCompleter::none(),
++        signature: Signature::DEFAULT,
++    },
+     TypableCommand {
+         name: "buffer-close!",
+         aliases: &["bc!", "bclose!"],

@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+usage() {
+	echo "Usage: lantern-open-range <repository-relative-path> <start-line> <start-column> <end-line> <end-column>" >&2
+}
+
+if [[ $# -ne 5 ]]; then
+	usage
+	exit 2
+fi
+
+: "${LANTERN_REPO:?Lantern spike repository is not configured}"
+: "${LANTERN_EDITOR_PANE:?Lantern editor pane is not configured}"
+
+requested_path=$1
+shift
+coordinates=("$@")
+
+for coordinate in "${coordinates[@]}"; do
+	if [[ ! $coordinate =~ ^[1-9][0-9]*$ ]]; then
+		echo "Range coordinates must be positive integers: $coordinate" >&2
+		exit 2
+	fi
+done
+
+if [[ $requested_path == *$'\n'* || $requested_path == *"'"* ]]; then
+	echo "The navigation spike does not support newlines or single quotes in paths." >&2
+	exit 2
+fi
+
+repo=$(realpath "$LANTERN_REPO")
+target=$(realpath -m "$repo/$requested_path")
+
+case "$target" in
+	"$repo"/*) ;;
+	*)
+		echo "Refusing to navigate outside the repository: $requested_path" >&2
+		exit 2
+		;;
+esac
+
+if [[ ! -f $target ]]; then
+	echo "Navigation target is not a file: $requested_path" >&2
+	exit 2
+fi
+
+relative=$(realpath --relative-to "$repo" "$target")
+command="lantern-navigate '$relative' ${coordinates[*]}"
+
+# The spike still uses tmux only to deliver one typed, validated Helix command.
+# Range conversion and selection happen inside Helix, not through key macros.
+tmux send-keys -t "$LANTERN_EDITOR_PANE" Escape
+tmux send-keys -t "$LANTERN_EDITOR_PANE" ':'
+tmux send-keys -l -t "$LANTERN_EDITOR_PANE" "$command"
+tmux send-keys -t "$LANTERN_EDITOR_PANE" Enter

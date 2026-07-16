@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+: "${TMUX:?Lantern selection capture requires the spike tmux session}"
+: "${LANTERN_EDITOR_PANE:?Lantern editor pane is not configured}"
+: "${LANTERN_SELECTION_PATH:?Lantern selection path is not configured}"
+
+tmux send-keys -t "$LANTERN_EDITOR_PANE" Escape
+tmux send-keys -t "$LANTERN_EDITOR_PANE" ':'
+tmux send-keys -l -t "$LANTERN_EDITOR_PANE" 'lantern-export-symbol-context'
+tmux send-keys -t "$LANTERN_EDITOR_PANE" Enter

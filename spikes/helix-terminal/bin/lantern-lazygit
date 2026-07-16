@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ -z ${TMUX:-} ]]; then
+	echo "Lantern's Lazygit surface requires the spike tmux session." >&2
+	exit 1
+fi
+
+: "${LANTERN_REPO:?Lantern spike repository is not configured}"
+: "${LANTERN_LAZYGIT_BIN:?Lazygit binary is not configured}"
+: "${LANTERN_LAZYGIT_CONFIG:?Lazygit configuration is not configured}"
+
+if [[ ! -x $LANTERN_LAZYGIT_BIN ]]; then
+	echo "Pinned Lazygit binary is not executable: $LANTERN_LAZYGIT_BIN" >&2
+	exit 1
+fi
+if [[ ! -f $LANTERN_LAZYGIT_CONFIG ]]; then
+	echo "Lantern Lazygit configuration is missing: $LANTERN_LAZYGIT_CONFIG" >&2
+	exit 1
+fi
+
+client_width=$(tmux display-message -p '#{client_width}')
+if [[ ! $client_width =~ ^[0-9]+$ ]]; then
+	echo "Could not determine the tmux client width: $client_width" >&2
+	exit 1
+fi
+if ((client_width < 120)); then
+	echo "The 10% Lazygit rail requires a terminal at least 120 columns wide." >&2
+	echo "Current terminal width: $client_width columns." >&2
+	exit 1
+fi
+
+# Lazygit is a narrow rail over the left edge of the upper Helix region. The
+# 80% height preserves list navigation without covering the full-width agent
+# terminal below. It exits back to the unchanged editor process.
+tmux display-popup \
+	-E \
+	-w '10%' \
+	-h '80%' \
+	-x 0 \
+	-y 0 \
+	-d "$LANTERN_REPO" \
+	"$LANTERN_LAZYGIT_BIN" --use-config-file "$LANTERN_LAZYGIT_CONFIG"
