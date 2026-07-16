@@ -1,4 +1,4 @@
-# Helix spike patch inventory
+# Helix patch inventory
 
 ## `0001-add-lantern-range-navigation.patch`
 
@@ -10,10 +10,10 @@
   selection input is bounded to 64 KiB, LSP targets are repository-local files
   no larger than 512 KiB, and output uses only the session-scoped bridge path.
 - **Validation:** Helix formatting and `cargo check -p helix-term`, plus the
-  live selection probe in the Lantern spike.
-- **Removal condition:** Replace the spike command when Helix exposes a stable
-  typed external navigation boundary, or delete it if the terminal frontend is
-  rejected.
+  live Lantern selection probe.
+- **Removal condition:** Replace the command when Helix exposes a stable typed
+  external navigation boundary, or reverse the frontend decision through an
+  explicit architecture decision record.
 
 The patch does not add model, daemon, Git, network, or policy behavior to
 Helix. It converts a validated range into a native selection and serializes
@@ -34,8 +34,8 @@ command does not substitute literal search.
   `helix-term` library tests, targeted Clippy, and a live picker drag proving an
   exact non-empty `AGENTS.md:5:5-5:26` selection reaches the existing export
   command.
-- **Removal condition:** Upstream equivalent picker mouse support, or deletion
-  if the Helix frontend spike is rejected.
+- **Removal condition:** Upstream equivalent picker mouse support, or an
+  explicit architecture decision that reverses the Helix frontend choice.
 
 The preview selection is deliberately temporary. Changing the highlighted
 picker row or query clears it. Promotion opens the selected item through the

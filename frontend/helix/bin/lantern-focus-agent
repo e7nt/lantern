@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-: "${TMUX:?Lantern pane focus requires the spike tmux session}"
+: "${TMUX:?Lantern pane focus requires the Lantern tmux session}"
 : "${TMUX_PANE:?Lantern editor pane is not configured}"
 
 agent_pane=$(tmux list-panes -t "$TMUX_PANE" -F '#{pane_id} #{pane_title}' |

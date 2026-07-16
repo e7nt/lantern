@@ -88,10 +88,11 @@ The first slice does not include:
 ```text
 lantern/
 ├── frontend/
-│   └── helix/
-│       ├── patches/             # narrow editor-owned integration
-│       ├── config/              # Helix, Lazygit, and terminal composition
-│       └── upstream.json        # immutable upstream revisions
+│   ├── helix/
+│   │   ├── patches/             # narrow editor-owned integration
+│   │   ├── config/              # Helix and Lazygit composition
+│   │   └── upstream.json        # immutable upstream revisions
+│   └── terminal/                # developer-facing terminal surface
 ├── apps/
 │   └── daemon/                  # Rust executable
 ├── crates/

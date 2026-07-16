@@ -3,11 +3,11 @@
 set -euo pipefail
 
 if [[ -z ${TMUX:-} ]]; then
-	echo "Lantern's Lazygit surface requires the spike tmux session." >&2
+	echo "Lantern's Lazygit surface requires the Lantern tmux session." >&2
 	exit 1
 fi
 
-: "${LANTERN_REPO:?Lantern spike repository is not configured}"
+: "${LANTERN_REPO:?Lantern repository is not configured}"
 : "${LANTERN_LAZYGIT_BIN:?Lazygit binary is not configured}"
 : "${LANTERN_LAZYGIT_CONFIG:?Lazygit configuration is not configured}"
 

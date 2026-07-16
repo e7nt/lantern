@@ -7,10 +7,10 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const spikeBin = path.join(root, 'spikes/helix-terminal/bin');
+const frontendBin = path.join(root, 'frontend/helix/bin');
 
 async function fixture() {
-	const directory = await mkdtemp(path.join(tmpdir(), 'lantern-helix-spike-'));
+	const directory = await mkdtemp(path.join(tmpdir(), 'lantern-helix-'));
 	const repository = path.join(directory, 'repository');
 	const fakeBin = path.join(directory, 'bin');
 	const tmuxLog = path.join(directory, 'tmux.log');
@@ -47,7 +47,7 @@ function environment({ repository, fakeBin, tmuxLog }) {
 test('range navigation sends one validated Helix-native command', async () => {
 	const context = await fixture();
 	const result = spawnSync(
-		path.join(spikeBin, 'lantern-open-range'),
+		path.join(frontendBin, 'lantern-open-range'),
 		['source file.rs', '1', '4', '1', '8'],
 		{ encoding: 'utf8', env: environment(context) }
 	);
@@ -62,7 +62,7 @@ test('range navigation sends one validated Helix-native command', async () => {
 test('navigation rejects a repository escape before contacting tmux', async () => {
 	const context = await fixture();
 	const result = spawnSync(
-		path.join(spikeBin, 'lantern-open-range'),
+		path.join(frontendBin, 'lantern-open-range'),
 		['../outside.rs', '1', '1', '1', '2'],
 		{ encoding: 'utf8', env: environment(context) }
 	);
@@ -79,7 +79,7 @@ test('Lazygit is constrained to a 10 percent rail above the agent', async () => 
 	await writeFile(lazygitConfig, 'gui:\n  mouseEvents: true\n');
 	await chmod(lazygit, 0o755);
 
-	const result = spawnSync(path.join(spikeBin, 'lantern-lazygit'), [], {
+	const result = spawnSync(path.join(frontendBin, 'lantern-lazygit'), [], {
 		encoding: 'utf8',
 		env: {
 			...environment(context),
@@ -103,7 +103,7 @@ test('Lazygit rejects a terminal too narrow for the 10 percent rail', async () =
 	await writeFile(lazygitConfig, 'gui:\n  mouseEvents: true\n');
 	await chmod(lazygit, 0o755);
 
-	const result = spawnSync(path.join(spikeBin, 'lantern-lazygit'), [], {
+	const result = spawnSync(path.join(frontendBin, 'lantern-lazygit'), [], {
 		encoding: 'utf8',
 		env: {
 			...environment(context),
@@ -121,7 +121,7 @@ test('Lazygit rejects a terminal too narrow for the 10 percent rail', async () =
 
 test('Ctrl-a focus bridge selects the Lantern pane', async () => {
 	const context = await fixture();
-	const result = spawnSync(path.join(spikeBin, 'lantern-focus-agent'), [], {
+	const result = spawnSync(path.join(frontendBin, 'lantern-focus-agent'), [], {
 		encoding: 'utf8',
 		env: {
 			...environment(context),
@@ -136,14 +136,14 @@ test('Ctrl-a focus bridge selects the Lantern pane', async () => {
 
 test('terminal surfaces declare one mouse-enabled interaction contract', async () => {
 	const helixConfig = await readFile(
-		path.join(root, 'spikes/helix-terminal/config/helix/config.toml'),
+		path.join(root, 'frontend/helix/config/helix/config.toml'),
 		'utf8'
 	);
 	const lazygitConfig = await readFile(
-		path.join(root, 'spikes/helix-terminal/config/lazygit/config.yml'),
+		path.join(root, 'frontend/helix/config/lazygit/config.yml'),
 		'utf8'
 	);
-	const launcher = await readFile(path.join(root, 'spikes/helix-terminal/launch.sh'), 'utf8');
+	const launcher = await readFile(path.join(root, 'scripts/launch-lantern.sh'), 'utf8');
 
 	assert.match(helixConfig, /mouse = true/);
 	assert.match(helixConfig, /theme = "boo_berry"/);

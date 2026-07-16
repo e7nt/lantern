@@ -2,15 +2,15 @@
 
 set -euo pipefail
 
-ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-SPIKE_DIR="$ROOT/spikes/helix-terminal"
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+FRONTEND_DIR="$ROOT/frontend/helix"
 HELIX_BIN=${LANTERN_HELIX_BIN:-"$ROOT/.lantern/upstream/helix/target/release/hx"}
 HELIX_RUNTIME=${LANTERN_HELIX_RUNTIME:-"$ROOT/.lantern/upstream/helix/runtime"}
 LAZYGIT_BIN=${LANTERN_LAZYGIT_BIN:-"$ROOT/.lantern/toolchains/lazygit/lazygit"}
-LAZYGIT_CONFIG="$SPIKE_DIR/config/lazygit/config.yml"
-RUNTIME_DIR="$SPIKE_DIR/runtime/target/release"
-DAEMON_BIN=${LANTERN_DAEMON_BIN:-"$RUNTIME_DIR/lantern-spike-daemon"}
-PANE_BIN=${LANTERN_PANE_BIN:-"$RUNTIME_DIR/lantern-spike-pane"}
+LAZYGIT_CONFIG="$FRONTEND_DIR/config/lazygit/config.yml"
+RUNTIME_DIR="$ROOT/target/release"
+DAEMON_BIN=${LANTERN_DAEMON_BIN:-"$RUNTIME_DIR/lantern-daemon"}
+PANE_BIN=${LANTERN_PANE_BIN:-"$RUNTIME_DIR/lantern-terminal"}
 PI_VERSION=0.80.6
 detached=false
 session=
@@ -38,7 +38,7 @@ repo=${1:-$PWD}
 repo=$(realpath "$repo")
 
 if ! git -C "$repo" rev-parse --show-toplevel >/dev/null 2>&1; then
-	echo "Lantern spike requires a Git repository: $repo" >&2
+	echo "Lantern requires a Git repository: $repo" >&2
 	exit 1
 fi
 
@@ -84,18 +84,18 @@ if [[ ! -f $LAZYGIT_CONFIG ]]; then
 fi
 
 if [[ ! -x $DAEMON_BIN || ! -x $PANE_BIN ]]; then
-	echo "Lantern spike runtime is not built." >&2
-	echo "Run: cargo build --release --locked --manifest-path '$SPIKE_DIR/runtime/Cargo.toml'" >&2
+	echo "Lantern runtime is not built." >&2
+	echo "Run: cargo build --release --locked --manifest-path '$ROOT/Cargo.toml'" >&2
 	exit 1
 fi
 
-session="lantern-spike-$$"
-runtime_dir=$(mktemp -d "${TMPDIR:-/tmp}/lantern-spike.XXXXXXXX")
+session="lantern-$$"
+runtime_dir=$(mktemp -d "${TMPDIR:-/tmp}/lantern.XXXXXXXX")
 selection_path="$runtime_dir/selection.json"
-path="$SPIKE_DIR/bin:$PATH"
+path="$FRONTEND_DIR/bin:$PATH"
 editor_command=(env
 	"PATH=$path"
-	"XDG_CONFIG_HOME=$SPIKE_DIR/config"
+	"XDG_CONFIG_HOME=$FRONTEND_DIR/config"
 	"HELIX_RUNTIME=$HELIX_RUNTIME"
 	"LANTERN_REPO=$repo"
 	"LANTERN_SELECTION_PATH=$selection_path"

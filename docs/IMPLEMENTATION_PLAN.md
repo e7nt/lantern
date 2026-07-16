@@ -164,7 +164,8 @@ Raw model reasoning is not treated as a durable product artifact.
 ```text
 lantern/
 ├── frontend/
-│   └── helix/                   # pinned patches, terminal config, integration
+│   ├── helix/                   # pinned patches, editor and Git config
+│   └── terminal/                # developer-facing terminal surface
 ├── apps/
 │   └── daemon/                  # Rust executable
 ├── crates/
@@ -269,7 +270,8 @@ decision unless ADR 001's revisit conditions occur.
   database.
 
 Foundation progress on 2026-07-16: the first `P1-03`/`P1-04` lifecycle slice is
-implemented in the spike runtime and [Protocol v2](../protocol/v2/README.md).
+implemented in the maintained Rust workspace and
+[Protocol v2](../protocol/v2/README.md).
 It provides hard version negotiation, bounded recoverable JSONL framing,
 explicit admission and settlement, duplicate-submit protection, idempotent
 cancellation, and joined shutdown. This is not completion of daemon health,

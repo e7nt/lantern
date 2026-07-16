@@ -11,7 +11,7 @@ use crossterm::terminal::{
     enable_raw_mode,
 };
 use crossterm::{execute, queue};
-use lantern_terminal_spike::{
+use lantern_protocol::{
     BoundedTail, ChangeProposal, Event, Evidence, MAX_DIAGNOSTIC_BYTES, MAX_SELECTION_BYTES,
     PROTOCOL_VERSION, Request, SelectionContext, SymbolContext, SymbolContextExport, search_term,
 };
