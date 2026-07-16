@@ -118,6 +118,10 @@ Diagnostic commands remain available:
 - `/show <literal text>` streams bounded local evidence and selects its exact
   range in Helix.
 - `/cancel` interrupts an active stream and reports local cancellation latency.
+- `/diagnostics` explicitly exports bounded, metadata-only diagnostics to a
+  private file in the system temporary directory. It remains available after a
+  daemon crash and excludes prompts, source, paths, environment values,
+  provider stderr, and all unstructured output.
 - `/refresh` refreshes repository state.
 - `/quit` closes the Lantern session.
 

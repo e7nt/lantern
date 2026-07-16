@@ -208,9 +208,14 @@ Lantern adopts those properties through a smaller Quick Ask policy: one
 canonical repository, session-only grants, authorization before admission, and
 no general permission queue.
 
+The `P1-08` inspection found two useful privacy constraints: Pi treats loaded
+context as sensitive and warns against putting it in logs, while OpenCode's
+sanitized export replaces entire content categories and caps rejected payloads
+before logging them. Lantern uses a narrower diagnostic schema that cannot
+represent content at all. Unstructured stderr is counted and discarded rather
+than copied through heuristic redaction.
+
 ## Next inspections
 
-1. Inspect structured crash-report redaction before persisting or exporting
-   diagnostics from the maintained runtime.
-2. Re-check upstream revisions when a finding becomes a permanent decision and
+1. Re-check upstream revisions when a finding becomes a permanent decision and
    keep the evidence fixture with Lantern's corresponding test.

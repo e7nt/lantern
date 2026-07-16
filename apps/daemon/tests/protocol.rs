@@ -1,3 +1,4 @@
+use lantern_diagnostics::{Code as DiagnosticCode, Record as DiagnosticRecord};
 use lantern_protocol::{
     Capability, Event, Evidence, MAX_FRAME_BYTES, PROTOCOL_VERSION, Request, SelectionContext,
     SymbolContext, SymbolLocation,
@@ -35,6 +36,7 @@ impl Daemon {
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
+            .stderr(Stdio::null())
             .spawn()
             .expect("spawn daemon");
         let stdin = BufWriter::new(child.stdin.take().expect("daemon stdin"));
@@ -112,6 +114,90 @@ fn golden_wire_fixtures_match_the_v3_types() {
     for line in include_str!("../../../protocol/v3/events.jsonl").lines() {
         serde_json::from_str::<Event>(line).expect("golden event must deserialize");
     }
+}
+
+#[test]
+fn diagnostics_are_structured_metadata_without_repository_content() {
+    let root = fixture("diagnostic-redaction", "sk-sensitive-source\n");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_lantern-daemon"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn daemon");
+    let mut stdin = BufWriter::new(child.stdin.take().expect("daemon stdin"));
+    let mut stdout = BufReader::new(child.stdout.take().expect("daemon stdout"));
+    let mut stderr = child.stderr.take().expect("daemon stderr");
+    let stderr_reader = std::thread::spawn(move || {
+        let mut diagnostic_jsonl = String::new();
+        stderr
+            .read_to_string(&mut diagnostic_jsonl)
+            .expect("read diagnostics");
+        diagnostic_jsonl
+    });
+    for request in [
+        Request::Initialize {
+            protocol_version: PROTOCOL_VERSION,
+        },
+        Request::ConfigureWorkspace {
+            repository: root.clone(),
+            capabilities: vec![Capability::RepositoryRead],
+        },
+        Request::AskSelection {
+            id: 33,
+            repository: root.clone(),
+            query: "question-with-private-marker".into(),
+            selection: SelectionContext {
+                relative_path: "sample.rs".into(),
+                language: Some("rust".into()),
+                start_line: 1,
+                start_column: 1,
+                end_line: 1,
+                end_column: 20,
+                text: "sk-sensitive-source".into(),
+                document_modified: false,
+            },
+        },
+    ] {
+        serde_json::to_writer(&mut stdin, &request).expect("serialize request");
+        stdin.write_all(b"\n").expect("frame request");
+    }
+    stdin.flush().expect("flush requests");
+
+    let mut line = String::new();
+    loop {
+        line.clear();
+        stdout.read_line(&mut line).expect("read daemon event");
+        let event: Event = serde_json::from_str(&line).expect("decode daemon event");
+        if matches!(event, Event::Settled { id: 33 }) {
+            break;
+        }
+    }
+    serde_json::to_writer(&mut stdin, &Request::Shutdown).expect("serialize shutdown");
+    stdin.write_all(b"\n").expect("frame shutdown");
+    stdin.flush().expect("flush shutdown");
+    drop(stdin);
+    assert!(child.wait().expect("wait for daemon").success());
+
+    let diagnostic_jsonl = stderr_reader.join().expect("join diagnostic reader");
+    assert!(!diagnostic_jsonl.contains("sk-sensitive-source"));
+    assert!(!diagnostic_jsonl.contains("question-with-private-marker"));
+    assert!(!diagnostic_jsonl.contains(&root.to_string_lossy().to_string()));
+    let records = diagnostic_jsonl
+        .lines()
+        .map(|line| serde_json::from_str::<DiagnosticRecord>(line).expect("structured record"))
+        .collect::<Vec<_>>();
+    assert!(
+        records
+            .iter()
+            .any(|record| record.code == DiagnosticCode::OperationAccepted)
+    );
+    assert!(
+        records
+            .iter()
+            .any(|record| record.code == DiagnosticCode::OperationSettled)
+    );
+    fs::remove_dir_all(root).expect("remove fixture");
 }
 
 #[test]
@@ -443,6 +529,7 @@ fn shutdown_cancels_and_settles_workers_before_process_exit() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_lantern-daemon"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
+        .stderr(Stdio::null())
         .spawn()
         .expect("spawn daemon");
     let mut stdin = BufWriter::new(child.stdin.take().expect("daemon stdin"));
@@ -544,6 +631,10 @@ printf '%s\n' "$$" > pi.pid
 IFS= read -r prompt
 printf '%s\n' "$prompt" > prompt.json
 printf '%s\n' '{"type":"response","command":"prompt","success":true}'
+if [[ ${LANTERN_FAKE_PI_MODE:?} == stderr-close ]]; then
+    printf '%s\n' 'sk-provider-secret' >&2
+    exit 0
+fi
 if [[ ${LANTERN_FAKE_PI_MODE:?} == malformed ]]; then
     printf '%s\n' 'not-json'
     while :; do
@@ -776,6 +867,48 @@ fn continuously_drains_and_bounds_pi_stderr() {
     });
 
     while !matches!(daemon.next(), Event::Settled { id: 27 }) {}
+    fs::remove_dir_all(root).expect("remove repository fixture");
+    fs::remove_dir_all(model_workdir).expect("remove model fixture");
+}
+
+#[cfg(unix)]
+#[test]
+fn provider_stderr_is_not_copied_into_user_visible_errors() {
+    let root = fixture("pi-stderr-private-repository", "fn selected() {}\n");
+    let model_workdir = fixture("pi-stderr-private-workdir", "private\n");
+    let pi_bin = fake_pi(&model_workdir);
+    let mut daemon = Daemon::spawn_with_pi(&pi_bin, &model_workdir, "stderr-close");
+    daemon.initialize();
+    daemon.trust_model(&root);
+    daemon.send(&Request::AskAgentSelection {
+        id: 34,
+        repository: root.clone(),
+        query: "Explain this".into(),
+        selection: SelectionContext {
+            relative_path: "sample.rs".into(),
+            language: Some("rust".into()),
+            start_line: 1,
+            start_column: 1,
+            end_line: 1,
+            end_column: 17,
+            text: "fn selected() {}".into(),
+            document_modified: false,
+        },
+    });
+
+    let message = loop {
+        if let Event::Error {
+            id: Some(34),
+            message,
+            ..
+        } = daemon.next()
+        {
+            break message;
+        }
+    };
+    assert!(message.contains("provider stderr was excluded"));
+    assert!(!message.contains("sk-provider-secret"));
+    while !matches!(daemon.next(), Event::Settled { id: 34 }) {}
     fs::remove_dir_all(root).expect("remove repository fixture");
     fs::remove_dir_all(model_workdir).expect("remove model fixture");
 }

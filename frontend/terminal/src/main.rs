@@ -11,6 +11,9 @@ use crossterm::terminal::{
     enable_raw_mode,
 };
 use crossterm::{execute, queue};
+use lantern_diagnostics::{
+    DaemonState as DiagnosticDaemonState, bundle_from_stderr, summarize_stderr,
+};
 use lantern_protocol::{
     BoundedTail, Capability, ChangeProposal, Event, Evidence, MAX_DIAGNOSTIC_BYTES,
     MAX_SELECTION_BYTES, PROTOCOL_VERSION, Request, SelectionContext, SymbolContext,
@@ -26,7 +29,12 @@ use std::process::{ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
+#[cfg(all(unix, test))]
+use std::os::unix::fs::PermissionsExt;
 
 const TOOLBAR_LABELS: &[(ToolbarAction, &str)] = &[
     (ToolbarAction::Ask, "Ask"),
@@ -287,11 +295,7 @@ fn clean_text(text: &str) -> String {
 }
 
 fn diagnostic_summary(text: &str) -> String {
-    let cleaned = clean_text(text.trim());
-    let characters: Vec<char> = cleaned.chars().collect();
-    characters[characters.len().saturating_sub(512)..]
-        .iter()
-        .collect()
+    summarize_stderr(text)
 }
 
 fn truncate(text: &str, width: usize) -> String {
@@ -481,7 +485,10 @@ fn render(state: &UiState) -> io::Result<Layout> {
 
     let prompt = match (state.daemon, state.active_id) {
         (DaemonState::Starting, _) => "›  Starting local agent…".to_owned(),
-        (DaemonState::Unavailable, _) => "›  Agent unavailable · Ctrl-d quits".to_owned(),
+        (DaemonState::Unavailable, _) => format!(
+            "› {}  · Agent unavailable · /diagnostics exports metadata",
+            state.input.iter().collect::<String>()
+        ),
         (DaemonState::Ready, Some(_)) => "›  Working…  Esc to interrupt".to_owned(),
         (DaemonState::Ready, None) => format!("› {}", state.input.iter().collect::<String>()),
     };
@@ -494,7 +501,7 @@ fn render(state: &UiState) -> io::Result<Layout> {
         SetAttribute(Attribute::NoBold),
         SetForegroundColor(TEXT)
     )?;
-    if state.daemon == DaemonState::Ready && state.active_id.is_none() {
+    if state.daemon != DaemonState::Starting && state.active_id.is_none() {
         let cursor_column = usize::from(HORIZONTAL_PADDING)
             .saturating_add(2)
             .saturating_add(state.cursor)
@@ -764,12 +771,79 @@ fn configure_workspace(
     Ok(())
 }
 
+fn diagnostic_state(state: DaemonState) -> DiagnosticDaemonState {
+    match state {
+        DaemonState::Starting => DiagnosticDaemonState::Starting,
+        DaemonState::Ready => DiagnosticDaemonState::Ready,
+        DaemonState::Unavailable => DiagnosticDaemonState::Unavailable,
+    }
+}
+
+fn write_diagnostic_bundle(
+    directory: &Path,
+    daemon_state: DaemonState,
+    stderr: &str,
+) -> Result<PathBuf, String> {
+    let bundle = bundle_from_stderr(
+        stderr,
+        env!("CARGO_PKG_VERSION"),
+        PROTOCOL_VERSION,
+        diagnostic_state(daemon_state),
+    );
+    let mut encoded = serde_json::to_vec_pretty(&bundle)
+        .map_err(|cause| format!("cannot encode diagnostic bundle: {cause}"))?;
+    encoded.push(b'\n');
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_millis());
+    for attempt in 0..16 {
+        let path = directory.join(format!(
+            "lantern-diagnostics-{}-{timestamp}-{attempt}.json",
+            std::process::id()
+        ));
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        match options.open(&path) {
+            Ok(mut file) => {
+                if let Err(cause) = file.write_all(&encoded).and_then(|()| file.flush()) {
+                    drop(file);
+                    let _ = fs::remove_file(&path);
+                    return Err(format!("cannot finish diagnostic bundle: {cause}"));
+                }
+                return Ok(path);
+            }
+            Err(cause) if cause.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(cause) => {
+                return Err(format!(
+                    "cannot create a diagnostic bundle in {}: {cause}",
+                    directory.display()
+                ));
+            }
+        }
+    }
+    Err("cannot allocate a unique diagnostic bundle name".into())
+}
+
+fn export_diagnostics(state: &mut UiState, diagnostics: &Arc<Mutex<BoundedTail>>) {
+    let stderr = diagnostics.lock().expect("daemon diagnostics lock").text();
+    match write_diagnostic_bundle(&env::temp_dir(), state.daemon, &stderr) {
+        Ok(path) => state.line(format!(
+            "Diagnostic metadata exported to {}. Prompts, source, paths, environment values, provider stderr, and unstructured output were excluded.",
+            path.display()
+        )),
+        Err(message) => state.line(format!("Diagnostic export failed: {message}")),
+    }
+}
+
 fn handle_line(
     line: String,
     state: &mut UiState,
     repository: &Path,
     selection_path: &Path,
     daemon_stdin: &Arc<Mutex<BufWriter<ChildStdin>>>,
+    diagnostics: &Arc<Mutex<BoundedTail>>,
 ) -> io::Result<bool> {
     let line = line.trim().to_owned();
     if line == "/quit" {
@@ -789,6 +863,10 @@ fn handle_line(
     }
     if line == "/refresh" || line.is_empty() {
         state.summary = RepositorySummary::load(repository);
+        return Ok(false);
+    }
+    if line == "/diagnostics" {
+        export_diagnostics(state, diagnostics);
         return Ok(false);
     }
     if state.active_id.is_some() {
@@ -901,6 +979,7 @@ fn handle_key(
     repository: &Path,
     selection_path: &Path,
     daemon_stdin: &Arc<Mutex<BufWriter<ChildStdin>>>,
+    diagnostics: &Arc<Mutex<BoundedTail>>,
 ) -> io::Result<bool> {
     if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
         return Ok(false);
@@ -921,13 +1000,20 @@ fn handle_key(
     if state.active_id.is_some() {
         return Ok(false);
     }
-    if state.daemon != DaemonState::Ready {
+    if state.daemon == DaemonState::Starting {
         return Ok(false);
     }
     match key.code {
         KeyCode::Enter => {
             let line = state.take_input();
-            handle_line(line, state, repository, selection_path, daemon_stdin)
+            handle_line(
+                line,
+                state,
+                repository,
+                selection_path,
+                daemon_stdin,
+                diagnostics,
+            )
         }
         KeyCode::Char(character)
             if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
@@ -1039,7 +1125,7 @@ fn handle_mouse(
                     state.line(format!("Navigation failed: {cause}"));
                 }
             } else if mouse.row == layout.input_row
-                && state.daemon == DaemonState::Ready
+                && state.daemon != DaemonState::Starting
                 && state.active_id.is_none()
             {
                 let input_origin = HORIZONTAL_PADDING.saturating_add(2);
@@ -1189,7 +1275,7 @@ fn run(repository: PathBuf, daemon_path: PathBuf, selection_path: PathBuf) -> io
     let _terminal = TerminalGuard::enter()?;
     spawn_terminal_reader(sender.clone());
     spawn_diagnostic_reader(daemon_stderr, diagnostics.clone());
-    spawn_daemon_reader(daemon_stdout, diagnostics, sender.clone());
+    spawn_daemon_reader(daemon_stdout, diagnostics.clone(), sender.clone());
     spawn_startup_deadline(sender);
     send_request(
         &daemon_stdin,
@@ -1209,9 +1295,14 @@ fn run(repository: PathBuf, daemon_path: PathBuf, selection_path: PathBuf) -> io
     let mut layout = render(&state)?;
     while let Ok(input) = receiver.recv() {
         let should_quit = match input {
-            Input::Terminal(TerminalEvent::Key(key)) => {
-                handle_key(key, &mut state, &repository, &selection_path, &daemon_stdin)?
-            }
+            Input::Terminal(TerminalEvent::Key(key)) => handle_key(
+                key,
+                &mut state,
+                &repository,
+                &selection_path,
+                &daemon_stdin,
+                &diagnostics,
+            )?,
             Input::Terminal(TerminalEvent::Mouse(mouse)) => handle_mouse(
                 mouse,
                 &layout,
@@ -1288,10 +1379,51 @@ mod tests {
     }
 
     #[test]
-    fn diagnostic_summary_keeps_the_actionable_tail_without_flooding_the_pane() {
-        let summary = diagnostic_summary(&format!("{}root cause", "x".repeat(1024)));
-        assert_eq!(summary.chars().count(), 512);
-        assert!(summary.ends_with("root cause"));
+    fn diagnostic_summary_excludes_unstructured_process_output() {
+        let summary = diagnostic_summary("token=private-value");
+        assert!(summary.contains("unstructured line(s) excluded"));
+        assert!(!summary.contains("private-value"));
+    }
+
+    #[test]
+    fn diagnostic_export_is_opt_in_metadata_only() {
+        let directory = env::temp_dir().join(format!(
+            "lantern-terminal-diagnostics-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        fs::create_dir(&directory).expect("create diagnostic fixture");
+        let record = lantern_diagnostics::Record::new(
+            lantern_diagnostics::Level::Info,
+            lantern_diagnostics::Component::Daemon,
+            lantern_diagnostics::Code::DaemonStarted,
+        );
+        let stderr = format!(
+            "password=private-value\n{}\n",
+            serde_json::to_string(&record).expect("serialize record")
+        );
+
+        let path = write_diagnostic_bundle(&directory, DaemonState::Ready, &stderr)
+            .expect("write diagnostic bundle");
+        let contents = fs::read_to_string(&path).expect("read diagnostic bundle");
+        let bundle: lantern_diagnostics::Bundle =
+            serde_json::from_str(&contents).expect("decode diagnostic bundle");
+        assert_eq!(bundle.records, [record]);
+        assert_eq!(bundle.ignored_unstructured_lines, 1);
+        assert!(!contents.contains("private-value"));
+        #[cfg(unix)]
+        assert_eq!(
+            fs::metadata(&path)
+                .expect("diagnostic metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        fs::remove_dir_all(directory).expect("remove diagnostic fixture");
     }
 
     #[test]
@@ -1329,6 +1461,9 @@ mod tests {
         assert_eq!(state.active_id, None);
         assert_eq!(state.accepted_id, None);
         assert!(state.transcript.iter().any(
+            |item| matches!(item, TranscriptItem::Line(line) if line.contains("unstructured line(s) excluded"))
+        ));
+        assert!(!state.transcript.iter().any(
             |item| matches!(item, TranscriptItem::Line(line) if line.contains("last diagnostic"))
         ));
     }

@@ -172,6 +172,7 @@ lantern/
 │   ├── agent-runtime/           # agent loop and provider abstractions
 │   ├── change-engine/           # change sets, chapters, replay, anchors
 │   ├── code-intelligence/       # search, syntax, evidence, repository model
+│   ├── diagnostics/             # metadata-only records and local export
 │   ├── learning-engine/         # missions, guidance, learner state
 │   ├── planning-engine/         # briefs, plans, decisions, approvals
 │   ├── policy-engine/           # capabilities and permission enforcement
@@ -292,6 +293,18 @@ requires all operation capabilities before admission. Local reads and model
 transmission are separate, revocable session grants; repository write and
 process execution are hard-denied in Quick Ask. There is no implicit trust,
 parent-directory inheritance, saved wildcard, or approval fallback.
+
+`P1-06` is deliberately deferred by
+[ADR 002](decisions/002-defer-sqlite-until-needed.md). The current session has
+no durable operational state that justifies a database, and adding SQLx plus an
+async runtime before Quick Ask proves useful would violate the smallest-
+coherent-product rule.
+
+The `P1-08` slice emits bounded, versioned diagnostic JSONL containing only
+typed event codes, timestamps, operation IDs, and runtime metadata. Arbitrary
+messages, source, prompts, paths, environment values, and provider stderr are
+excluded by schema. `/diagnostics` is an explicit local export available after
+daemon failure; Lantern never creates or transmits a bundle automatically.
 
 ### Exit criteria
 
