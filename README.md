@@ -75,6 +75,7 @@ More detail is captured in:
 - [docs/EVALUATION_STRATEGY.md](docs/EVALUATION_STRATEGY.md)
 - [docs/FIRST_USEFUL_SLICE.md](docs/FIRST_USEFUL_SLICE.md)
 - [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md)
+- [docs/CREDENTIALS.md](docs/CREDENTIALS.md)
 
 ## Contributor verification
 

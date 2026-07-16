@@ -631,6 +631,10 @@ printf '%s\n' "$$" > pi.pid
 IFS= read -r prompt
 printf '%s\n' "$prompt" > prompt.json
 printf '%s\n' '{"type":"response","command":"prompt","success":true}'
+if [[ ${LANTERN_FAKE_PI_MODE:?} == rejected ]]; then
+    printf '%s\n' '{"type":"response","command":"prompt","success":false,"error":"credential sk-provider-response-secret was rejected"}'
+    exit 0
+fi
 if [[ ${LANTERN_FAKE_PI_MODE:?} == stderr-close ]]; then
     printf '%s\n' 'sk-provider-secret' >&2
     exit 0
@@ -909,6 +913,53 @@ fn provider_stderr_is_not_copied_into_user_visible_errors() {
     assert!(message.contains("provider stderr was excluded"));
     assert!(!message.contains("sk-provider-secret"));
     while !matches!(daemon.next(), Event::Settled { id: 34 }) {}
+    fs::remove_dir_all(root).expect("remove repository fixture");
+    fs::remove_dir_all(model_workdir).expect("remove model fixture");
+}
+
+#[cfg(unix)]
+#[test]
+fn provider_rejection_detail_is_not_copied_into_user_visible_errors() {
+    let root = fixture("pi-rejection-private-repository", "fn selected() {}\n");
+    let model_workdir = fixture("pi-rejection-private-workdir", "private\n");
+    let pi_bin = fake_pi(&model_workdir);
+    let mut daemon = Daemon::spawn_with_pi(&pi_bin, &model_workdir, "rejected");
+    daemon.initialize();
+    daemon.trust_model(&root);
+    daemon.send(&Request::AskAgentSelection {
+        id: 35,
+        repository: root.clone(),
+        query: "Explain this".into(),
+        selection: SelectionContext {
+            relative_path: "sample.rs".into(),
+            language: Some("rust".into()),
+            start_line: 1,
+            start_column: 1,
+            end_line: 1,
+            end_column: 17,
+            text: "fn selected() {}".into(),
+            document_modified: false,
+        },
+    });
+
+    let (message, recovery) = loop {
+        if let Event::Error {
+            id: Some(35),
+            message,
+            recovery,
+        } = daemon.next()
+        {
+            break (message, recovery);
+        }
+    };
+    assert_eq!(
+        message,
+        "Pi rejected the request; provider detail was excluded"
+    );
+    assert!(!message.contains("sk-provider-response-secret"));
+    assert!(recovery.contains("inspect provider status"));
+    assert!(recovery.contains("use `/login` for OpenAI Codex if required"));
+    while !matches!(daemon.next(), Event::Settled { id: 35 }) {}
     fs::remove_dir_all(root).expect("remove repository fixture");
     fs::remove_dir_all(model_workdir).expect("remove model fixture");
 }

@@ -817,10 +817,7 @@ fn run_pi_operation(
                     }
                     Some("agent_settled") => return Ok(true),
                     Some("response") if event["success"] == false => {
-                        return Err(format!(
-                            "Pi rejected the request: {}",
-                            event["error"].as_str().unwrap_or("unknown error")
-                        ));
+                        return Err("Pi rejected the request; provider detail was excluded".into());
                     }
                     Some("tool_execution_start") => {
                         cancellation.request();
@@ -865,7 +862,7 @@ fn run_pi_operation(
             &writer,
             Some(id),
             message,
-            "run Pi interactively, use `/login` for OpenAI Codex, then retry `/agent <question>`",
+            "run Pi interactively to inspect provider status, use `/login` for OpenAI Codex if required, then retry `/agent <question>`",
         );
     } else {
         let _ = emit(

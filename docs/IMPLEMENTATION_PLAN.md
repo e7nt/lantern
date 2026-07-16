@@ -306,6 +306,13 @@ messages, source, prompts, paths, environment values, and provider stderr are
 excluded by schema. `/diagnostics` is an explicit local export available after
 daemon failure; Lantern never creates or transmits a bundle automatically.
 
+`P1-09` uses delegated authentication for the single explicit Pi driver. The
+developer authenticates directly through Pi's `/login`; Lantern has no
+credential input, protocol field, persistence, refresh path, or provider
+fallback. Provider rejection detail is treated as sensitive and replaced by a
+fixed error with an actionable Pi status and login recovery step. The boundary
+is defined in [the provider credential contract](CREDENTIALS.md).
+
 ### Exit criteria
 
 - Lantern starts the session-scoped daemon only with the agent pane.
