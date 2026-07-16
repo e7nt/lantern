@@ -150,6 +150,40 @@ fn a_duplicate_active_id_is_rejected_without_replacing_the_operation() {
 }
 
 #[test]
+fn a_second_operation_is_rejected_until_the_first_settles() {
+    let root = fixture("single-operation", "first evidence\nsecond evidence\n");
+    let mut daemon = Daemon::spawn();
+    daemon.initialize();
+    daemon.send(&Request::Ask {
+        id: 25,
+        repository: root.clone(),
+        query: "first".into(),
+    });
+    assert!(matches!(daemon.next(), Event::Accepted { id: 25 }));
+    daemon.send(&Request::Ask {
+        id: 26,
+        repository: root.clone(),
+        query: "second".into(),
+    });
+
+    let mut rejected = false;
+    let mut settled = false;
+    while !rejected || !settled {
+        match daemon.next() {
+            Event::Error {
+                id: Some(26),
+                message,
+                ..
+            } if message.contains("another operation") => rejected = true,
+            Event::Settled { id: 25 } => settled = true,
+            Event::Accepted { id: 26 } => panic!("second operation was admitted"),
+            _ => {}
+        }
+    }
+    fs::remove_dir_all(root).expect("remove fixture");
+}
+
+#[test]
 fn malformed_json_does_not_poison_the_next_frame() {
     let mut daemon = Daemon::spawn();
     daemon.send_raw(b"{not-json}");
@@ -311,9 +345,19 @@ fn fake_pi(root: &Path) -> PathBuf {
         r#"#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" > invocation.args
+printf '%s\n' "$$" > pi.pid
 IFS= read -r prompt
 printf '%s\n' "$prompt" > prompt.json
 printf '%s\n' '{"type":"response","command":"prompt","success":true}'
+if [[ ${LANTERN_FAKE_PI_MODE:?} == malformed ]]; then
+    printf '%s\n' 'not-json'
+    while :; do
+        read -r -t 1 _ || true
+    done
+fi
+if [[ ${LANTERN_FAKE_PI_MODE:?} == stderr-flood ]]; then
+    head -c 131072 /dev/zero | tr '\0' x >&2
+fi
 if [[ ${LANTERN_FAKE_PI_MODE:?} == cancel ]]; then
     IFS= read -r abort
     printf '%s\n' "$abort" > abort.json
@@ -502,6 +546,87 @@ fn streams_pi_rpc_without_putting_source_in_process_arguments() {
         fs::read_to_string(root.join("sample.rs")).unwrap(),
         "fn selected() {}\n"
     );
+    fs::remove_dir_all(root).expect("remove repository fixture");
+    fs::remove_dir_all(model_workdir).expect("remove model fixture");
+}
+
+#[cfg(unix)]
+#[test]
+fn continuously_drains_and_bounds_pi_stderr() {
+    let root = fixture("pi-stderr-repository", "fn selected() {}\n");
+    let model_workdir = fixture("pi-stderr-workdir", "private\n");
+    let pi_bin = fake_pi(&model_workdir);
+    let mut daemon = Daemon::spawn_with_pi(&pi_bin, &model_workdir, "stderr-flood");
+    daemon.initialize();
+    daemon.send(&Request::AskAgentSelection {
+        id: 27,
+        repository: root.clone(),
+        query: "Explain this".into(),
+        selection: SelectionContext {
+            relative_path: "sample.rs".into(),
+            language: Some("rust".into()),
+            start_line: 1,
+            start_column: 1,
+            end_line: 1,
+            end_column: 17,
+            text: "fn selected() {}".into(),
+            document_modified: false,
+        },
+    });
+
+    while !matches!(daemon.next(), Event::Settled { id: 27 }) {}
+    fs::remove_dir_all(root).expect("remove repository fixture");
+    fs::remove_dir_all(model_workdir).expect("remove model fixture");
+}
+
+#[cfg(unix)]
+#[test]
+fn reaps_pi_after_a_malformed_stream_event() {
+    let root = fixture("pi-malformed-repository", "fn selected() {}\n");
+    let model_workdir = fixture("pi-malformed-workdir", "private\n");
+    let pi_bin = fake_pi(&model_workdir);
+    let mut daemon = Daemon::spawn_with_pi(&pi_bin, &model_workdir, "malformed");
+    daemon.initialize();
+    daemon.send(&Request::AskAgentSelection {
+        id: 28,
+        repository: root.clone(),
+        query: "Explain this".into(),
+        selection: SelectionContext {
+            relative_path: "sample.rs".into(),
+            language: Some("rust".into()),
+            start_line: 1,
+            start_column: 1,
+            end_line: 1,
+            end_column: 17,
+            text: "fn selected() {}".into(),
+            document_modified: false,
+        },
+    });
+
+    let mut reported = false;
+    loop {
+        match daemon.next() {
+            Event::Error {
+                id: Some(28),
+                message,
+                ..
+            } if message.contains("invalid JSON") => reported = true,
+            Event::Settled { id: 28 } => break,
+            _ => {}
+        }
+    }
+    assert!(reported, "malformed Pi event was not reported");
+    let pid = fs::read_to_string(model_workdir.join("pi.pid")).expect("read Pi pid");
+    let alive = Command::new("kill")
+        .args(["-0", pid.trim()])
+        .output()
+        .expect("probe Pi process")
+        .status
+        .success();
+    if alive {
+        let _ = Command::new("kill").args(["-9", pid.trim()]).status();
+    }
+    assert!(!alive, "Pi process {pid} survived malformed stream cleanup");
     fs::remove_dir_all(root).expect("remove repository fixture");
     fs::remove_dir_all(model_workdir).expect("remove model fixture");
 }

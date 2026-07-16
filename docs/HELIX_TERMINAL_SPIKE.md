@@ -149,6 +149,9 @@ Live acceptance results:
   daemon remained alive; closing it returned to the same session.
 - `/quit` removed the tmux session and all four scoped processes.
 - Four Rust unit/contract tests and six repository script tests passed.
+- A live `/bin/false` daemon probe left the Lantern pane visible with an
+  actionable failure message, working Git action, and `Ctrl-d` exit instead of
+  closing the pane or restarting silently.
 
 Selection-context acceptance result:
 
@@ -215,9 +218,9 @@ Explorer-preview result:
   and the limits of its surrounding context.
 - DeepEval `quick_ask` v2 passed all four live cases through Pi `0.80.6`,
   `openai-codex`, and `gpt-5.4`.
-- Five protocol invariant tests, five pane tests, seventeen daemon integration
-  tests, all 15 Helix library tests, strict Clippy, release builds, fixture
-  tests, and byte-for-byte clean patch replay pass.
+- Six protocol/library invariant tests, two daemon unit tests, eight pane tests,
+  twenty daemon integration tests, all 15 Helix library tests, strict Clippy,
+  release builds, fixture tests, and byte-for-byte clean patch replay pass.
 
 ADR 001 therefore accepts the Helix-centered frontend for v0.1. Code OSS is a
 rejected alternative, not a maintained fallback. The next phase promotes the

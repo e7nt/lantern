@@ -12,8 +12,8 @@ use crossterm::terminal::{
 };
 use crossterm::{execute, queue};
 use lantern_terminal_spike::{
-    ChangeProposal, Event, Evidence, MAX_SELECTION_BYTES, PROTOCOL_VERSION, Request,
-    SelectionContext, SymbolContext, SymbolContextExport, search_term,
+    BoundedTail, ChangeProposal, Event, Evidence, MAX_DIAGNOSTIC_BYTES, MAX_SELECTION_BYTES,
+    PROTOCOL_VERSION, Request, SelectionContext, SymbolContext, SymbolContextExport, search_term,
 };
 use std::env;
 use std::fs;
@@ -57,11 +57,20 @@ const LINK: Color = Color::Rgb {
     b: 252,
 };
 const HORIZONTAL_PADDING: u16 = 2;
+const DAEMON_STARTUP_TIMEOUT: Duration = Duration::from_secs(2);
 
 enum Input {
     Terminal(TerminalEvent),
     Daemon(Event),
-    DaemonClosed,
+    DaemonClosed { diagnostics: String },
+    DaemonStartupTimeout,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DaemonState {
+    Starting,
+    Ready,
+    Unavailable,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -113,6 +122,7 @@ struct UiState {
     transcript: Vec<TranscriptItem>,
     scroll_from_bottom: usize,
     summary: RepositorySummary,
+    daemon: DaemonState,
     active_id: Option<u64>,
     accepted_id: Option<u64>,
     next_id: u64,
@@ -125,11 +135,10 @@ impl UiState {
         Self {
             input: Vec::new(),
             cursor: 0,
-            transcript: vec![TranscriptItem::Line(
-                "Select a symbol in Helix, press Ctrl-a, and ask. Ctrl-d quits.".into(),
-            )],
+            transcript: vec![TranscriptItem::Line("Starting the local agent…".into())],
             scroll_from_bottom: 0,
             summary: RepositorySummary::load(repository),
+            daemon: DaemonState::Starting,
             active_id: None,
             accepted_id: None,
             next_id: 1,
@@ -164,7 +173,7 @@ impl UiState {
     }
 
     fn begin_operation(&mut self) -> Option<u64> {
-        if self.active_id.is_some() {
+        if self.daemon != DaemonState::Ready || self.active_id.is_some() {
             return None;
         }
         let id = self.next_id;
@@ -172,6 +181,24 @@ impl UiState {
         self.active_id = Some(id);
         self.accepted_id = None;
         Some(id)
+    }
+
+    fn daemon_failed(&mut self, reason: &str, diagnostics: &str) {
+        if self.daemon == DaemonState::Unavailable {
+            return;
+        }
+        self.daemon = DaemonState::Unavailable;
+        self.active_id = None;
+        self.accepted_id = None;
+        self.navigated_for = None;
+        self.line(format!("Agent unavailable: {reason}"));
+        let diagnostics = diagnostic_summary(diagnostics);
+        if !diagnostics.is_empty() {
+            self.line(format!("Daemon diagnostics: {diagnostics}"));
+        }
+        self.line(
+            "Editing and Git remain available. Restart the Lantern session to restore the agent.",
+        );
     }
 }
 
@@ -242,6 +269,14 @@ fn clean_text(text: &str) -> String {
             character if character.is_control() => None,
             character => Some(character),
         })
+        .collect()
+}
+
+fn diagnostic_summary(text: &str) -> String {
+    let cleaned = clean_text(text.trim());
+    let characters: Vec<char> = cleaned.chars().collect();
+    characters[characters.len().saturating_sub(512)..]
+        .iter()
         .collect()
 }
 
@@ -427,10 +462,11 @@ fn render(state: &UiState) -> io::Result<Layout> {
         }
     }
 
-    let prompt = if state.active_id.is_some() {
-        "›  Working…  Esc to interrupt".to_owned()
-    } else {
-        format!("› {}", state.input.iter().collect::<String>())
+    let prompt = match (state.daemon, state.active_id) {
+        (DaemonState::Starting, _) => "›  Starting local agent…".to_owned(),
+        (DaemonState::Unavailable, _) => "›  Agent unavailable · Ctrl-d quits".to_owned(),
+        (DaemonState::Ready, Some(_)) => "›  Working…  Esc to interrupt".to_owned(),
+        (DaemonState::Ready, None) => format!("› {}", state.input.iter().collect::<String>()),
     };
     queue!(
         stdout,
@@ -441,7 +477,7 @@ fn render(state: &UiState) -> io::Result<Layout> {
         SetAttribute(Attribute::NoBold),
         SetForegroundColor(TEXT)
     )?;
-    if state.active_id.is_none() {
+    if state.daemon == DaemonState::Ready && state.active_id.is_none() {
         let cursor_column = usize::from(HORIZONTAL_PADDING)
             .saturating_add(2)
             .saturating_add(state.cursor)
@@ -547,7 +583,30 @@ fn spawn_terminal_reader(sender: Sender<Input>) {
     });
 }
 
-fn spawn_daemon_reader(reader: impl io::Read + Send + 'static, sender: Sender<Input>) {
+fn spawn_diagnostic_reader(
+    mut reader: impl io::Read + Send + 'static,
+    diagnostics: Arc<Mutex<BoundedTail>>,
+) {
+    thread::spawn(move || {
+        let mut chunk = [0_u8; 4096];
+        loop {
+            match reader.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(read) => diagnostics
+                    .lock()
+                    .expect("daemon diagnostics lock")
+                    .push(&chunk[..read]),
+                Err(_) => break,
+            }
+        }
+    });
+}
+
+fn spawn_daemon_reader(
+    reader: impl io::Read + Send + 'static,
+    diagnostics: Arc<Mutex<BoundedTail>>,
+    sender: Sender<Input>,
+) {
     thread::spawn(move || {
         for line in BufReader::new(reader).lines() {
             let Ok(line) = line else { break };
@@ -566,7 +625,15 @@ fn spawn_daemon_reader(reader: impl io::Read + Send + 'static, sender: Sender<In
                 }
             }
         }
-        let _ = sender.send(Input::DaemonClosed);
+        let diagnostics = diagnostics.lock().expect("daemon diagnostics lock").text();
+        let _ = sender.send(Input::DaemonClosed { diagnostics });
+    });
+}
+
+fn spawn_startup_deadline(sender: Sender<Input>) {
+    thread::spawn(move || {
+        thread::sleep(DAEMON_STARTUP_TIMEOUT);
+        let _ = sender.send(Input::DaemonStartupTimeout);
     });
 }
 
@@ -682,15 +749,30 @@ fn handle_line(
         cancel_active(state, daemon_stdin)?;
         return Ok(false);
     }
+    if line == "/git" {
+        open_git(state, repository);
+        return Ok(false);
+    }
+    if line == "/refresh" || line.is_empty() {
+        state.summary = RepositorySummary::load(repository);
+        return Ok(false);
+    }
     if state.active_id.is_some() {
         state.line("The agent is working. Click Cancel to interrupt it.");
         return Ok(false);
     }
-    if line == "/git" {
-        open_git(state, repository);
-    } else if line == "/refresh" || line.is_empty() {
-        state.summary = RepositorySummary::load(repository);
-    } else if let Some(query) = line.strip_prefix("/agent ") {
+    if state.daemon != DaemonState::Ready {
+        let message = match state.daemon {
+            DaemonState::Starting => "The local agent is still starting.",
+            DaemonState::Unavailable => {
+                "The local agent is unavailable. Restart the Lantern session to retry."
+            }
+            DaemonState::Ready => unreachable!(),
+        };
+        state.line(message);
+        return Ok(false);
+    }
+    if let Some(query) = line.strip_prefix("/agent ") {
         start_agent_question(state, repository, selection_path, daemon_stdin, query)?;
     } else if let Some(query) = line.strip_prefix("/ask ") {
         match selection_for_question(state, selection_path) {
@@ -764,7 +846,7 @@ fn handle_key(
         return Ok(false);
     }
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('a') {
-        if state.active_id.is_none() {
+        if state.daemon == DaemonState::Ready && state.active_id.is_none() {
             prepare_selection(state, selection_path);
         }
         return Ok(false);
@@ -777,6 +859,9 @@ fn handle_key(
         return Ok(false);
     }
     if state.active_id.is_some() {
+        return Ok(false);
+    }
+    if state.daemon != DaemonState::Ready {
         return Ok(false);
     }
     match key.code {
@@ -846,6 +931,12 @@ fn handle_toolbar_action(
     daemon_stdin: &Arc<Mutex<BufWriter<ChildStdin>>>,
 ) -> io::Result<bool> {
     match action {
+        ToolbarAction::Ask if state.daemon == DaemonState::Starting => {
+            state.line("The local agent is still starting.")
+        }
+        ToolbarAction::Ask if state.daemon == DaemonState::Unavailable => {
+            state.line("The local agent is unavailable. Restart the Lantern session to retry.")
+        }
         ToolbarAction::Ask if state.active_id.is_none() => prepare_selection(state, selection_path),
         ToolbarAction::Ask => state.line("The agent is already working."),
         ToolbarAction::Git => open_git(state, repository),
@@ -887,7 +978,10 @@ fn handle_mouse(
                 if let Err(cause) = navigate(evidence) {
                     state.line(format!("Navigation failed: {cause}"));
                 }
-            } else if mouse.row == layout.input_row && state.active_id.is_none() {
+            } else if mouse.row == layout.input_row
+                && state.daemon == DaemonState::Ready
+                && state.active_id.is_none()
+            {
                 let input_origin = HORIZONTAL_PADDING.saturating_add(2);
                 state.cursor =
                     usize::from(mouse.column.saturating_sub(input_origin)).min(state.input.len());
@@ -900,7 +994,11 @@ fn handle_mouse(
 
 fn handle_daemon_event(event: Event, state: &mut UiState, selection_path: &Path) -> io::Result<()> {
     match event {
-        Event::Initialized { .. } => {}
+        Event::Initialized { .. } => {
+            state.daemon = DaemonState::Ready;
+            state.transcript.clear();
+            state.line("Select a symbol in Helix, press Ctrl-a, and ask. Ctrl-d quits.");
+        }
         Event::Accepted { id } => {
             if state.active_id == Some(id) {
                 state.accepted_id = Some(id);
@@ -952,6 +1050,10 @@ fn handle_daemon_event(event: Event, state: &mut UiState, selection_path: &Path)
             message,
             recovery,
         } => {
+            if id.is_none() {
+                state.daemon_failed(&message, &format!("Recovery: {recovery}"));
+                return Ok(());
+            }
             let label = id.map_or_else(|| "error".into(), |id| format!("error [{id}]"));
             state.line(format!("{label}: {message}"));
             state.line(format!("Recovery: {recovery}"));
@@ -971,30 +1073,46 @@ fn handle_daemon_event(event: Event, state: &mut UiState, selection_path: &Path)
     Ok(())
 }
 
-fn close_session(daemon_stdin: &Arc<Mutex<BufWriter<ChildStdin>>>) -> io::Result<()> {
-    send_request(daemon_stdin, &Request::Shutdown)?;
-    let _ = Command::new("tmux")
+fn close_session(
+    daemon_stdin: &Arc<Mutex<BufWriter<ChildStdin>>>,
+    daemon_state: DaemonState,
+) -> io::Result<()> {
+    let shutdown = if daemon_state == DaemonState::Ready {
+        send_request(daemon_stdin, &Request::Shutdown)
+    } else {
+        Ok(())
+    };
+    let status = Command::new("tmux")
         .arg("kill-session")
         .arg("-t")
         .arg(env::var("LANTERN_SESSION").unwrap_or_default())
-        .status();
-    Ok(())
+        .status()?;
+    if !status.success() {
+        return Err(io::Error::other(format!(
+            "tmux could not close the Lantern session: {status}"
+        )));
+    }
+    shutdown
 }
 
 fn run(repository: PathBuf, daemon_path: PathBuf, selection_path: PathBuf) -> io::Result<()> {
     let mut daemon = Command::new(daemon_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
+        .stderr(Stdio::piped())
         .spawn()?;
     let daemon_stdin = Arc::new(Mutex::new(BufWriter::new(
         daemon.stdin.take().expect("daemon stdin"),
     )));
     let daemon_stdout = daemon.stdout.take().expect("daemon stdout");
+    let daemon_stderr = daemon.stderr.take().expect("daemon stderr");
+    let diagnostics = Arc::new(Mutex::new(BoundedTail::new(MAX_DIAGNOSTIC_BYTES)));
     let (sender, receiver): (Sender<Input>, Receiver<Input>) = mpsc::channel();
     let _terminal = TerminalGuard::enter()?;
     spawn_terminal_reader(sender.clone());
-    spawn_daemon_reader(daemon_stdout, sender);
+    spawn_diagnostic_reader(daemon_stderr, diagnostics.clone());
+    spawn_daemon_reader(daemon_stdout, diagnostics, sender.clone());
+    spawn_startup_deadline(sender);
     send_request(
         &daemon_stdin,
         &Request::Initialize {
@@ -1021,17 +1139,28 @@ fn run(repository: PathBuf, daemon_path: PathBuf, selection_path: PathBuf) -> io
             Input::Terminal(_) => false,
             Input::Daemon(event) => {
                 handle_daemon_event(event, &mut state, &selection_path)?;
+                if state.daemon == DaemonState::Unavailable {
+                    let _ = daemon.kill();
+                }
                 false
             }
-            Input::DaemonClosed => {
-                return Err(io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    "Lantern daemon exited; rebuild it and restart the spike",
-                ));
+            Input::DaemonClosed { diagnostics } => {
+                state.daemon_failed("the daemon process exited", &diagnostics);
+                false
+            }
+            Input::DaemonStartupTimeout => {
+                if state.daemon == DaemonState::Starting {
+                    state.daemon_failed(
+                        "startup did not complete within two seconds",
+                        "Check the daemon binary and restart the Lantern session.",
+                    );
+                    let _ = daemon.kill();
+                }
+                false
             }
         };
         if should_quit {
-            close_session(&daemon_stdin)?;
+            close_session(&daemon_stdin, state.daemon)?;
             break;
         }
         layout = render(&state)?;
@@ -1074,6 +1203,13 @@ mod tests {
     }
 
     #[test]
+    fn diagnostic_summary_keeps_the_actionable_tail_without_flooding_the_pane() {
+        let summary = diagnostic_summary(&format!("{}root cause", "x".repeat(1024)));
+        assert_eq!(summary.chars().count(), 512);
+        assert!(summary.ends_with("root cause"));
+    }
+
+    #[test]
     fn wrapping_preserves_explicit_blank_lines() {
         assert_eq!(wrap_text("abcd\n\nef", 2), ["ab", "cd", "", "ef"]);
     }
@@ -1089,9 +1225,41 @@ mod tests {
     #[test]
     fn an_operation_is_reserved_before_a_second_submit_can_run() {
         let mut state = UiState::new(Path::new("."));
+        state.daemon = DaemonState::Ready;
         assert_eq!(state.begin_operation(), Some(1));
         assert_eq!(state.begin_operation(), None);
         assert_eq!(state.active_id, Some(1));
         assert_eq!(state.next_id, 2);
+    }
+
+    #[test]
+    fn daemon_failure_keeps_the_pane_available_and_clears_operation_state() {
+        let mut state = UiState::new(Path::new("."));
+        state.daemon = DaemonState::Ready;
+        state.active_id = Some(7);
+        state.accepted_id = Some(7);
+        state.daemon_failed("process exited", "last diagnostic");
+
+        assert_eq!(state.daemon, DaemonState::Unavailable);
+        assert_eq!(state.active_id, None);
+        assert_eq!(state.accepted_id, None);
+        assert!(state.transcript.iter().any(
+            |item| matches!(item, TranscriptItem::Line(line) if line.contains("last diagnostic"))
+        ));
+    }
+
+    #[test]
+    fn initialization_is_the_explicit_ready_boundary() {
+        let mut state = UiState::new(Path::new("."));
+        assert_eq!(state.daemon, DaemonState::Starting);
+        handle_daemon_event(
+            Event::Initialized {
+                protocol_version: PROTOCOL_VERSION,
+            },
+            &mut state,
+            Path::new("unused"),
+        )
+        .expect("handle initialization");
+        assert_eq!(state.daemon, DaemonState::Ready);
     }
 }

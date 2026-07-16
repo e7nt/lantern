@@ -1,13 +1,14 @@
 use lantern_terminal_spike::{
-    ChangeProposal, Event, Evidence, FrameError, MAX_EVIDENCE, MAX_FILE_BYTES, MAX_FILES,
-    MAX_SELECTION_BYTES, PROTOCOL_VERSION, Request, SelectionContext, SymbolContext,
-    SymbolLocation, read_frame, validate_selection, validate_symbol_context,
+    BoundedTail, ChangeProposal, Event, Evidence, FrameError, MAX_DIAGNOSTIC_BYTES,
+    MAX_EVENT_BYTES, MAX_EVIDENCE, MAX_FILE_BYTES, MAX_FILES, MAX_SELECTION_BYTES,
+    PROTOCOL_VERSION, Request, SelectionContext, SymbolContext, SymbolLocation, read_frame,
+    validate_selection, validate_symbol_context,
 };
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -21,6 +22,35 @@ struct Cancellation {
     requested: AtomicBool,
     requested_at: Mutex<Option<Instant>>,
     abort_stdin: Mutex<Option<ChildStdin>>,
+}
+
+struct ChildGuard {
+    process: Child,
+    reaped: bool,
+}
+
+impl ChildGuard {
+    fn new(process: Child) -> Self {
+        Self {
+            process,
+            reaped: false,
+        }
+    }
+
+    fn stop(&mut self) {
+        if self.reaped {
+            return;
+        }
+        let _ = self.process.kill();
+        let _ = self.process.wait();
+        self.reaped = true;
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        self.stop();
+    }
 }
 
 impl Cancellation {
@@ -60,10 +90,22 @@ impl Cancellation {
 }
 
 fn emit(writer: &SharedWriter, event: &Event) -> io::Result<()> {
+    let frame = encode_event(event)?;
     let mut writer = writer.lock().expect("stdout lock");
-    serde_json::to_writer(&mut *writer, event)?;
+    writer.write_all(&frame)?;
     writer.write_all(b"\n")?;
     writer.flush()
+}
+
+fn encode_event(event: &Event) -> io::Result<Vec<u8>> {
+    let frame = serde_json::to_vec(event).map_err(io::Error::other)?;
+    if frame.len() > MAX_EVENT_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("protocol event exceeds the {MAX_EVENT_BYTES}-byte limit"),
+        ));
+    }
+    Ok(frame)
 }
 
 fn error(writer: &SharedWriter, id: Option<u64>, message: impl Into<String>, recovery: &str) {
@@ -87,6 +129,16 @@ fn admit(id: u64, operations: &Operations, writer: &SharedWriter) -> Option<Arc<
             Some(id),
             "operation identifier is already active",
             "wait for the active operation or cancel it",
+        );
+        return None;
+    }
+    if !active.is_empty() {
+        drop(active);
+        error(
+            writer,
+            Some(id),
+            "another operation is active",
+            "wait for the active operation to settle or cancel it",
         );
         return None;
     }
@@ -586,7 +638,8 @@ fn run_pi_operation(
             }
         }
 
-        let mut child = Command::new(pi_bin)
+        let mut child = ChildGuard::new(
+            Command::new(pi_bin)
             .args([
                 "--mode",
                 "rpc",
@@ -609,8 +662,13 @@ fn run_pi_operation(
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|cause| format!("cannot start Pi RPC driver: {cause}"))?;
-        let mut stdin = child.stdin.take().ok_or("Pi stdin is unavailable")?;
+            .map_err(|cause| format!("cannot start Pi RPC driver: {cause}"))?,
+        );
+        let mut stdin = child
+            .process
+            .stdin
+            .take()
+            .ok_or("Pi stdin is unavailable")?;
         let symbol_prompt = symbol_evidence
             .iter()
             .map(|(kind, evidence)| {
@@ -649,57 +707,58 @@ fn run_pi_operation(
             .map_err(|cause| format!("cannot send Pi prompt: {cause}"))?;
         cancellation.attach_abort(stdin);
 
-        let stderr = child.stderr.take().ok_or("Pi stderr is unavailable")?;
-        let stderr_reader = thread::spawn(move || {
-            let mut message = String::new();
-            let _ = BufReader::new(stderr)
-                .take(8 * 1024)
-                .read_to_string(&mut message);
-            message
-        });
-        let stdout = child.stdout.take().ok_or("Pi stdout is unavailable")?;
-        let mut saw_agent_settled = false;
-        for line in BufReader::new(stdout).lines() {
-            let line = line.map_err(|cause| format!("cannot read Pi event: {cause}"))?;
-            let event: serde_json::Value = serde_json::from_str(&line)
-                .map_err(|cause| format!("Pi emitted invalid JSON: {cause}"))?;
-            match event.get("type").and_then(|value| value.as_str()) {
-                Some("message_update") => {
-                    let delta = &event["assistantMessageEvent"];
-                    if delta["type"] == "text_delta" {
-                        let text = delta["delta"]
-                            .as_str()
-                            .ok_or("Pi text delta is not a string")?;
-                        emit(
-                            &writer,
-                            &Event::TextDelta {
-                                id,
-                                delta: text.to_owned(),
-                            },
-                        )
-                        .map_err(|cause| format!("cannot stream Pi text: {cause}"))?;
+        let stderr = child
+            .process
+            .stderr
+            .take()
+            .ok_or("Pi stderr is unavailable")?;
+        let stderr_reader = thread::spawn(move || drain_diagnostics(stderr));
+        let stdout = child
+            .process
+            .stdout
+            .take()
+            .ok_or("Pi stdout is unavailable")?;
+        let stream_result = (|| -> Result<bool, String> {
+            for line in BufReader::new(stdout).lines() {
+                let line = line.map_err(|cause| format!("cannot read Pi event: {cause}"))?;
+                let event: serde_json::Value = serde_json::from_str(&line)
+                    .map_err(|cause| format!("Pi emitted invalid JSON: {cause}"))?;
+                match event.get("type").and_then(|value| value.as_str()) {
+                    Some("message_update") => {
+                        let delta = &event["assistantMessageEvent"];
+                        if delta["type"] == "text_delta" {
+                            let text = delta["delta"]
+                                .as_str()
+                                .ok_or("Pi text delta is not a string")?;
+                            emit(
+                                &writer,
+                                &Event::TextDelta {
+                                    id,
+                                    delta: text.to_owned(),
+                                },
+                            )
+                            .map_err(|cause| format!("cannot stream Pi text: {cause}"))?;
+                        }
                     }
+                    Some("agent_settled") => return Ok(true),
+                    Some("response") if event["success"] == false => {
+                        return Err(format!(
+                            "Pi rejected the request: {}",
+                            event["error"].as_str().unwrap_or("unknown error")
+                        ));
+                    }
+                    Some("tool_execution_start") => {
+                        cancellation.request();
+                        return Err("Pi requested a tool despite the no-tools boundary".into());
+                    }
+                    _ => {}
                 }
-                Some("agent_settled") => {
-                    saw_agent_settled = true;
-                    break;
-                }
-                Some("response") if event["success"] == false => {
-                    return Err(format!(
-                        "Pi rejected the request: {}",
-                        event["error"].as_str().unwrap_or("unknown error")
-                    ));
-                }
-                Some("tool_execution_start") => {
-                    cancellation.request();
-                    return Err("Pi requested a tool despite the no-tools boundary".into());
-                }
-                _ => {}
             }
-        }
-        let _ = child.kill();
-        let _ = child.wait();
+            Ok(false)
+        })();
+        child.stop();
         let stderr = stderr_reader.join().unwrap_or_default();
+        let saw_agent_settled = stream_result?;
         if !saw_agent_settled && !cancellation.is_requested() {
             return Err(if stderr.trim().is_empty() {
                 "Pi closed before the agent turn settled".into()
@@ -737,6 +796,19 @@ fn run_pi_operation(
         );
     }
     settle(id, &operations, &writer);
+}
+
+fn drain_diagnostics(mut reader: impl Read) -> String {
+    let mut tail = BoundedTail::new(MAX_DIAGNOSTIC_BYTES);
+    let mut chunk = [0_u8; 4096];
+    loop {
+        match reader.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(read) => tail.push(&chunk[..read]),
+            Err(_) => break,
+        }
+    }
+    tail.text()
 }
 
 fn main() -> io::Result<()> {
@@ -1064,4 +1136,27 @@ fn main() -> io::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn event_encoding_rejects_an_unbounded_model_delta() {
+        let event = Event::TextDelta {
+            id: 1,
+            delta: "x".repeat(MAX_EVENT_BYTES),
+        };
+        let error = encode_event(&event).expect_err("oversized event must fail");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn diagnostic_drain_keeps_reading_after_the_tail_is_full() {
+        let diagnostics = [vec![b'x'; MAX_DIAGNOSTIC_BYTES * 4], b"tail".to_vec()].concat();
+        let tail = drain_diagnostics(diagnostics.as_slice());
+        assert_eq!(tail.len(), MAX_DIAGNOSTIC_BYTES);
+        assert!(tail.ends_with("tail"));
+    }
 }
