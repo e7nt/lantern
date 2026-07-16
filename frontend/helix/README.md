@@ -78,11 +78,14 @@ builds after checking out the two recorded upstream repositories, run:
 ```
 
 The Lantern pane starts focused. Click a pane to focus it. In Helix, click to
-position the cursor, drag to select code, and use the wheel to scroll. Press
-`Ctrl-a` after selecting a saved symbol to resolve its bounded LSP context and
-focus Lantern; type the question directly and press Enter. `Space-g` opens the
-10% Lazygit rail. Missing LSP support or a missing repository definition is a
-visible error; Lantern does not replace it with literal search.
+position the cursor, drag to select code, and use the wheel to scroll. The
+workspace starts locked. Enter `/trust read` for local-only questions or
+`/trust model` to additionally allow selected evidence to reach the configured
+model for this session. `/trust none` revokes both grants. Press `Ctrl-a` after
+selecting a saved symbol to resolve its bounded LSP context and focus Lantern;
+type the question directly and press Enter. `Space-g` opens the 10% Lazygit
+rail. Missing trust, LSP support, or a repository definition is a visible
+error; Lantern does not substitute another capability or search path.
 
 The initial Helix explorer is mouse-aware too. Click or wheel over the left
 result list to choose a file, drag across source in the right preview, and
@@ -97,6 +100,12 @@ needed.
 
 Diagnostic commands remain available:
 
+- `/trust` shows the current session access.
+- `/trust read` allows bounded local repository reads without model
+  transmission.
+- `/trust model` allows bounded local reads and selected-evidence transmission
+  to the configured model.
+- `/trust none` immediately returns the idle session to locked state.
 - `/git` opens Lazygit.
 - `/ask <question>` captures the current primary Helix selection through the
   session-scoped bridge and streams its grounded, deterministic acknowledgement.
@@ -152,6 +161,10 @@ and exact hit targets rather than decorative chrome.
 - Cancellation reaches a terminal event within 500 ms locally.
 - Pi authentication and protocol failures are visible and never cause an
   automatic provider fallback.
+- The workspace starts locked; read and model transmission grants are visible,
+  separate, session-local, revocable, and enforced before operation admission.
+- Repository write and process execution requests are hard denials in Quick
+  Ask and never enter an approval queue.
 
 ## Fork criteria
 

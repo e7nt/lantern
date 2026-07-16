@@ -31,6 +31,8 @@ This slice tests Lantern's smallest product promise:
 - The Lantern surface explains whether repository reads and model transmission
   are enabled.
 - File writes and process execution are unavailable to Quick Ask.
+- Trust is session-local: `/trust read` enables local evidence, `/trust model`
+  additionally enables model transmission, and `/trust none` revokes both.
 
 ### Ask
 

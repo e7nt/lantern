@@ -1,0 +1,13 @@
+{"type":"initialized","protocol_version":3}
+{"type":"workspace_configured","repository":"/workspace/lantern","capabilities":["repository_read","network_access"]}
+{"type":"workspace_configuration_failed","message":"repository write access is unavailable in read-only Quick Ask","recovery":"use `/trust read`, `/trust model`, or `/trust none`"}
+{"type":"accepted","id":4}
+{"type":"operation_started","id":4,"search_term":"Pi gpt-5"}
+{"type":"progress","id":4,"files_inspected":25}
+{"type":"evidence","id":4,"evidence":{"relative_path":"src/lib.rs","start_line":4,"start_column":4,"end_line":4,"end_column":10,"excerpt":"fn answer() {}"}}
+{"type":"change_proposal","id":4,"proposal":{"selection":{"relative_path":"src/lib.rs","language":"rust","start_line":4,"start_column":1,"end_line":4,"end_column":13,"text":"fn answer()","document_modified":false},"replacement":"fn explain()"}}
+{"type":"text_delta","id":4,"delta":"The definition is here."}
+{"type":"completed","id":4,"evidence_count":2}
+{"type":"settled","id":4}
+{"type":"cancelled","id":5,"cancellation_latency_ms":12}
+{"type":"error","id":null,"message":"invalid protocol request","recovery":"send one valid JSON request per line"}
