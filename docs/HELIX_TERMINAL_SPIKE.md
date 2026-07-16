@@ -6,7 +6,7 @@
 - **Date:** 2026-07-15
 - **Question:** Can Lantern combine Helix, Lazygit, and a persistent agent pane
   into a smaller coherent product than the current Code OSS foundation?
-- **Runnable artifact:** [`spikes/helix-terminal`](../spikes/helix-terminal/README.md)
+- **Promoted artifact:** [`frontend/helix`](../frontend/helix/README.md)
 
 ## Proposed product surface
 

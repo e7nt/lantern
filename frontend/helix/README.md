@@ -1,14 +1,13 @@
-# Helix terminal integration spike
+# Lantern Helix frontend
 
 ## Status
 
-ADR 001 accepted this Phase 0 experiment as Lantern's frontend direction. This
-directory remains the reproducible spike and proving ground while its accepted
-pieces are promoted into maintained Phase 1 infrastructure; it is not itself a
-release package.
+ADR 001 accepted the Phase 0 terminal experiment as Lantern's frontend
+direction. This directory contains the maintained Helix patches, configuration,
+bridges, and reproducible upstream preparation contract.
 
-The spike tests whether Lantern can provide a coherent terminal environment
-without rebuilding editor and Git behavior:
+Lantern provides a coherent terminal environment without rebuilding editor and
+Git behavior:
 
 ```text
 +-------------------------------------------------+
@@ -61,22 +60,21 @@ Requirements:
   `.lantern/upstream/helix/target/release/hx`
 - the pinned Lazygit build at
   `.lantern/toolchains/lazygit/lazygit`
-- the release spike runtime at
-  `spikes/helix-terminal/runtime/target/release`
+- the maintained release runtime at `target/release`
 - Pi `0.80.6`, authenticated privately for OpenAI Codex by starting `pi`,
   running `/login`, and choosing OpenAI Codex
 
 Launch from the repository to inspect:
 
 ```bash
-./spikes/helix-terminal/launch.sh /path/to/repository
+./scripts/launch-lantern.sh /path/to/repository
 ```
 
 The current development workspace is already prepared. To reproduce the pinned
 builds after checking out the two recorded upstream repositories, run:
 
 ```bash
-./spikes/helix-terminal/prepare.sh
+./frontend/helix/prepare.sh
 ```
 
 The Lantern pane starts focused. Click a pane to focus it. In Helix, click to
@@ -112,7 +110,7 @@ Diagnostic commands remain available:
   range in Helix.
 - `/cancel` interrupts an active stream and reports local cancellation latency.
 - `/refresh` refreshes repository state.
-- `/quit` closes the spike session.
+- `/quit` closes the Lantern session.
 
 Press `Ctrl-d` from an empty, idle Lantern prompt to close the session without
 typing `/quit`. `Esc` remains the interruption shortcut while an agent turn is
@@ -158,13 +156,13 @@ and exact hit targets rather than decorative chrome.
 ## Fork criteria
 
 Stock Helix currently exposes shell commands and editor-context expansions but
-does not expose a supported remote-control or IPC interface. This spike carries
-two auditable Helix patches: one adds the typed navigation, selection export,
-and bounded LSP-context commands; the other adds generic picker mouse
+does not expose a supported remote-control or IPC interface. Lantern therefore
+carries two auditable Helix patches: one adds typed navigation, selection
+export, and bounded LSP-context commands; the other adds generic picker mouse
 interaction. tmux delivers typed commands only. Range conversion and selection
 happen inside Helix.
 
-A Helix fork is justified if any of these remain true after the spike:
+The maintained patch set remains justified while any of these are true:
 
 - Delivering the typed command remains fragile across editor modes or focus.
 - External edits cannot be presented and accepted as coherent editor
@@ -179,5 +177,5 @@ is introduced.
 - Agent-authored file changes.
 - Git mutation outside Lazygit.
 - Voice input and narration.
-- A permanent Helix patch set.
+- Broad or unrelated Helix changes.
 - Windows support.

@@ -1,4 +1,4 @@
-use lantern_terminal_spike::{
+use lantern_protocol::{
     BoundedTail, ChangeProposal, Event, Evidence, FrameError, MAX_DIAGNOSTIC_BYTES,
     MAX_EVENT_BYTES, MAX_EVIDENCE, MAX_FILE_BYTES, MAX_FILES, MAX_SELECTION_BYTES,
     PROTOCOL_VERSION, Request, SelectionContext, SymbolContext, SymbolLocation, read_frame,
@@ -341,7 +341,7 @@ fn stream_answer(
 ) -> io::Result<()> {
     let answer = if let Some(first) = evidence.first() {
         format!(
-            "Found {} exact repository match{}. The strongest evidence is {}:{} and is now selected in Helix. This spike used literal local evidence; symbol and LSP reasoning are not enabled yet.",
+            "Found {} exact repository match{}. The strongest evidence is {}:{} and is now selected in Helix. This first slice uses literal local evidence; symbol and LSP reasoning are not enabled yet.",
             evidence.len(),
             if evidence.len() == 1 { "" } else { "es" },
             first.relative_path.display(),

@@ -204,7 +204,7 @@ intentional idempotent no-op adopted from OpenCode.
 
 1. Inspect only the permission-denial paths relevant to read-only Quick Ask;
    do not import their general tool systems.
-2. Inspect structured crash-report redaction before promoting diagnostics out
-   of the spike runtime.
+2. Inspect structured crash-report redaction before persisting or exporting
+   diagnostics from the maintained runtime.
 3. Re-check upstream revisions when a finding becomes a permanent decision and
    keep the evidence fixture with Lantern's corresponding test.

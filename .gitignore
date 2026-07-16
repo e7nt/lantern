@@ -6,6 +6,6 @@
 /evaluations/.venv/
 **/__pycache__/
 
-# Isolated Rust spike build output.
-/spikes/helix-terminal/runtime/target/
-/spikes/helix-terminal/fixtures/*/target/
+# Rust workspace and isolated fixture build output.
+/target/
+/fixtures/*/target/

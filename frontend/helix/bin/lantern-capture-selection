@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-: "${TMUX:?Lantern selection capture requires the spike tmux session}"
+: "${TMUX:?Lantern selection capture requires the Lantern tmux session}"
 : "${LANTERN_EDITOR_PANE:?Lantern editor pane is not configured}"
 : "${LANTERN_SELECTION_PATH:?Lantern selection path is not configured}"
 

@@ -1,4 +1,4 @@
-use lantern_terminal_spike::{
+use lantern_protocol::{
     Event, Evidence, MAX_FRAME_BYTES, PROTOCOL_VERSION, Request, SelectionContext, SymbolContext,
     SymbolLocation,
 };
@@ -18,13 +18,11 @@ struct Daemon {
 
 impl Daemon {
     fn spawn() -> Self {
-        Self::spawn_command(&mut Command::new(env!(
-            "CARGO_BIN_EXE_lantern-spike-daemon"
-        )))
+        Self::spawn_command(&mut Command::new(env!("CARGO_BIN_EXE_lantern-daemon")))
     }
 
     fn spawn_with_pi(pi_bin: &PathBuf, model_workdir: &PathBuf, mode: &str) -> Self {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_lantern-spike-daemon"));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_lantern-daemon"));
         command
             .env("LANTERN_PI_BIN", pi_bin)
             .env("LANTERN_PI_MODEL", "test-model")
@@ -77,10 +75,10 @@ impl Daemon {
 
 #[test]
 fn golden_wire_fixtures_match_the_v2_types() {
-    for line in include_str!("../../../../protocol/v2/requests.jsonl").lines() {
+    for line in include_str!("../../../protocol/v2/requests.jsonl").lines() {
         serde_json::from_str::<Request>(line).expect("golden request must deserialize");
     }
-    for line in include_str!("../../../../protocol/v2/events.jsonl").lines() {
+    for line in include_str!("../../../protocol/v2/events.jsonl").lines() {
         serde_json::from_str::<Event>(line).expect("golden event must deserialize");
     }
 }
@@ -257,7 +255,7 @@ fn unicode_line_separators_remain_inside_one_jsonl_frame() {
 #[test]
 fn shutdown_cancels_and_settles_workers_before_process_exit() {
     let root = fixture("shutdown", "shutdown evidence\n");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_lantern-spike-daemon"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_lantern-daemon"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
@@ -329,7 +327,7 @@ fn fixture(name: &str, contents: &str) -> PathBuf {
         .expect("clock")
         .as_nanos();
     let root = std::env::temp_dir().join(format!(
-        "lantern-terminal-spike-{name}-{}-{nonce}",
+        "lantern-daemon-{name}-{}-{nonce}",
         std::process::id()
     ));
     fs::create_dir(&root).expect("create fixture");

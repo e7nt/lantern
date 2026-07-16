@@ -11,7 +11,7 @@ if [[ $# -ne 5 ]]; then
 	exit 2
 fi
 
-: "${LANTERN_REPO:?Lantern spike repository is not configured}"
+: "${LANTERN_REPO:?Lantern repository is not configured}"
 : "${LANTERN_EDITOR_PANE:?Lantern editor pane is not configured}"
 
 requested_path=$1
@@ -26,7 +26,7 @@ for coordinate in "${coordinates[@]}"; do
 done
 
 if [[ $requested_path == *$'\n'* || $requested_path == *"'"* ]]; then
-	echo "The navigation spike does not support newlines or single quotes in paths." >&2
+	echo "Lantern navigation does not support newlines or single quotes in paths." >&2
 	exit 2
 fi
 
@@ -49,7 +49,7 @@ fi
 relative=$(realpath --relative-to "$repo" "$target")
 command="lantern-navigate '$relative' ${coordinates[*]}"
 
-# The spike still uses tmux only to deliver one typed, validated Helix command.
+# tmux is used only to deliver one typed, validated Helix command.
 # Range conversion and selection happen inside Helix, not through key macros.
 tmux send-keys -t "$LANTERN_EDITOR_PANE" Escape
 tmux send-keys -t "$LANTERN_EDITOR_PANE" ':'

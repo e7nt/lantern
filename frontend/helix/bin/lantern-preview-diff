@@ -11,7 +11,7 @@ if [[ ${1:-} == --render ]]; then
 	exit
 fi
 
-: "${TMUX:?Lantern change preview requires the spike tmux session}"
+: "${TMUX:?Lantern change preview requires the Lantern tmux session}"
 : "${LANTERN_SELECTION_PATH:?Lantern selection path is not configured}"
 [[ $# == 3 ]] || { echo "usage: lantern-preview-diff BEFORE AFTER PATH" >&2; exit 2; }
 
