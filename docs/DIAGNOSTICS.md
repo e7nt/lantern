@@ -44,3 +44,7 @@ exclusions are shown to the developer.
 
 Diagnostic export is not a network capability and performs no transmission.
 Sharing the resulting file is a separate, manual developer action.
+
+Provider authentication follows the separate
+[credential contract](CREDENTIALS.md); diagnostics never become a credential
+transport or inspection mechanism.

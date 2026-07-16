@@ -16,6 +16,8 @@ Before planning or changing code, read:
    client/daemon wire contract or operation lifecycle
 6. [Diagnostic privacy contract](docs/DIAGNOSTICS.md) before adding logs,
    crash output, or diagnostic export fields
+7. [Provider credential contract](docs/CREDENTIALS.md) before changing model
+   authentication, provider selection, or driver process boundaries
 
 All decisions and changes must satisfy the product constitution. Every
 deliverable must meet the engineering standard's Definition of Done and the
