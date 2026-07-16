@@ -14,6 +14,8 @@ Before planning or changing code, read:
    protocol, agent-loop, terminal interaction, editor, or Git boundary
 5. [Protocol v3](protocol/v3/README.md) before changing the terminal
    client/daemon wire contract or operation lifecycle
+6. [Diagnostic privacy contract](docs/DIAGNOSTICS.md) before adding logs,
+   crash output, or diagnostic export fields
 
 All decisions and changes must satisfy the product constitution. Every
 deliverable must meet the engineering standard's Definition of Done and the

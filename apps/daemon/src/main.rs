@@ -1,9 +1,9 @@
+use lantern_diagnostics::{Code as DiagnosticCode, Component, Level, Record, emit as diagnose};
 use lantern_policy_engine::WorkspacePolicy;
 use lantern_protocol::{
-    BoundedTail, Capability, ChangeProposal, Event, Evidence, FrameError, MAX_DIAGNOSTIC_BYTES,
-    MAX_EVENT_BYTES, MAX_EVIDENCE, MAX_FILE_BYTES, MAX_FILES, MAX_SELECTION_BYTES,
-    PROTOCOL_VERSION, Request, SelectionContext, SymbolContext, SymbolLocation, read_frame,
-    validate_selection, validate_symbol_context,
+    Capability, ChangeProposal, Event, Evidence, FrameError, MAX_EVENT_BYTES, MAX_EVIDENCE,
+    MAX_FILE_BYTES, MAX_FILES, MAX_SELECTION_BYTES, PROTOCOL_VERSION, Request, SelectionContext,
+    SymbolContext, SymbolLocation, read_frame, validate_selection, validate_symbol_context,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -110,6 +110,21 @@ fn encode_event(event: &Event) -> io::Result<Vec<u8>> {
 }
 
 fn error(writer: &SharedWriter, id: Option<u64>, message: impl Into<String>, recovery: &str) {
+    let record = if let Some(id) = id {
+        Record::new(
+            Level::Error,
+            Component::Daemon,
+            DiagnosticCode::RequestFailed,
+        )
+        .for_operation(id)
+    } else {
+        Record::new(
+            Level::Warning,
+            Component::Protocol,
+            DiagnosticCode::ProtocolRejected,
+        )
+    };
+    let _ = diagnose(&record);
     let _ = emit(
         writer,
         &Event::Error {
@@ -121,6 +136,11 @@ fn error(writer: &SharedWriter, id: Option<u64>, message: impl Into<String>, rec
 }
 
 fn workspace_error(writer: &SharedWriter, message: impl Into<String>, recovery: &str) {
+    let _ = diagnose(&Record::new(
+        Level::Warning,
+        Component::Policy,
+        DiagnosticCode::WorkspaceRejected,
+    ));
     let _ = emit(
         writer,
         &Event::WorkspaceConfigurationFailed {
@@ -196,12 +216,28 @@ fn admit(id: u64, operations: &Operations, writer: &SharedWriter) -> Option<Arc<
         operations.lock().expect("operations lock").remove(&id);
         return None;
     }
+    let _ = diagnose(
+        &Record::new(
+            Level::Info,
+            Component::Daemon,
+            DiagnosticCode::OperationAccepted,
+        )
+        .for_operation(id),
+    );
     Some(cancellation)
 }
 
 fn settle(id: u64, operations: &Operations, writer: &SharedWriter) {
     operations.lock().expect("operations lock").remove(&id);
     let _ = emit(writer, &Event::Settled { id });
+    let _ = diagnose(
+        &Record::new(
+            Level::Info,
+            Component::Daemon,
+            DiagnosticCode::OperationSettled,
+        )
+        .for_operation(id),
+    );
 }
 
 fn should_skip(path: &Path) -> bool {
@@ -751,7 +787,7 @@ fn run_pi_operation(
             .stderr
             .take()
             .ok_or("Pi stderr is unavailable")?;
-        let stderr_reader = thread::spawn(move || drain_diagnostics(stderr));
+        let stderr_reader = thread::spawn(move || drain_provider_stderr(stderr));
         let stdout = child
             .process
             .stdout
@@ -796,13 +832,13 @@ fn run_pi_operation(
             Ok(false)
         })();
         child.stop();
-        let stderr = stderr_reader.join().unwrap_or_default();
+        let had_stderr = stderr_reader.join().unwrap_or(false);
         let saw_agent_settled = stream_result?;
         if !saw_agent_settled && !cancellation.is_requested() {
-            return Err(if stderr.trim().is_empty() {
-                "Pi closed before the agent turn settled".into()
+            return Err(if had_stderr {
+                "Pi closed before the agent turn settled; provider stderr was excluded".into()
             } else {
-                format!("Pi closed before the agent turn settled: {}", stderr.trim())
+                "Pi closed before the agent turn settled".into()
             });
         }
         Ok(())
@@ -817,6 +853,14 @@ fn run_pi_operation(
             },
         );
     } else if let Err(message) = result {
+        let _ = diagnose(
+            &Record::new(
+                Level::Error,
+                Component::Provider,
+                DiagnosticCode::ProviderFailed,
+            )
+            .for_operation(id),
+        );
         error(
             &writer,
             Some(id),
@@ -837,20 +881,25 @@ fn run_pi_operation(
     settle(id, &operations, &writer);
 }
 
-fn drain_diagnostics(mut reader: impl Read) -> String {
-    let mut tail = BoundedTail::new(MAX_DIAGNOSTIC_BYTES);
+fn drain_provider_stderr(mut reader: impl Read) -> bool {
+    let mut saw_output = false;
     let mut chunk = [0_u8; 4096];
     loop {
         match reader.read(&mut chunk) {
             Ok(0) => break,
-            Ok(read) => tail.push(&chunk[..read]),
+            Ok(_) => saw_output = true,
             Err(_) => break,
         }
     }
-    tail.text()
+    saw_output
 }
 
 fn main() -> io::Result<()> {
+    let _ = diagnose(&Record::new(
+        Level::Info,
+        Component::Daemon,
+        DiagnosticCode::DaemonStarted,
+    ));
     let writer = Arc::new(Mutex::new(BufWriter::new(io::stdout())));
     let operations: Operations = Arc::new(Mutex::new(HashMap::new()));
     let mut workers = Vec::new();
@@ -909,6 +958,11 @@ fn main() -> io::Result<()> {
                     );
                 } else {
                     initialized = true;
+                    let _ = diagnose(&Record::new(
+                        Level::Info,
+                        Component::Protocol,
+                        DiagnosticCode::ProtocolInitialized,
+                    ));
                     emit(
                         &writer,
                         &Event::Initialized {
@@ -937,13 +991,20 @@ fn main() -> io::Result<()> {
                     }
                 };
                 match policy.configure(root, capabilities) {
-                    Ok(access) => emit(
-                        &writer,
-                        &Event::WorkspaceConfigured {
-                            repository: access.repository().to_owned(),
-                            capabilities: access.capabilities(),
-                        },
-                    )?,
+                    Ok(access) => {
+                        let _ = diagnose(&Record::new(
+                            Level::Info,
+                            Component::Policy,
+                            DiagnosticCode::WorkspaceConfigured,
+                        ));
+                        emit(
+                            &writer,
+                            &Event::WorkspaceConfigured {
+                                repository: access.repository().to_owned(),
+                                capabilities: access.capabilities(),
+                            },
+                        )?;
+                    }
                     Err(cause) => workspace_error(
                         &writer,
                         cause.to_string(),
@@ -1256,6 +1317,11 @@ fn main() -> io::Result<()> {
     for worker in workers {
         let _ = worker.join();
     }
+    let _ = diagnose(&Record::new(
+        Level::Info,
+        Component::Daemon,
+        DiagnosticCode::DaemonStopping,
+    ));
 
     Ok(())
 }
@@ -1275,10 +1341,9 @@ mod tests {
     }
 
     #[test]
-    fn diagnostic_drain_keeps_reading_after_the_tail_is_full() {
-        let diagnostics = [vec![b'x'; MAX_DIAGNOSTIC_BYTES * 4], b"tail".to_vec()].concat();
-        let tail = drain_diagnostics(diagnostics.as_slice());
-        assert_eq!(tail.len(), MAX_DIAGNOSTIC_BYTES);
-        assert!(tail.ends_with("tail"));
+    fn provider_stderr_is_drained_without_retaining_its_contents() {
+        let diagnostics = vec![b'x'; 32 * 1024];
+        assert!(drain_provider_stderr(diagnostics.as_slice()));
+        assert!(!drain_provider_stderr([].as_slice()));
     }
 }

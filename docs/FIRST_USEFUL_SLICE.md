@@ -98,6 +98,7 @@ lantern/
 ├── apps/
 │   └── daemon/                  # Rust executable
 ├── crates/
+│   ├── diagnostics/
 │   ├── protocol/
 │   ├── policy-engine/
 │   ├── agent-runtime/

@@ -74,13 +74,15 @@ More detail is captured in:
 - [docs/PRODUCT_CONSTITUTION.md](docs/PRODUCT_CONSTITUTION.md)
 - [docs/EVALUATION_STRATEGY.md](docs/EVALUATION_STRATEGY.md)
 - [docs/FIRST_USEFUL_SLICE.md](docs/FIRST_USEFUL_SLICE.md)
+- [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md)
 
 ## Contributor verification
 
-Lantern's maintained Rust code is one workspace with four explicit owners:
+Lantern's maintained Rust code is one workspace with five explicit owners:
 `crates/protocol` defines the wire contract, `crates/policy-engine` owns
-capability enforcement, `apps/daemon` owns agent execution, and
-`frontend/terminal` owns the developer-facing terminal surface.
+capability enforcement, `crates/diagnostics` owns safe diagnostic records and
+exports, `apps/daemon` owns agent execution, and `frontend/terminal` owns the
+developer-facing terminal surface.
 
 Run its complete deterministic gate from the repository root:
 
