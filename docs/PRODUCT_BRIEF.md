@@ -1,5 +1,8 @@
 # Lantern product brief
 
+Lantern's product and architecture decisions are governed by
+[PRODUCT_CONSTITUTION.md](PRODUCT_CONSTITUTION.md).
+
 ## Problem
 
 AI coding tools can generate changes quickly, but speed alone does not help a
@@ -17,6 +20,9 @@ The first user is an experienced, keyboard-oriented developer opening an
 unfamiliar open-source repository. They value fast navigation, lightweight
 operation, evidence, and control more than a large collection of IDE features.
 
+They enjoy understanding and writing code. Lantern uses AI to deepen their
+involvement in software development rather than remove them from it.
+
 ## Intended journey
 
 1. Open or clone an unfamiliar repository.
@@ -31,6 +37,9 @@ operation, evidence, and control more than a large collection of IDE features.
 8. Collaborate on and approve a durable plan.
 9. Implement the plan through interruptible Guided Build chapters.
 10. Review semantic change explanations and verification evidence.
+11. Optionally talk through exploration and implementation with an
+    interruptible voice collaborator while preserving the same evidence,
+    permissions, plans, and checkpoints as the text experience.
 
 ## Guided learning
 
@@ -114,10 +123,14 @@ One agent runtime operates under different enforced policies:
 These boundaries must be enforced by the runtime, not merely described to the
 model in a prompt.
 
+Voice is a modality over these modes, not an additional privileged mode. A
+spoken request receives exactly the capabilities available to the current
+Quick Ask, Learn, Investigate, Plan, Implement, or Review session.
+
 ## Architecture direction
 
 ```text
-VSCodium extension
+Lantern terminal environment (Helix + Lantern pane + Lazygit)
   -> local editor-neutral RPC
       -> agent daemon
           -> model adapters
@@ -129,10 +142,11 @@ VSCodium extension
           -> execution sandbox
 ```
 
-The first frontend is VSCodium because its extension API supports custom hovers,
-decorations, selection events, tree views, and plan UI without maintaining an
-editor fork. The daemon remains independent so a lighter Helix-oriented frontend
-can be evaluated after the interaction model is proven.
+The first frontend is a pinned Helix build with a narrow, documented Lantern
+patch layer, a full-width terminal agent pane, and a focused Lazygit rail.
+Helix remains the editing and language-intelligence authority. The daemon
+remains independent so policy, agent execution, and durable state do not become
+coupled to editor internals.
 
 ## Initial scope boundaries
 
@@ -145,6 +159,8 @@ can be evaluated after the interaction model is proven.
 - No multi-user cloud collaboration.
 - No multi-agent orchestration in the first release.
 - No visual webpage-element selection in the first release.
+- No proprietary Lantern service or paid capability tier.
+- No silent model, tool, retrieval, or execution fallbacks.
 
 ## Success criterion
 

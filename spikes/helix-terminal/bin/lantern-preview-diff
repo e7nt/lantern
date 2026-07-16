@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ ${1:-} == --render ]]; then
+	shift
+	set +e
+	git --no-pager diff --no-index --color=always -- "$1" "$2" | less -R
+	status=${PIPESTATUS[0]}
+	[[ $status == 0 || $status == 1 ]]
+	exit
+fi
+
+: "${TMUX:?Lantern change preview requires the spike tmux session}"
+: "${LANTERN_SELECTION_PATH:?Lantern selection path is not configured}"
+[[ $# == 3 ]] || { echo "usage: lantern-preview-diff BEFORE AFTER PATH" >&2; exit 2; }
+
+runtime_dir=$(realpath "$(dirname "$LANTERN_SELECTION_PATH")")
+for file in "$1" "$2"; do
+	resolved=$(realpath "$file")
+	[[ $(dirname "$resolved") == "$runtime_dir" ]] || {
+		echo "preview file is outside the private session directory" >&2
+		exit 2
+	}
+done
+
+printf -v command '%q ' "$0" --render "$1" "$2"
+tmux display-popup -E -w '100%' -h '80%' -x 0 -y 0 "$command"

@@ -5,6 +5,11 @@ environment. It helps a developer enter an unfamiliar open-source repository,
 build an evidence-backed mental model, learn the relevant execution paths, agree
 on a plan with an agent, and implement changes without surrendering control.
 
+> **Lantern is an open-source AI coding environment for developers who love to
+> understand and write code.**
+>
+> **Understand the code. Shape the plan. Build it together.**
+
 The name reflects the product's role: illuminate the part of the system the
 developer is exploring rather than attempting to replace the developer.
 
@@ -21,17 +26,23 @@ developer is exploring rather than attempting to replace the developer.
 6. Explain logical changes outside source files.
 7. Let the developer interrupt, question, revise, or take over at any time.
 8. Keep the agent runtime independent from the editor frontend.
+9. Keep Lantern's core product open source and local-first.
+10. Prefer the smallest coherent feature and resist product bloat.
+11. Prefer one explicit primary path; avoid silent or indefinite fallback
+    stacks.
+12. Build for developer authorship, curiosity, and the love of coding.
 
 ## Initial product shape
 
-The first implementation is expected to use:
+The first implementation uses:
 
-- A thin VSCodium extension for selections, navigation, hovers, decorations,
-  guided tours, plan presentation, and diffs.
+- A pinned Helix editor with a narrow, documented Lantern patch layer, a
+  compact Lazygit rail, and a full-width terminal agent pane.
 - A separate local, Pi-inspired agent daemon for sessions, models, tools,
   permissions, repository understanding, learner state, plans, and change
   narratives.
-- An editor-neutral protocol so a Helix or terminal frontend can be added later.
+- An editor-neutral protocol that keeps policy and model execution out of the
+  editor process.
 
 ## Core experiences
 
@@ -48,9 +59,18 @@ The first implementation is expected to use:
   intent, behavior, risks, plan relationship, and verification.
 - **Review:** assess the result by acceptance criterion, logical change, file,
   raw diff, risk, and test evidence.
+- **Live Collaboration (evaluation):** talk through learning, planning, building,
+  and review with an interruptible voice collaborator grounded in visible code
+  and durable session state.
 
 More detail is captured in:
 
 - [docs/PRODUCT_BRIEF.md](docs/PRODUCT_BRIEF.md)
 - [docs/GUIDED_BUILD.md](docs/GUIDED_BUILD.md)
 - [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md)
+- [docs/REFERENCE_REPOSITORIES.md](docs/REFERENCE_REPOSITORIES.md)
+- [docs/PHASE_0_DOSSIER.md](docs/PHASE_0_DOSSIER.md)
+- [docs/LIVE_COLLABORATION.md](docs/LIVE_COLLABORATION.md)
+- [docs/PRODUCT_CONSTITUTION.md](docs/PRODUCT_CONSTITUTION.md)
+- [docs/EVALUATION_STRATEGY.md](docs/EVALUATION_STRATEGY.md)
+- [docs/FIRST_USEFUL_SLICE.md](docs/FIRST_USEFUL_SLICE.md)

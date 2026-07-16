@@ -1,0 +1,450 @@
+diff --git a/helix-term/src/ui/picker.rs b/helix-term/src/ui/picker.rs
+index 81ad3df3..3b64ad7b 100644
+--- a/helix-term/src/ui/picker.rs
++++ b/helix-term/src/ui/picker.rs
+@@ -41,12 +41,19 @@
+ 
+ use crate::ui::{Prompt, PromptEvent};
+ use helix_core::{
+-    char_idx_at_visual_offset, fuzzy::MATCHER, movement::Direction,
+-    text_annotations::TextAnnotations, unicode::segmentation::UnicodeSegmentation, Position,
++    char_idx_at_visual_offset,
++    fuzzy::MATCHER,
++    movement::Direction,
++    selection::{Range, Selection},
++    syntax::OverlayHighlights,
++    text_annotations::TextAnnotations,
++    unicode::segmentation::UnicodeSegmentation,
++    Position,
+ };
+ use helix_view::{
+     editor::Action,
+     graphics::{CursorKind, Margin, Modifier, Rect},
++    input::{MouseButton, MouseEvent, MouseEventKind},
+     theme::Style,
+     view::ViewPosition,
+     Document, DocumentId, Editor,
+@@ -60,6 +67,39 @@
+ /// Biggest file size to preview in bytes
+ pub const MAX_FILE_SIZE_FOR_PREVIEW: u64 = 10 * 1024 * 1024;
+ 
++fn preview_view_position(
++    doc: &Document,
++    range: Option<(usize, usize)>,
++    inner: Rect,
++) -> ViewPosition {
++    let mut offset = ViewPosition::default();
++    if let Some((start_line, end_line)) = range {
++        let height = end_line - start_line;
++        let text = doc.text().slice(..);
++        let start = text.line_to_char(start_line);
++        let middle = text.line_to_char(start_line + height / 2);
++        if height < inner.height as usize {
++            let text_fmt = doc.text_format(inner.width, None);
++            let annotations = TextAnnotations::default();
++            (offset.anchor, offset.vertical_offset) = char_idx_at_visual_offset(
++                text,
++                middle,
++                -(inner.height as isize / 2),
++                0,
++                &text_fmt,
++                &annotations,
++            );
++            if start < offset.anchor {
++                offset.anchor = start;
++                offset.vertical_offset = 0;
++            }
++        } else {
++            offset.anchor = start;
++        }
++    }
++    offset
++}
++
+ #[derive(PartialEq, Eq, Hash)]
+ pub enum PathOrId<'a> {
+     Id(DocumentId),
+@@ -269,6 +309,10 @@ pub struct Picker<T: 'static + Send + Sync, D: 'static> {
+     /// An event handler for syntax highlighting the currently previewed file.
+     preview_highlight_handler: Sender<Arc<Path>>,
+     dynamic_query_handler: Option<Sender<DynamicQueryChange>>,
++    /// The last area rendered by the picker, used to translate mouse coordinates.
++    last_area: Rect,
++    /// A temporary character selection made directly in the preview panel.
++    preview_selection: Option<Range>,
+ }
+ 
+ impl<T: 'static + Send + Sync, D: 'static + Send + Sync> Picker<T, D> {
+@@ -394,6 +438,8 @@ fn with(
+             file_fn: None,
+             preview_highlight_handler: PreviewHighlightHandler::<T, D>::default().spawn(),
+             dynamic_query_handler: None,
++            last_area: Rect::default(),
++            preview_selection: None,
+         }
+     }
+ 
+@@ -472,6 +518,7 @@ pub fn move_by(&mut self, amount: u32, direction: Direction) {
+                 self.cursor = self.cursor.saturating_add(len).saturating_sub(amount) % len;
+             }
+         }
++        self.preview_selection = None;
+     }
+ 
+     /// Move the cursor down by exactly one page. After the last page comes the first page.
+@@ -487,6 +534,7 @@ pub fn page_down(&mut self) {
+     /// Move the cursor to the first entry
+     pub fn to_start(&mut self) {
+         self.cursor = 0;
++        self.preview_selection = None;
+     }
+ 
+     /// Move the cursor to the last entry
+@@ -496,6 +544,7 @@ pub fn to_end(&mut self) {
+             .snapshot()
+             .matched_item_count()
+             .saturating_sub(1);
++        self.preview_selection = None;
+     }
+ 
+     pub fn selection(&self) -> Option<&T> {
+@@ -522,6 +571,7 @@ fn header_height(&self) -> u16 {
+ 
+     pub fn toggle_preview(&mut self) {
+         self.show_preview = !self.show_preview;
++        self.preview_selection = None;
+     }
+ 
+     fn prompt_handle_event(&mut self, event: &Event, cx: &mut Context) -> EventResult {
+@@ -540,6 +590,7 @@ fn handle_prompt_change(&mut self, is_paste: bool) {
+         }
+         // If the query has meaningfully changed, reset the cursor to the top of the results.
+         self.cursor = 0;
++        self.preview_selection = None;
+         // Have nucleo reparse each changed column.
+         for (i, column) in self
+             .columns
+@@ -680,13 +731,162 @@ fn get_preview<'picker, 'editor>(
+         }
+     }
+ 
++    fn preview_areas(&self) -> Option<(Rect, Rect)> {
++        let render_preview = self.show_preview
++            && self.file_fn.is_some()
++            && self.last_area.width > MIN_AREA_WIDTH_FOR_PREVIEW;
++        if !render_preview {
++            return None;
++        }
++        let preview_area = self.last_area.clip_left(self.last_area.width / 2);
++        let inner = Block::bordered()
++            .inner(preview_area)
++            .inner(Margin::horizontal(1));
++        Some((preview_area, inner))
++    }
++
++    fn update_preview_selection(
++        &mut self,
++        editor: &Editor,
++        row: u16,
++        column: u16,
++        extend: bool,
++    ) -> bool {
++        let Some((_preview_area, inner)) = self.preview_areas() else {
++            return false;
++        };
++        if row < inner.top()
++            || row >= inner.bottom()
++            || column < inner.left()
++            || column >= inner.right()
++        {
++            return false;
++        }
++        let previous = self.preview_selection;
++        let Some((preview, range)) = self.get_preview(editor) else {
++            return false;
++        };
++        let Some(doc) = preview.document() else {
++            return false;
++        };
++        if range.is_some_and(|(start, end)| start > end || end > doc.text().len_lines()) {
++            return false;
++        }
++        let offset = preview_view_position(doc, range, inner);
++        let text = doc.text().slice(..);
++        let text_fmt = doc.text_format(inner.width, None);
++        let annotations = TextAnnotations::default();
++        let visual_row = usize::from(row - inner.y).saturating_add(offset.vertical_offset);
++        let visual_column = usize::from(column - inner.x).saturating_add(offset.horizontal_offset);
++        let (position, virtual_lines) = char_idx_at_visual_offset(
++            text,
++            offset.anchor,
++            visual_row as isize,
++            visual_column,
++            &text_fmt,
++            &annotations,
++        );
++        if virtual_lines != 0 || position > text.len_chars() {
++            return false;
++        }
++        self.preview_selection = Some(if extend {
++            previous
++                .unwrap_or_else(|| Range::point(position))
++                .put_cursor(text, position, true)
++        } else {
++            Range::point(position)
++        });
++        true
++    }
++
++    fn select_picker_row(&mut self, row: u16) -> bool {
++        let render_preview = self.show_preview
++            && self.file_fn.is_some()
++            && self.last_area.width > MIN_AREA_WIDTH_FOR_PREVIEW;
++        let picker_width = if render_preview {
++            self.last_area.width / 2
++        } else {
++            self.last_area.width
++        };
++        let picker_area = self.last_area.with_width(picker_width);
++        let table_area = Block::bordered().inner(picker_area).clip_top(2);
++        let content_y = table_area.y.saturating_add(self.header_height());
++        let rows = table_area.height.saturating_sub(self.header_height()) as u32;
++        if row < content_y || row >= content_y.saturating_add(rows as u16) || rows == 0 {
++            return false;
++        }
++        let snapshot = self.matcher.snapshot();
++        let offset = self.cursor - (self.cursor % rows);
++        let index = offset.saturating_add(u32::from(row - content_y));
++        if index >= snapshot.matched_item_count() {
++            return false;
++        }
++        self.cursor = index;
++        self.preview_selection = None;
++        true
++    }
++
++    fn promote_preview_selection(&mut self, cx: &mut Context, action: Action) -> bool {
++        let Some(range) = self.preview_selection.filter(|range| !range.is_empty()) else {
++            return false;
++        };
++        let Some(option) = self.selection() else {
++            return false;
++        };
++        (self.callback_fn)(cx, option, action);
++        let (view, doc) = current!(cx.editor);
++        if range.to() > doc.text().len_chars() {
++            cx.editor
++                .set_error("preview selection no longer matches the opened document");
++            return false;
++        }
++        doc.set_selection(view.id, Selection::single(range.anchor, range.head));
++        self.preview_selection = None;
++        true
++    }
++
++    fn handle_mouse_event(&mut self, event: MouseEvent, cx: &mut Context) -> EventResult {
++        let render_preview = self.show_preview
++            && self.file_fn.is_some()
++            && self.last_area.width > MIN_AREA_WIDTH_FOR_PREVIEW;
++        let picker_width = if render_preview {
++            self.last_area.width / 2
++        } else {
++            self.last_area.width
++        };
++        let over_picker = event.column < self.last_area.x.saturating_add(picker_width);
++        match event.kind {
++            MouseEventKind::ScrollUp if over_picker => {
++                self.move_by(3, Direction::Backward);
++            }
++            MouseEventKind::ScrollDown if over_picker => {
++                self.move_by(3, Direction::Forward);
++            }
++            MouseEventKind::Down(MouseButton::Left) if over_picker => {
++                self.select_picker_row(event.row);
++            }
++            MouseEventKind::Down(MouseButton::Left) => {
++                self.update_preview_selection(cx.editor, event.row, event.column, false);
++            }
++            MouseEventKind::Drag(MouseButton::Left) => {
++                self.update_preview_selection(cx.editor, event.row, event.column, true);
++            }
++            _ => {}
++        }
++        EventResult::Consumed(None)
++    }
++
+     fn render_picker(&mut self, area: Rect, surface: &mut Surface, cx: &mut Context) {
+         let status = self.matcher.tick(10);
+         let snapshot = self.matcher.snapshot();
+         if status.changed {
+-            self.cursor = self
++            let cursor = self
+                 .cursor
+-                .min(snapshot.matched_item_count().saturating_sub(1))
++                .min(snapshot.matched_item_count().saturating_sub(1));
++            if cursor != self.cursor {
++                self.preview_selection = None;
++                self.cursor = cursor;
++            }
+         }
+ 
+         let text_style = cx.editor.theme.get("ui.text");
+@@ -896,6 +1096,7 @@ fn render_preview(&mut self, area: Rect, surface: &mut Surface, cx: &mut Context
+         let inner = inner.inner(margin);
+         BLOCK.render(area, surface);
+ 
++        let preview_selection = self.preview_selection;
+         if let Some((preview, range)) = self.get_preview(cx.editor) {
+             let doc = match preview.document() {
+                 Some(doc)
+@@ -930,32 +1131,7 @@ fn render_preview(&mut self, area: Rect, surface: &mut Surface, cx: &mut Context
+                 }
+             };
+ 
+-            let mut offset = ViewPosition::default();
+-            if let Some((start_line, end_line)) = range {
+-                let height = end_line - start_line;
+-                let text = doc.text().slice(..);
+-                let start = text.line_to_char(start_line);
+-                let middle = text.line_to_char(start_line + height / 2);
+-                if height < inner.height as usize {
+-                    let text_fmt = doc.text_format(inner.width, None);
+-                    let annotations = TextAnnotations::default();
+-                    (offset.anchor, offset.vertical_offset) = char_idx_at_visual_offset(
+-                        text,
+-                        middle,
+-                        // align to middle
+-                        -(inner.height as isize / 2),
+-                        0,
+-                        &text_fmt,
+-                        &annotations,
+-                    );
+-                    if start < offset.anchor {
+-                        offset.anchor = start;
+-                        offset.vertical_offset = 0;
+-                    }
+-                } else {
+-                    offset.anchor = start;
+-                }
+-            }
++            let offset = preview_view_position(doc, range, inner);
+ 
+             let loader = cx.editor.syn_loader.load();
+             let config = cx.editor.config();
+@@ -984,6 +1160,18 @@ fn render_preview(&mut self, area: Rect, surface: &mut Surface, cx: &mut Context
+                 &cx.editor.theme,
+                 &mut overlay_highlights,
+             );
++            if let Some(selection) = preview_selection.filter(|range| !range.is_empty()) {
++                let highlight = cx
++                    .editor
++                    .theme
++                    .find_highlight_exact("ui.selection.primary")
++                    .or_else(|| cx.editor.theme.find_highlight_exact("ui.selection"))
++                    .expect("themes must define ui.selection");
++                overlay_highlights.push(OverlayHighlights::single(
++                    highlight,
++                    selection.from()..selection.to(),
++                ));
++            }
+ 
+             let mut decorations = DecorationManager::default();
+ 
+@@ -1032,6 +1220,7 @@ fn render(&mut self, area: Rect, surface: &mut Surface, cx: &mut Context) {
+         // |         | |         |
+         // +---------+ +---------+
+ 
++        self.last_area = area;
+         let render_preview =
+             self.show_preview && self.file_fn.is_some() && area.width > MIN_AREA_WIDTH_FOR_PREVIEW;
+ 
+@@ -1051,19 +1240,15 @@ fn render(&mut self, area: Rect, surface: &mut Surface, cx: &mut Context) {
+     }
+ 
+     fn handle_event(&mut self, event: &Event, ctx: &mut Context) -> EventResult {
+-        // TODO: keybinds for scrolling preview
+-
+         let key_event = match event {
+             Event::Key(event) => *event,
+             Event::Paste(..) => return self.prompt_handle_event(event, ctx),
+             Event::Resize(..) => return EventResult::Consumed(None),
+-            // Picker is a modal and should consume mouse events so clicks don't fall
+-            // through to the editor underneath
+-            Event::Mouse(_) => return EventResult::Consumed(None),
++            Event::Mouse(event) => return self.handle_mouse_event(*event, ctx),
+             _ => return EventResult::Ignored(None),
+         };
+ 
+-        let close_fn = |picker: &mut Self| {
++        let close_callback = |picker: &mut Self| {
+             // if the picker is very large don't store it as last_picker to avoid
+             // excessive memory consumption
+             let callback: compositor::Callback =
+@@ -1083,7 +1268,7 @@ fn handle_event(&mut self, event: &Event, ctx: &mut Context) -> EventResult {
+                         compositor.last_picker = compositor.pop();
+                     })
+                 };
+-            EventResult::Consumed(Some(callback))
++            callback
+         };
+ 
+         match key_event {
+@@ -1105,7 +1290,12 @@ fn handle_event(&mut self, event: &Event, ctx: &mut Context) -> EventResult {
+             key!(End) => {
+                 self.to_end();
+             }
+-            key!(Esc) | ctrl!('c') => return close_fn(self),
++            key!(Esc) | ctrl!('c') => return EventResult::Consumed(Some(close_callback(self))),
++            ctrl!('a') if self.promote_preview_selection(ctx, self.default_action) => {
++                // The preview selection is now a normal editor selection. Let the
++                // configured editor binding handle this key after the picker closes.
++                return EventResult::Ignored(Some(close_callback(self)));
++            }
+             alt!(Enter) => {
+                 if let Some(option) = self.selection() {
+                     (self.callback_fn)(ctx, option, self.default_action);
+@@ -1131,8 +1321,10 @@ fn handle_event(&mut self, event: &Event, ctx: &mut Context) -> EventResult {
+                     // Inserting from the history register is a paste.
+                     self.handle_prompt_change(true);
+                 } else {
+-                    if let Some(option) = self.selection() {
+-                        (self.callback_fn)(ctx, option, self.default_action);
++                    if !self.promote_preview_selection(ctx, self.default_action) {
++                        if let Some(option) = self.selection() {
++                            (self.callback_fn)(ctx, option, self.default_action);
++                        }
+                     }
+                     if let Some(history_register) = self.prompt.history_register() {
+                         if let Err(err) = ctx
+@@ -1143,20 +1335,24 @@ fn handle_event(&mut self, event: &Event, ctx: &mut Context) -> EventResult {
+                             ctx.editor.set_error(err.to_string());
+                         }
+                     }
+-                    return close_fn(self);
++                    return EventResult::Consumed(Some(close_callback(self)));
+                 }
+             }
+             ctrl!('s') => {
+-                if let Some(option) = self.selection() {
+-                    (self.callback_fn)(ctx, option, Action::HorizontalSplit);
++                if !self.promote_preview_selection(ctx, Action::HorizontalSplit) {
++                    if let Some(option) = self.selection() {
++                        (self.callback_fn)(ctx, option, Action::HorizontalSplit);
++                    }
+                 }
+-                return close_fn(self);
++                return EventResult::Consumed(Some(close_callback(self)));
+             }
+             ctrl!('v') => {
+-                if let Some(option) = self.selection() {
+-                    (self.callback_fn)(ctx, option, Action::VerticalSplit);
++                if !self.promote_preview_selection(ctx, Action::VerticalSplit) {
++                    if let Some(option) = self.selection() {
++                        (self.callback_fn)(ctx, option, Action::VerticalSplit);
++                    }
+                 }
+-                return close_fn(self);
++                return EventResult::Consumed(Some(close_callback(self)));
+             }
+             ctrl!('t') => {
+                 self.toggle_preview();
