@@ -5,6 +5,8 @@ use std::path::{Component, Path, PathBuf};
 
 pub const PROTOCOL_VERSION: u32 = 2;
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
+pub const MAX_EVENT_BYTES: usize = 256 * 1024;
+pub const MAX_DIAGNOSTIC_BYTES: usize = 8 * 1024;
 pub const MAX_FILES: usize = 2_000;
 pub const MAX_FILE_BYTES: u64 = 512 * 1024;
 pub const MAX_EVIDENCE: usize = 5;
@@ -183,6 +185,46 @@ pub enum FrameError {
     Io(io::Error),
     InvalidUtf8,
     TooLarge { limit: usize },
+}
+
+#[derive(Debug)]
+pub struct BoundedTail {
+    bytes: Vec<u8>,
+    capacity: usize,
+}
+
+impl BoundedTail {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            bytes: Vec::with_capacity(capacity),
+            capacity,
+        }
+    }
+
+    pub fn push(&mut self, chunk: &[u8]) {
+        if self.capacity == 0 {
+            return;
+        }
+        if chunk.len() >= self.capacity {
+            self.bytes.clear();
+            self.bytes
+                .extend_from_slice(&chunk[chunk.len() - self.capacity..]);
+            return;
+        }
+        let overflow = self
+            .bytes
+            .len()
+            .saturating_add(chunk.len())
+            .saturating_sub(self.capacity);
+        if overflow > 0 {
+            self.bytes.drain(..overflow);
+        }
+        self.bytes.extend_from_slice(chunk);
+    }
+
+    pub fn text(&self) -> String {
+        String::from_utf8_lossy(&self.bytes).into_owned()
+    }
 }
 
 impl fmt::Display for FrameError {
@@ -422,5 +464,15 @@ mod tests {
             export.into_context().unwrap_err(),
             "LSP symbol context failed: no repository definition"
         );
+    }
+
+    #[test]
+    fn bounded_tail_retains_only_the_latest_diagnostics() {
+        let mut tail = BoundedTail::new(8);
+        tail.push(b"abcde");
+        tail.push(b"fghijk");
+        assert_eq!(tail.text(), "defghijk");
+        tail.push(b"0123456789");
+        assert_eq!(tail.text(), "23456789");
     }
 }

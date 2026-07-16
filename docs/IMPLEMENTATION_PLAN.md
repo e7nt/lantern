@@ -273,8 +273,16 @@ implemented in the spike runtime and [Protocol v2](../protocol/v2/README.md).
 It provides hard version negotiation, bounded recoverable JSONL framing,
 explicit admission and settlement, duplicate-submit protection, idempotent
 cancellation, and joined shutdown. This is not completion of daemon health,
-crash supervision, structured schema generation, back-pressure, or the other
-Phase 1 tasks.
+crash supervision, structured schema generation, or the other Phase 1 tasks;
+bounded back-pressure is addressed by the following slice.
+
+The second `P1-03`/`P1-05` slice adds a two-second initialization deadline,
+visible non-restarting crash state, continuously drained 8 KiB diagnostic
+tails, a 256 KiB event limit, single-operation admission, and direct blocking
+stdout back-pressure. Polling health and automatic restart are deliberately
+excluded for the local stdio daemon: initialization is its ready boundary and
+restarting could conceal lost operation state. Durable crash reports,
+diagnostic redaction, and general supervision remain promotion work.
 
 ### Exit criteria
 

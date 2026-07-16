@@ -122,6 +122,10 @@ The 2026-07-16 protocol inspection adds four concrete requirements:
   states; shutdown and follow-up work must wait for settlement.
 - Keep steering and follow-up as different future concepts. Lantern will not
   expose either until an interruptible workflow needs them.
+- Serialize protocol stdout, wait for downstream writes rather than building an
+  unbounded event queue, and flush output before process exit.
+- Continuously drain child stderr while retaining only a bounded diagnostic
+  tail; stopping reads at the retention limit can deadlock the child.
 
 Pi's `Escape` cancellation, queued-message restoration, and explicit hotkey
 listing are interaction references. Lantern adopts immediate `Escape`
@@ -150,6 +154,9 @@ Consequences for Lantern:
   harmless no-op at the daemon boundary.
 - Keybindings should name actions independently of default keys so a later
   user configuration can remap behavior without changing commands.
+- Daemon startup needs an explicit ready boundary, a deadline, and an
+  early-exit error. Unexpected exit must remain visible without silently
+  recreating lost operation state.
 
 Lantern rejects OpenCode's HTTP/SSE server shape, large plugin surface, broad
 session management, multi-agent selectors, and UI framework as defaults. Those
@@ -175,26 +182,29 @@ silently perform Git operations.
 
 | Area | Reference behavior adopted | Scope deliberately rejected | Required Lantern proof |
 | --- | --- | --- | --- |
-| Framing | Pi strict LF JSONL and correlated acceptance | Pi's full RPC command set | v2 golden fixtures plus malformed, oversized, Unicode-separator, and recovery tests |
-| Lifecycle | Pi end-versus-settled distinction | implicit long-lived agent session | accepted/outcome/settled ordering, cancellation, and joined-shutdown tests |
+| Framing | Pi strict LF JSONL, serialized writes, and downstream back-pressure | Pi's full RPC command set and an additional application event queue | v2 golden fixtures, 256 KiB event bound, malformed/oversized/Unicode recovery tests, and single-producer admission |
+| Lifecycle | Pi end-versus-settled distinction and OpenCode explicit sidecar readiness/exit | implicit long-lived sessions, polling health, and automatic restart | accepted/outcome/settled ordering, joined shutdown, startup-state tests, and a live early-exit terminal probe |
 | Prompt admission | OpenCode single admission before execution | durable multi-session inbox in Quick Ask | pane reservation test plus duplicate-active-ID daemon test |
 | Client boundary | OpenCode TUI through SDK/protocol only | UI imports of daemon/provider internals | architecture dependency test |
 | Editor context | Helix-native selection, LSP, and navigation | daemon recreation of editor semantics | exact Unicode range fixtures and live LSP trace |
 | Git | Lazygit owns mutation and detailed review | agent-pane Git implementation | same-session Git interaction and no agent Git tools |
 | Keybindings | named actions, immediate Escape interrupt | a large configurable command system in Phase 1 | shortcut conflict and state-transition tests |
 
-The protocol proofs above landed in the Phase 1 foundation slice on 2026-07-16.
+The protocol proofs above landed in Phase 1 foundation slices on 2026-07-16.
 The canonical contract is [Protocol v2](../protocol/v2/README.md). It keeps the
 pane busy through settlement without rendering acceptance as UI noise, bounds a
 frame at 1 MiB, drains malformed frames before continuing, prevents an active
-ID from being replaced, and joins daemon workers during shutdown. Cancelling an
-already-settled ID is the intentional idempotent no-op adopted from OpenCode.
+ID from being replaced, and joins daemon workers during shutdown. The follow-up
+slice admits one operation, bounds outbound events and diagnostic tails,
+continuously drains Pi stderr, and keeps an actionable pane visible after
+startup timeout or daemon exit. Cancelling an already-settled ID is the
+intentional idempotent no-op adopted from OpenCode.
 
 ## Next inspections
 
 1. Inspect only the permission-denial paths relevant to read-only Quick Ask;
    do not import their general tool systems.
-2. Inspect bounded event queues and slow-client behavior before selecting the
-   Phase 1 back-pressure mechanism.
+2. Inspect structured crash-report redaction before promoting diagnostics out
+   of the spike runtime.
 3. Re-check upstream revisions when a finding becomes a permanent decision and
    keep the evidence fixture with Lantern's corresponding test.

@@ -147,6 +147,10 @@ and exact hit targets rather than decorative chrome.
   an editor command is sent.
 - The daemon is scoped to the tmux session and leaves no process after the
   session closes.
+- Initialization either completes within two seconds or leaves a visible,
+  actionable unavailable state while Helix and Lazygit remain usable.
+- Unexpected daemon exit never disappears behind an automatic restart; the
+  pane shows a bounded diagnostic tail and preserves explicit session exit.
 - Cancellation reaches a terminal event within 500 ms locally.
 - Pi authentication and protocol failures are visible and never cause an
   automatic provider fallback.
