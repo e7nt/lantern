@@ -271,7 +271,7 @@ decision unless ADR 001's revisit conditions occur.
 
 Foundation progress on 2026-07-16: the first `P1-03`/`P1-04` lifecycle slice is
 implemented in the maintained Rust workspace and
-[Protocol v2](../protocol/v2/README.md).
+[Protocol v3](../protocol/v3/README.md).
 It provides hard version negotiation, bounded recoverable JSONL framing,
 explicit admission and settlement, duplicate-submit protection, idempotent
 cancellation, and joined shutdown. This is not completion of daemon health,
@@ -286,12 +286,20 @@ excluded for the local stdio daemon: initialization is its ready boundary and
 restarting could conceal lost operation state. Durable crash reports,
 diagnostic redaction, and general supervision remain promotion work.
 
+The `P1-07` slice adds Protocol v3 workspace configuration and a dedicated
+policy crate. Every session starts locked, binds one canonical repository, and
+requires all operation capabilities before admission. Local reads and model
+transmission are separate, revocable session grants; repository write and
+process execution are hard-denied in Quick Ask. There is no implicit trust,
+parent-directory inheritance, saved wildcard, or approval fallback.
+
 ### Exit criteria
 
 - Lantern starts the session-scoped daemon only with the agent pane.
 - Daemon failure does not crash or block normal editing.
 - Protocol compatibility failures produce actionable errors.
-- A workspace begins read-only and untrusted.
+- A workspace begins locked and untrusted; read and model transmission require
+  separate visible grants.
 - CI tests protocol and patch replay on Linux, then adds macOS at the public
   release gate.
 

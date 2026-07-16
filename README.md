@@ -77,9 +77,10 @@ More detail is captured in:
 
 ## Contributor verification
 
-Lantern's maintained Rust code is one workspace with three explicit owners:
-`crates/protocol` defines the wire contract, `apps/daemon` owns agent execution,
-and `frontend/terminal` owns the developer-facing terminal surface.
+Lantern's maintained Rust code is one workspace with four explicit owners:
+`crates/protocol` defines the wire contract, `crates/policy-engine` owns
+capability enforcement, `apps/daemon` owns agent execution, and
+`frontend/terminal` owns the developer-facing terminal surface.
 
 Run its complete deterministic gate from the repository root:
 

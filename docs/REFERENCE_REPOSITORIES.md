@@ -182,16 +182,17 @@ silently perform Git operations.
 
 | Area | Reference behavior adopted | Scope deliberately rejected | Required Lantern proof |
 | --- | --- | --- | --- |
-| Framing | Pi strict LF JSONL, serialized writes, and downstream back-pressure | Pi's full RPC command set and an additional application event queue | v2 golden fixtures, 256 KiB event bound, malformed/oversized/Unicode recovery tests, and single-producer admission |
+| Framing | Pi strict LF JSONL, serialized writes, and downstream back-pressure | Pi's full RPC command set and an additional application event queue | v3 golden fixtures, 256 KiB event bound, malformed/oversized/Unicode recovery tests, and single-producer admission |
 | Lifecycle | Pi end-versus-settled distinction and OpenCode explicit sidecar readiness/exit | implicit long-lived sessions, polling health, and automatic restart | accepted/outcome/settled ordering, joined shutdown, startup-state tests, and a live early-exit terminal probe |
 | Prompt admission | OpenCode single admission before execution | durable multi-session inbox in Quick Ask | pane reservation test plus duplicate-active-ID daemon test |
 | Client boundary | OpenCode TUI through SDK/protocol only | UI imports of daemon/provider internals | architecture dependency test |
 | Editor context | Helix-native selection, LSP, and navigation | daemon recreation of editor semantics | exact Unicode range fixtures and live LSP trace |
 | Git | Lazygit owns mutation and detailed review | agent-pane Git implementation | same-session Git interaction and no agent Git tools |
 | Keybindings | named actions, immediate Escape interrupt | a large configurable command system in Phase 1 | shortcut conflict and state-transition tests |
+| Permissions | Pi explicit session trust and OpenCode all-resource evaluation with denial precedence | project extension trust, saved wildcard rules, and a general approval queue | locked startup, canonical repository binding, separate read/transmission grants, and hard write/execute denials |
 
 The protocol proofs above landed in Phase 1 foundation slices on 2026-07-16.
-The canonical contract is [Protocol v2](../protocol/v2/README.md). It keeps the
+The canonical contract is [Protocol v3](../protocol/v3/README.md). It keeps the
 pane busy through settlement without rendering acceptance as UI noise, bounds a
 frame at 1 MiB, drains malformed frames before continuing, prevents an active
 ID from being replaced, and joins daemon workers during shutdown. The follow-up
@@ -200,11 +201,16 @@ continuously drains Pi stderr, and keeps an actionable pane visible after
 startup timeout or daemon exit. Cancelling an already-settled ID is the
 intentional idempotent no-op adopted from OpenCode.
 
+The `P1-07` inspection found that Pi keeps temporary trust explicit and ignores
+untrusted project resources, while OpenCode checks every requested resource,
+lets a denial override asks or allows, and does not enqueue a hard denial.
+Lantern adopts those properties through a smaller Quick Ask policy: one
+canonical repository, session-only grants, authorization before admission, and
+no general permission queue.
+
 ## Next inspections
 
-1. Inspect only the permission-denial paths relevant to read-only Quick Ask;
-   do not import their general tool systems.
-2. Inspect structured crash-report redaction before persisting or exporting
+1. Inspect structured crash-report redaction before persisting or exporting
    diagnostics from the maintained runtime.
-3. Re-check upstream revisions when a finding becomes a permanent decision and
+2. Re-check upstream revisions when a finding becomes a permanent decision and
    keep the evidence fixture with Lantern's corresponding test.

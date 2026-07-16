@@ -12,9 +12,11 @@ use crossterm::terminal::{
 };
 use crossterm::{execute, queue};
 use lantern_protocol::{
-    BoundedTail, ChangeProposal, Event, Evidence, MAX_DIAGNOSTIC_BYTES, MAX_SELECTION_BYTES,
-    PROTOCOL_VERSION, Request, SelectionContext, SymbolContext, SymbolContextExport, search_term,
+    BoundedTail, Capability, ChangeProposal, Event, Evidence, MAX_DIAGNOSTIC_BYTES,
+    MAX_SELECTION_BYTES, PROTOCOL_VERSION, Request, SelectionContext, SymbolContext,
+    SymbolContextExport, search_term,
 };
+use std::collections::BTreeSet;
 use std::env;
 use std::fs;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
@@ -128,6 +130,7 @@ struct UiState {
     next_id: u64,
     pending_symbol_context: Option<SymbolContext>,
     navigated_for: Option<u64>,
+    capabilities: BTreeSet<Capability>,
 }
 
 impl UiState {
@@ -144,6 +147,7 @@ impl UiState {
             next_id: 1,
             pending_symbol_context: None,
             navigated_for: None,
+            capabilities: BTreeSet::new(),
         }
     }
 
@@ -181,6 +185,16 @@ impl UiState {
         self.active_id = Some(id);
         self.accepted_id = None;
         Some(id)
+    }
+
+    fn access_label(&self) -> &'static str {
+        if self.capabilities.contains(&Capability::NetworkAccess) {
+            "model access"
+        } else if self.capabilities.contains(&Capability::RepositoryRead) {
+            "local access"
+        } else {
+            "locked"
+        }
     }
 
     fn daemon_failed(&mut self, reason: &str, diagnostics: &str) {
@@ -399,7 +413,10 @@ fn render(state: &UiState) -> io::Result<Layout> {
             )
         }
     };
-    let title = format!("Lantern  /  {repository_state}");
+    let title = format!(
+        "Lantern  /  {repository_state}  /  {}",
+        state.access_label()
+    );
     let (toolbar, actions) = toolbar(width.saturating_sub(HORIZONTAL_PADDING));
     let toolbar_width = toolbar.chars().count();
     let title_width = width_usize.saturating_sub(toolbar_width.saturating_add(2));
@@ -620,7 +637,7 @@ fn spawn_daemon_reader(
                     let _ = sender.send(Input::Daemon(Event::Error {
                         id: None,
                         message: format!("invalid daemon event: {cause}"),
-                        recovery: "rebuild and restart the Lantern spike".into(),
+                        recovery: "rebuild and restart Lantern".into(),
                     }));
                 }
             }
@@ -730,6 +747,23 @@ fn open_git(state: &mut UiState, repository: &Path) {
     state.summary = RepositorySummary::load(repository);
 }
 
+fn configure_workspace(
+    state: &mut UiState,
+    repository: &Path,
+    daemon_stdin: &Arc<Mutex<BufWriter<ChildStdin>>>,
+    capabilities: Vec<Capability>,
+) -> io::Result<()> {
+    send_request(
+        daemon_stdin,
+        &Request::ConfigureWorkspace {
+            repository: repository.to_owned(),
+            capabilities,
+        },
+    )?;
+    state.line("Updating session trust…");
+    Ok(())
+}
+
 fn handle_line(
     line: String,
     state: &mut UiState,
@@ -772,7 +806,33 @@ fn handle_line(
         state.line(message);
         return Ok(false);
     }
-    if let Some(query) = line.strip_prefix("/agent ") {
+    if line == "/trust" {
+        state.line(match state.access_label() {
+            "locked" => "Workspace is locked. No repository content may be read or transmitted.",
+            "local access" => {
+                "Local repository reads are enabled. Model transmission remains disabled."
+            }
+            _ => "Local repository reads and model transmission are enabled.",
+        });
+    } else if line == "/trust none" {
+        configure_workspace(state, repository, daemon_stdin, vec![])?;
+    } else if line == "/trust read" {
+        configure_workspace(
+            state,
+            repository,
+            daemon_stdin,
+            vec![Capability::RepositoryRead],
+        )?;
+    } else if line == "/trust model" {
+        configure_workspace(
+            state,
+            repository,
+            daemon_stdin,
+            vec![Capability::RepositoryRead, Capability::NetworkAccess],
+        )?;
+    } else if line.starts_with("/trust ") {
+        state.line("Use `/trust read`, `/trust model`, or `/trust none`.");
+    } else if let Some(query) = line.strip_prefix("/agent ") {
         start_agent_question(state, repository, selection_path, daemon_stdin, query)?;
     } else if let Some(query) = line.strip_prefix("/ask ") {
         match selection_for_question(state, selection_path) {
@@ -997,7 +1057,25 @@ fn handle_daemon_event(event: Event, state: &mut UiState, selection_path: &Path)
         Event::Initialized { .. } => {
             state.daemon = DaemonState::Ready;
             state.transcript.clear();
-            state.line("Select a symbol in Helix, press Ctrl-a, and ask. Ctrl-d quits.");
+            state.line("Binding the workspace with no permissions…");
+        }
+        Event::WorkspaceConfigured { capabilities, .. } => {
+            state.capabilities = capabilities.into_iter().collect();
+            state.line(match state.access_label() {
+                "locked" => {
+                    "Workspace locked. Use `/trust read` for local questions or `/trust model` to allow selected code to reach the configured model."
+                }
+                "local access" => {
+                    "Local repository reads enabled for this session. Model transmission remains off; write and execution are unavailable."
+                }
+                _ => {
+                    "Local reads and model transmission enabled for this session. Write and execution remain unavailable."
+                }
+            });
+        }
+        Event::WorkspaceConfigurationFailed { message, recovery } => {
+            state.line(format!("Trust unchanged: {message}"));
+            state.line(format!("Recovery: {recovery}"));
         }
         Event::Accepted { id } => {
             if state.active_id == Some(id) {
@@ -1117,6 +1195,13 @@ fn run(repository: PathBuf, daemon_path: PathBuf, selection_path: PathBuf) -> io
         &daemon_stdin,
         &Request::Initialize {
             protocol_version: PROTOCOL_VERSION,
+        },
+    )?;
+    send_request(
+        &daemon_stdin,
+        &Request::ConfigureWorkspace {
+            repository: repository.clone(),
+            capabilities: vec![],
         },
     )?;
 
@@ -1261,5 +1346,24 @@ mod tests {
         )
         .expect("handle initialization");
         assert_eq!(state.daemon, DaemonState::Ready);
+    }
+
+    #[test]
+    fn workspace_events_make_transmission_state_visible() {
+        let mut state = UiState::new(Path::new("."));
+        handle_daemon_event(
+            Event::WorkspaceConfigured {
+                repository: PathBuf::from("/workspace/project"),
+                capabilities: vec![Capability::RepositoryRead, Capability::NetworkAccess],
+            },
+            &mut state,
+            Path::new("unused"),
+        )
+        .expect("handle workspace configuration");
+
+        assert_eq!(state.access_label(), "model access");
+        assert!(state.transcript.iter().any(
+            |item| matches!(item, TranscriptItem::Line(line) if line.contains("transmission enabled"))
+        ));
     }
 }

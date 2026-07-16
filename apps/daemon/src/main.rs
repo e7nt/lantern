@@ -1,5 +1,6 @@
+use lantern_policy_engine::WorkspacePolicy;
 use lantern_protocol::{
-    BoundedTail, ChangeProposal, Event, Evidence, FrameError, MAX_DIAGNOSTIC_BYTES,
+    BoundedTail, Capability, ChangeProposal, Event, Evidence, FrameError, MAX_DIAGNOSTIC_BYTES,
     MAX_EVENT_BYTES, MAX_EVIDENCE, MAX_FILE_BYTES, MAX_FILES, MAX_SELECTION_BYTES,
     PROTOCOL_VERSION, Request, SelectionContext, SymbolContext, SymbolLocation, read_frame,
     validate_selection, validate_symbol_context,
@@ -117,6 +118,53 @@ fn error(writer: &SharedWriter, id: Option<u64>, message: impl Into<String>, rec
             recovery: recovery.into(),
         },
     );
+}
+
+fn workspace_error(writer: &SharedWriter, message: impl Into<String>, recovery: &str) {
+    let _ = emit(
+        writer,
+        &Event::WorkspaceConfigurationFailed {
+            message: message.into(),
+            recovery: recovery.into(),
+        },
+    );
+}
+
+fn canonical_repository(repository: &Path) -> Result<PathBuf, String> {
+    let root = repository
+        .canonicalize()
+        .map_err(|cause| format!("cannot open repository {}: {cause}", repository.display()))?;
+    if !root.is_dir() {
+        return Err(format!("repository is not a directory: {}", root.display()));
+    }
+    Ok(root)
+}
+
+fn authorize_workspace(
+    policy: &WorkspacePolicy,
+    repository: &Path,
+    required: &[Capability],
+    writer: &SharedWriter,
+    id: u64,
+    recovery: &str,
+) -> Option<PathBuf> {
+    let root = match canonical_repository(repository) {
+        Ok(root) => root,
+        Err(message) => {
+            error(
+                writer,
+                Some(id),
+                message,
+                "open an existing repository and retry",
+            );
+            return None;
+        }
+    };
+    if let Err(cause) = policy.authorize(&root, required.iter().copied()) {
+        error(writer, Some(id), cause.to_string(), recovery);
+        return None;
+    }
+    Some(root)
 }
 
 fn admit(id: u64, operations: &Operations, writer: &SharedWriter) -> Option<Arc<Cancellation>> {
@@ -378,12 +426,7 @@ fn run_operation(
     writer: SharedWriter,
 ) {
     let result = (|| -> Result<usize, String> {
-        let root = repository
-            .canonicalize()
-            .map_err(|cause| format!("cannot open repository {}: {cause}", repository.display()))?;
-        if !root.is_dir() {
-            return Err(format!("repository is not a directory: {}", root.display()));
-        }
+        let root = canonical_repository(&repository)?;
 
         emit(
             &writer,
@@ -436,9 +479,7 @@ fn run_selection_operation(
 ) {
     let result = (|| -> Result<(), String> {
         validate_selection(&selection)?;
-        let root = repository
-            .canonicalize()
-            .map_err(|cause| format!("cannot open repository {}: {cause}", repository.display()))?;
+        let root = canonical_repository(&repository)?;
         let selected_path = root.join(&selection.relative_path);
         let canonical_path = selected_path.canonicalize().map_err(|cause| {
             format!(
@@ -561,9 +602,7 @@ fn run_pi_operation(
                 return Err("symbol context selection does not match the agent selection".into());
             }
         }
-        let root = repository
-            .canonicalize()
-            .map_err(|cause| format!("cannot open repository {}: {cause}", repository.display()))?;
+        let root = canonical_repository(&repository)?;
         let selected_path = root.join(&selection.relative_path);
         let canonical_path = selected_path.canonicalize().map_err(|cause| {
             format!(
@@ -817,6 +856,7 @@ fn main() -> io::Result<()> {
     let mut workers = Vec::new();
     let mut input = BufReader::new(io::stdin());
     let mut initialized = false;
+    let mut policy = WorkspacePolicy::default();
 
     loop {
         let line = match read_frame(&mut input) {
@@ -865,7 +905,7 @@ fn main() -> io::Result<()> {
                         format!(
                             "protocol version {protocol_version} is unsupported; expected {PROTOCOL_VERSION}"
                         ),
-                        "rebuild the Lantern spike client and daemon from the same checkout",
+                        "rebuild the Lantern client and daemon from the same checkout",
                     );
                 } else {
                     initialized = true;
@@ -875,6 +915,40 @@ fn main() -> io::Result<()> {
                             protocol_version: PROTOCOL_VERSION,
                         },
                     )?;
+                }
+            }
+            Request::ConfigureWorkspace {
+                repository,
+                capabilities,
+            } => {
+                if !operations.lock().expect("operations lock").is_empty() {
+                    workspace_error(
+                        &writer,
+                        "workspace trust cannot change during an active operation",
+                        "cancel or wait for the active operation, then retry the trust command",
+                    );
+                    continue;
+                }
+                let root = match canonical_repository(&repository) {
+                    Ok(root) => root,
+                    Err(message) => {
+                        workspace_error(&writer, message, "open an existing repository and retry");
+                        continue;
+                    }
+                };
+                match policy.configure(root, capabilities) {
+                    Ok(access) => emit(
+                        &writer,
+                        &Event::WorkspaceConfigured {
+                            repository: access.repository().to_owned(),
+                            capabilities: access.capabilities(),
+                        },
+                    )?,
+                    Err(cause) => workspace_error(
+                        &writer,
+                        cause.to_string(),
+                        "use `/trust read`, `/trust model`, or `/trust none`",
+                    ),
                 }
             }
             Request::Ask {
@@ -891,6 +965,16 @@ fn main() -> io::Result<()> {
                     );
                     continue;
                 }
+                let Some(repository) = authorize_workspace(
+                    &policy,
+                    &repository,
+                    &[Capability::RepositoryRead],
+                    &writer,
+                    id,
+                    "use `/trust read` to allow local repository questions",
+                ) else {
+                    continue;
+                };
                 let Some(cancellation) = admit(id, &operations, &writer) else {
                     continue;
                 };
@@ -931,6 +1015,16 @@ fn main() -> io::Result<()> {
                     );
                     continue;
                 }
+                let Some(repository) = authorize_workspace(
+                    &policy,
+                    &repository,
+                    &[Capability::RepositoryRead],
+                    &writer,
+                    id,
+                    "use `/trust read` to allow local selection questions",
+                ) else {
+                    continue;
+                };
                 let Some(cancellation) = admit(id, &operations, &writer) else {
                     continue;
                 };
@@ -972,6 +1066,16 @@ fn main() -> io::Result<()> {
                     );
                     continue;
                 }
+                let Some(repository) = authorize_workspace(
+                    &policy,
+                    &repository,
+                    &[Capability::RepositoryRead, Capability::NetworkAccess],
+                    &writer,
+                    id,
+                    "use `/trust model` to allow selected code to reach the configured model",
+                ) else {
+                    continue;
+                };
                 let Some(cancellation) = admit(id, &operations, &writer) else {
                     continue;
                 };
@@ -1013,6 +1117,16 @@ fn main() -> io::Result<()> {
                     );
                     continue;
                 }
+                let Some(repository) = authorize_workspace(
+                    &policy,
+                    &repository,
+                    &[Capability::RepositoryRead, Capability::NetworkAccess],
+                    &writer,
+                    id,
+                    "use `/trust model` to allow selected code to reach the configured model",
+                ) else {
+                    continue;
+                };
                 let Some(cancellation) = admit(id, &operations, &writer) else {
                     continue;
                 };
@@ -1059,13 +1173,21 @@ fn main() -> io::Result<()> {
                     );
                     continue;
                 }
+                let Some(repository) = authorize_workspace(
+                    &policy,
+                    &repository,
+                    &[Capability::RepositoryRead],
+                    &writer,
+                    id,
+                    "use `/trust read` to allow local change previews",
+                ) else {
+                    continue;
+                };
                 let Some(_cancellation) = admit(id, &operations, &writer) else {
                     continue;
                 };
                 let result = (|| -> Result<(), String> {
-                    let root = repository.canonicalize().map_err(|cause| {
-                        format!("cannot open repository {}: {cause}", repository.display())
-                    })?;
+                    let root = canonical_repository(&repository)?;
                     let selected_path = root.join(&selection.relative_path);
                     let canonical_path = selected_path.canonicalize().map_err(|cause| {
                         format!(

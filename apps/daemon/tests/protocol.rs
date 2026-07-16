@@ -1,6 +1,6 @@
 use lantern_protocol::{
-    Event, Evidence, MAX_FRAME_BYTES, PROTOCOL_VERSION, Request, SelectionContext, SymbolContext,
-    SymbolLocation,
+    Capability, Event, Evidence, MAX_FRAME_BYTES, PROTOCOL_VERSION, Request, SelectionContext,
+    SymbolContext, SymbolLocation,
 };
 use std::fs;
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
@@ -71,14 +71,45 @@ impl Daemon {
         });
         assert!(matches!(self.next(), Event::Initialized { .. }));
     }
+
+    fn configure(&mut self, repository: &Path, capabilities: Vec<Capability>) {
+        self.send(&Request::ConfigureWorkspace {
+            repository: repository.to_owned(),
+            capabilities: capabilities.clone(),
+        });
+        match self.next() {
+            Event::WorkspaceConfigured {
+                repository: configured,
+                capabilities: configured_capabilities,
+            } => {
+                assert_eq!(
+                    configured,
+                    repository.canonicalize().expect("canonical root")
+                );
+                assert_eq!(configured_capabilities, capabilities);
+            }
+            event => panic!("expected workspace configuration, received {event:?}"),
+        }
+    }
+
+    fn trust_read(&mut self, repository: &Path) {
+        self.configure(repository, vec![Capability::RepositoryRead]);
+    }
+
+    fn trust_model(&mut self, repository: &Path) {
+        self.configure(
+            repository,
+            vec![Capability::RepositoryRead, Capability::NetworkAccess],
+        );
+    }
 }
 
 #[test]
-fn golden_wire_fixtures_match_the_v2_types() {
-    for line in include_str!("../../../protocol/v2/requests.jsonl").lines() {
+fn golden_wire_fixtures_match_the_v3_types() {
+    for line in include_str!("../../../protocol/v3/requests.jsonl").lines() {
         serde_json::from_str::<Request>(line).expect("golden request must deserialize");
     }
-    for line in include_str!("../../../protocol/v2/events.jsonl").lines() {
+    for line in include_str!("../../../protocol/v3/events.jsonl").lines() {
         serde_json::from_str::<Event>(line).expect("golden event must deserialize");
     }
 }
@@ -88,6 +119,7 @@ fn admits_before_execution_and_settles_after_the_outcome() {
     let root = fixture("lifecycle", "lifecycle evidence\n");
     let mut daemon = Daemon::spawn();
     daemon.initialize();
+    daemon.trust_read(&root);
     daemon.send(&Request::Ask {
         id: 20,
         repository: root.clone(),
@@ -117,6 +149,7 @@ fn a_duplicate_active_id_is_rejected_without_replacing_the_operation() {
     let root = fixture("duplicate", "duplicate evidence\n");
     let mut daemon = Daemon::spawn();
     daemon.initialize();
+    daemon.trust_read(&root);
     let request = Request::Ask {
         id: 21,
         repository: root.clone(),
@@ -152,6 +185,7 @@ fn a_second_operation_is_rejected_until_the_first_settles() {
     let root = fixture("single-operation", "first evidence\nsecond evidence\n");
     let mut daemon = Daemon::spawn();
     daemon.initialize();
+    daemon.trust_read(&root);
     daemon.send(&Request::Ask {
         id: 25,
         repository: root.clone(),
@@ -200,7 +234,7 @@ fn cancelling_an_idle_operation_is_an_idempotent_no_op() {
 #[test]
 fn rejects_unknown_fields_and_recovers_at_the_next_frame() {
     let mut daemon = Daemon::spawn();
-    daemon.send_raw(br#"{"method":"initialize","protocol_version":2,"surprise":true}"#);
+    daemon.send_raw(br#"{"method":"initialize","protocol_version":3,"surprise":true}"#);
     assert!(matches!(daemon.next(), Event::Error { id: None, .. }));
     daemon.initialize();
 }
@@ -238,10 +272,161 @@ fn an_oversized_frame_is_drained_before_the_next_request() {
 }
 
 #[test]
+fn workspace_starts_locked_and_denies_before_operation_admission() {
+    let root = fixture("locked", "private evidence\n");
+    let mut daemon = Daemon::spawn();
+    daemon.initialize();
+    daemon.configure(&root, vec![]);
+    daemon.send(&Request::Ask {
+        id: 29,
+        repository: root.clone(),
+        query: "private".into(),
+    });
+
+    match daemon.next() {
+        Event::Error {
+            id: Some(29),
+            message,
+            recovery,
+        } => {
+            assert!(message.contains("repository read access is not granted"));
+            assert!(recovery.contains("/trust read"));
+        }
+        event => panic!("expected a read denial, received {event:?}"),
+    }
+    daemon.trust_read(&root);
+    fs::remove_dir_all(root).expect("remove fixture");
+}
+
+#[test]
+fn model_transmission_requires_its_separate_capability() {
+    let root = fixture("transmission-denied", "fn selected() {}\n");
+    let mut daemon = Daemon::spawn();
+    daemon.initialize();
+    daemon.trust_read(&root);
+    daemon.send(&Request::AskAgentSelection {
+        id: 30,
+        repository: root.clone(),
+        query: "Explain this".into(),
+        selection: SelectionContext {
+            relative_path: "sample.rs".into(),
+            language: Some("rust".into()),
+            start_line: 1,
+            start_column: 1,
+            end_line: 1,
+            end_column: 17,
+            text: "fn selected() {}".into(),
+            document_modified: false,
+        },
+    });
+
+    match daemon.next() {
+        Event::Error {
+            id: Some(30),
+            message,
+            recovery,
+        } => {
+            assert!(message.contains("model transmission is not granted"));
+            assert!(recovery.contains("/trust model"));
+        }
+        event => panic!("expected a transmission denial, received {event:?}"),
+    }
+    fs::remove_dir_all(root).expect("remove fixture");
+}
+
+#[test]
+fn quick_ask_rejects_write_and_execution_grants() {
+    let root = fixture("unsupported-grants", "unchanged\n");
+    let mut daemon = Daemon::spawn();
+    daemon.initialize();
+    for capability in [Capability::RepositoryWrite, Capability::ProcessExecution] {
+        daemon.send(&Request::ConfigureWorkspace {
+            repository: root.clone(),
+            capabilities: vec![capability],
+        });
+        match daemon.next() {
+            Event::WorkspaceConfigurationFailed { message, .. } => {
+                assert!(message.contains("unavailable in read-only Quick Ask"));
+            }
+            event => panic!("expected a hard capability denial, received {event:?}"),
+        }
+    }
+    assert_eq!(
+        fs::read_to_string(root.join("sample.rs")).expect("read fixture"),
+        "unchanged\n"
+    );
+    daemon.configure(&root, vec![]);
+    fs::remove_dir_all(root).expect("remove fixture");
+}
+
+#[test]
+fn configured_workspace_cannot_be_retargeted() {
+    let root = fixture("bound-root", "root\n");
+    let other = fixture("other-root", "other\n");
+    let mut daemon = Daemon::spawn();
+    daemon.initialize();
+    daemon.configure(&root, vec![]);
+    daemon.send(&Request::ConfigureWorkspace {
+        repository: other.clone(),
+        capabilities: vec![],
+    });
+    match daemon.next() {
+        Event::WorkspaceConfigurationFailed { message, .. } => {
+            assert!(message.contains("workspace is bound"));
+        }
+        event => panic!("expected repository retarget denial, received {event:?}"),
+    }
+    fs::remove_dir_all(root).expect("remove root fixture");
+    fs::remove_dir_all(other).expect("remove other fixture");
+}
+
+#[test]
+fn trust_cannot_change_until_the_active_operation_settles() {
+    let root = fixture("trust-during-operation", "active evidence\n");
+    let mut daemon = Daemon::spawn();
+    daemon.initialize();
+    daemon.trust_read(&root);
+    daemon.send(&Request::Ask {
+        id: 31,
+        repository: root.clone(),
+        query: "active".into(),
+    });
+    assert!(matches!(daemon.next(), Event::Accepted { id: 31 }));
+    daemon.send(&Request::ConfigureWorkspace {
+        repository: root.clone(),
+        capabilities: vec![],
+    });
+
+    let mut rejected_change = false;
+    let mut settled = false;
+    while !rejected_change || !settled {
+        match daemon.next() {
+            Event::WorkspaceConfigurationFailed { message, .. } => {
+                assert!(message.contains("active operation"));
+                rejected_change = true;
+            }
+            Event::Settled { id: 31 } => settled = true,
+            _ => {}
+        }
+    }
+
+    daemon.send(&Request::Ask {
+        id: 32,
+        repository: root.clone(),
+        query: "active".into(),
+    });
+    assert!(matches!(daemon.next(), Event::Accepted { id: 32 }));
+    daemon.send(&Request::Cancel { id: 32 });
+    while !matches!(daemon.next(), Event::Settled { id: 32 }) {}
+    fs::remove_dir_all(root).expect("remove fixture");
+}
+
+#[test]
 fn unicode_line_separators_remain_inside_one_jsonl_frame() {
     let root = fixture("unicode-separator", "before\nafter\n");
     let mut daemon = Daemon::spawn();
     daemon.initialize();
+    daemon.trust_read(&root);
     daemon.send(&Request::Ask {
         id: 22,
         repository: root.clone(),
@@ -267,6 +452,10 @@ fn shutdown_cancels_and_settles_workers_before_process_exit() {
         Request::Initialize {
             protocol_version: PROTOCOL_VERSION,
         },
+        Request::ConfigureWorkspace {
+            repository: root.clone(),
+            capabilities: vec![Capability::RepositoryRead],
+        },
         Request::Ask {
             id: 23,
             repository: root.clone(),
@@ -280,6 +469,14 @@ fn shutdown_cancels_and_settles_workers_before_process_exit() {
 
     let mut line = String::new();
     stdout.read_line(&mut line).expect("read initialization");
+    line.clear();
+    stdout
+        .read_line(&mut line)
+        .expect("read workspace configuration");
+    assert!(matches!(
+        serde_json::from_str::<Event>(&line).expect("decode workspace configuration"),
+        Event::WorkspaceConfigured { .. }
+    ));
     line.clear();
     stdout.read_line(&mut line).expect("read acceptance");
     assert!(matches!(
@@ -379,6 +576,7 @@ fn streams_an_exact_evidence_range() {
     let root = fixture("evidence", "alpha\nneedle here\nomega\n");
     let mut daemon = Daemon::spawn();
     daemon.initialize();
+    daemon.trust_read(&root);
     daemon.send(&Request::Ask {
         id: 1,
         repository: root.clone(),
@@ -409,6 +607,7 @@ fn acknowledges_cancellation_within_budget() {
     let root = fixture("cancellation", "interruptible evidence\n");
     let mut daemon = Daemon::spawn();
     daemon.initialize();
+    daemon.trust_read(&root);
     daemon.send(&Request::Ask {
         id: 7,
         repository: root.clone(),
@@ -443,6 +642,7 @@ fn accepts_selection_context_as_exact_evidence() {
     let root = fixture("selection", "fn selected() {}\n");
     let mut daemon = Daemon::spawn();
     daemon.initialize();
+    daemon.trust_read(&root);
     daemon.send(&Request::AskSelection {
         id: 9,
         repository: root.clone(),
@@ -474,6 +674,7 @@ fn previews_a_replacement_without_modifying_the_file() {
     let root = fixture("preview", "old text\n");
     let mut daemon = Daemon::spawn();
     daemon.initialize();
+    daemon.trust_read(&root);
     daemon.send(&Request::PreviewSelection {
         id: 10,
         repository: root.clone(),
@@ -510,6 +711,7 @@ fn streams_pi_rpc_without_putting_source_in_process_arguments() {
     let pi_bin = fake_pi(&model_workdir);
     let mut daemon = Daemon::spawn_with_pi(&pi_bin, &model_workdir, "stream");
     daemon.initialize();
+    daemon.trust_model(&root);
     daemon.send(&Request::AskAgentSelection {
         id: 11,
         repository: root.clone(),
@@ -556,6 +758,7 @@ fn continuously_drains_and_bounds_pi_stderr() {
     let pi_bin = fake_pi(&model_workdir);
     let mut daemon = Daemon::spawn_with_pi(&pi_bin, &model_workdir, "stderr-flood");
     daemon.initialize();
+    daemon.trust_model(&root);
     daemon.send(&Request::AskAgentSelection {
         id: 27,
         repository: root.clone(),
@@ -585,6 +788,7 @@ fn reaps_pi_after_a_malformed_stream_event() {
     let pi_bin = fake_pi(&model_workdir);
     let mut daemon = Daemon::spawn_with_pi(&pi_bin, &model_workdir, "malformed");
     daemon.initialize();
+    daemon.trust_model(&root);
     daemon.send(&Request::AskAgentSelection {
         id: 28,
         repository: root.clone(),
@@ -638,6 +842,7 @@ fn streams_definition_and_references_before_a_symbol_grounded_answer() {
     let pi_bin = fake_pi(&model_workdir);
     let mut daemon = Daemon::spawn_with_pi(&pi_bin, &model_workdir, "stream");
     daemon.initialize();
+    daemon.trust_model(&root);
     daemon.send(&Request::AskAgentSymbol {
         id: 13,
         repository: root.clone(),
@@ -708,6 +913,7 @@ fn aborts_an_active_pi_rpc_turn_within_budget() {
     let pi_bin = fake_pi(&model_workdir);
     let mut daemon = Daemon::spawn_with_pi(&pi_bin, &model_workdir, "cancel");
     daemon.initialize();
+    daemon.trust_model(&root);
     daemon.send(&Request::AskAgentSelection {
         id: 12,
         repository: root.clone(),
