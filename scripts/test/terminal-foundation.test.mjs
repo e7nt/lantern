@@ -14,6 +14,7 @@ async function fixture() {
 	const repository = path.join(directory, 'repository');
 	const fakeBin = path.join(directory, 'bin');
 	const tmuxLog = path.join(directory, 'tmux.log');
+	const submitLog = path.join(directory, 'submit.log');
 	await mkdir(repository);
 	await mkdir(fakeBin);
 	await writeFile(path.join(repository, 'source file.rs'), 'fn main() {}\n');
@@ -29,10 +30,15 @@ async function fixture() {
 			'fi\n'
 	);
 	await chmod(path.join(fakeBin, 'tmux'), 0o755);
-	return { directory, repository, fakeBin, tmuxLog };
+	await writeFile(
+		path.join(fakeBin, 'lantern-submit'),
+		'#!/bin/sh\ncat > "$LANTERN_SUBMIT_LOG"\n'
+	);
+	await chmod(path.join(fakeBin, 'lantern-submit'), 0o755);
+	return { directory, repository, fakeBin, tmuxLog, submitLog };
 }
 
-function environment({ repository, fakeBin, tmuxLog }) {
+function environment({ repository, fakeBin, tmuxLog, submitLog }) {
 	return {
 		...process.env,
 		PATH: `${fakeBin}:${process.env.PATH}`,
@@ -40,7 +46,10 @@ function environment({ repository, fakeBin, tmuxLog }) {
 		LANTERN_EDITOR_PANE: '%7',
 		TMUX: '/tmp/fake',
 		TMUX_CLIENT_WIDTH: '160',
-		TMUX_LOG: tmuxLog
+		TMUX_LOG: tmuxLog,
+		LANTERN_CONTROL_SOCKET: path.join(repository, 'control.sock'),
+		LANTERN_SUBMIT_BIN: path.join(fakeBin, 'lantern-submit'),
+		LANTERN_SUBMIT_LOG: submitLog
 	};
 }
 
@@ -119,21 +128,6 @@ test('Lazygit rejects a terminal too narrow for the 10 percent rail', async () =
 	assert.doesNotMatch(calls, /display-popup/);
 });
 
-test('Ctrl-a focus bridge selects the Lantern pane', async () => {
-	const context = await fixture();
-	const result = spawnSync(path.join(frontendBin, 'lantern-focus-agent'), [], {
-		encoding: 'utf8',
-		env: {
-			...environment(context),
-			TMUX_PANE: '%7'
-		}
-	});
-
-	assert.equal(result.status, 0, result.stderr);
-	const calls = await readFile(context.tmuxLog, 'utf8');
-	assert.match(calls, /select-pane -t %8/);
-});
-
 test('Ctrl-a composer opens a small contextual popup', async () => {
 	const context = await fixture();
 	const result = spawnSync(path.join(frontendBin, 'lantern-agent-composer'), [], {
@@ -171,8 +165,8 @@ test('composer submits the question literally and focuses Lantern', async () => 
 	assert.equal(result.status, 0, result.stderr);
 	assert.match(result.stdout, /Ask about this repository/);
 	const calls = await readFile(context.tmuxLog, 'utf8');
-	assert.ok(calls.includes(`send-keys -t %8 -l -- ${question}`));
-	assert.match(calls, /send-keys -t %8 Enter/);
+	assert.equal(await readFile(context.submitLog, 'utf8'), question);
+	assert.doesNotMatch(calls, /send-keys/);
 	assert.match(calls, /select-pane -t %8/);
 });
 
@@ -213,5 +207,6 @@ test('terminal surfaces declare one mouse-enabled interaction contract', async (
 	assert.match(launcher, /set-option -t "\$session" mouse on/);
 	assert.match(launcher, /set-option -t "\$session" status off/);
 	assert.match(launcher, /pane-border-status off/);
+	assert.match(launcher, /bin\/lantern-cleanup-session/);
 	assert.match(launcher, /window-style 'fg=#C7B8E0,bg=#3A2A4D'/);
 });

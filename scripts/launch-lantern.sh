@@ -11,6 +11,7 @@ LAZYGIT_CONFIG="$FRONTEND_DIR/config/lazygit/config.yml"
 RUNTIME_DIR="$ROOT/target/release"
 DAEMON_BIN=${LANTERN_DAEMON_BIN:-"$RUNTIME_DIR/lantern-daemon"}
 PANE_BIN=${LANTERN_PANE_BIN:-"$RUNTIME_DIR/lantern-terminal"}
+SUBMIT_BIN=${LANTERN_SUBMIT_BIN:-"$RUNTIME_DIR/lantern-submit"}
 PI_VERSION=0.80.6
 detached=false
 session=
@@ -21,7 +22,7 @@ cleanup_failed_launch() {
 		tmux kill-session -t "$session"
 	fi
 	if [[ -n $runtime_dir && -d $runtime_dir ]]; then
-		rm -f "$runtime_dir/selection.json" "$runtime_dir/selection.tmp" \
+		rm -f "$runtime_dir/selection.json" "$runtime_dir/selection.tmp" "$runtime_dir/control.sock" \
 			"$runtime_dir/proposal.before" "$runtime_dir/proposal.after"
 		rmdir "$runtime_dir" 2>/dev/null || true
 	fi
@@ -51,7 +52,7 @@ done
 
 PI_BIN=${LANTERN_PI_BIN:-$(command -v pi || true)}
 if [[ -z $PI_BIN || ! -x $PI_BIN ]]; then
-	echo "Pi $PI_VERSION is required for the explicit /agent driver." >&2
+	echo "Pi $PI_VERSION is required for Lantern's agent." >&2
 	echo "Install Pi, then authenticate privately with: pi  # use /login and choose OpenAI Codex" >&2
 	exit 1
 fi
@@ -83,7 +84,7 @@ if [[ ! -f $LAZYGIT_CONFIG ]]; then
 	exit 1
 fi
 
-if [[ ! -x $DAEMON_BIN || ! -x $PANE_BIN ]]; then
+if [[ ! -x $DAEMON_BIN || ! -x $PANE_BIN || ! -x $SUBMIT_BIN ]]; then
 	echo "Lantern runtime is not built." >&2
 	echo "Run: cargo build --release --locked --manifest-path '$ROOT/Cargo.toml'" >&2
 	exit 1
@@ -92,6 +93,7 @@ fi
 session="lantern-$$"
 runtime_dir=$(mktemp -d "${TMPDIR:-/tmp}/lantern.XXXXXXXX")
 selection_path="$runtime_dir/selection.json"
+control_socket="$runtime_dir/control.sock"
 path="$FRONTEND_DIR/bin:$PATH"
 editor_command=(env
 	"PATH=$path"
@@ -99,6 +101,8 @@ editor_command=(env
 	"HELIX_RUNTIME=$HELIX_RUNTIME"
 	"LANTERN_REPO=$repo"
 	"LANTERN_SELECTION_PATH=$selection_path"
+	"LANTERN_CONTROL_SOCKET=$control_socket"
+	"LANTERN_SUBMIT_BIN=$SUBMIT_BIN"
 	"LANTERN_LAZYGIT_BIN=$LAZYGIT_BIN"
 	"LANTERN_LAZYGIT_CONFIG=$LAZYGIT_CONFIG"
 	"$HELIX_BIN"
@@ -118,6 +122,7 @@ agent_command=(env
 	"LANTERN_EDITOR_PANE=$editor_pane"
 	"LANTERN_REPO=$repo"
 	"LANTERN_SELECTION_PATH=$selection_path"
+	"LANTERN_CONTROL_SOCKET=$control_socket"
 	"LANTERN_LAZYGIT_BIN=$LAZYGIT_BIN"
 	"LANTERN_LAZYGIT_CONFIG=$LAZYGIT_CONFIG"
 	"LANTERN_DAEMON_BIN=$DAEMON_BIN"
@@ -142,8 +147,8 @@ tmux set-option -t "$session" mouse on
 # resize. Reassert the product's vertical 80/20 relationship on every resize.
 tmux set-hook -t "$session" client-resized \
 	"resize-pane -t '$agent_pane' -y '20%'"
-tmux set-hook -t "$session" session-closed \
-	"run-shell 'rm -f "$selection_path" "$selection_path.tmp" "$runtime_dir/proposal.before" "$runtime_dir/proposal.after"; rmdir "$runtime_dir" 2>/dev/null || true'"
+"$FRONTEND_DIR/bin/lantern-cleanup-session" "$session" "$runtime_dir" \
+	</dev/null >/dev/null 2>&1 &
 trap - ERR
 
 if $detached; then

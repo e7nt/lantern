@@ -44,12 +44,12 @@ A developer can:
 6. Ask the subscription-authenticated agent directly from the empty prompt, or
    enrich a question about a selected symbol using one
    LSP definition and at most eight references, watch its evidence and answer
-   stream, and interrupt it without granting repository tools.
+   stream, and interrupt it while its repository tools remain visible.
 7. Interrupt an active answer and see measured cancellation latency.
 
-`/ask` remains deterministic for testing the local boundary. `/agent` is the
-explicit nondeterministic Pi RPC experiment and is evaluated separately with
-DeepEval.
+Plain questions are the single conversational path and are evaluated separately
+with DeepEval. Editor context enriches that path; it does not create another
+agent mode.
 
 ## Run
 
@@ -103,13 +103,6 @@ when the terminal emulator's native text selection is needed.
 Diagnostic commands remain available:
 
 - `/git` opens Lazygit.
-- `/ask <question>` captures the current primary Helix selection through the
-  session-scoped bridge and streams its grounded, deterministic acknowledgement.
-- `/agent <question>` sends the selection, one LSP definition, and at most
-  eight LSP references to the pinned Pi RPC driver using the selected
-  `openai-codex` model. Pi runs its explicit coding-tool allowlist inside the
-  trusted repository. Lantern keeps only a definition location in the quiet
-  transcript while Helix receives exact navigation.
 - `/preview <one-line replacement>` shows a transient unified diff for the
   selected text; closing it leaves the repository unchanged.
 - `/show <literal text>` streams bounded local evidence and selects its exact
