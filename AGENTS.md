@@ -12,7 +12,7 @@ Before planning or changing code, read:
    sequencing, and phase gates
 4. [Reference repositories](docs/REFERENCE_REPOSITORIES.md) before designing a
    protocol, agent-loop, terminal interaction, editor, or Git boundary
-5. [Protocol v3](protocol/v3/README.md) before changing the terminal
+5. [Protocol v4](protocol/v4/README.md) before changing the terminal
    client/daemon wire contract or operation lifecycle
 6. [Diagnostic privacy contract](docs/DIAGNOSTICS.md) before adding logs,
    crash output, or diagnostic export fields

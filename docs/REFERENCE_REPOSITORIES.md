@@ -182,7 +182,7 @@ silently perform Git operations.
 
 | Area | Reference behavior adopted | Scope deliberately rejected | Required Lantern proof |
 | --- | --- | --- | --- |
-| Framing | Pi strict LF JSONL, serialized writes, and downstream back-pressure | Pi's full RPC command set and an additional application event queue | v3 golden fixtures, 256 KiB event bound, malformed/oversized/Unicode recovery tests, and single-producer admission |
+| Framing | Pi strict LF JSONL, serialized writes, and downstream back-pressure | Pi's full RPC command set and an additional application event queue | v4 golden fixtures, 256 KiB event bound, malformed/oversized/Unicode recovery tests, and single-producer admission |
 | Lifecycle | Pi end-versus-settled distinction and OpenCode explicit sidecar readiness/exit | implicit long-lived sessions, polling health, and automatic restart | accepted/outcome/settled ordering, joined shutdown, startup-state tests, and a live early-exit terminal probe |
 | Prompt admission | OpenCode single admission before execution | durable multi-session inbox in Quick Ask | pane reservation test plus duplicate-active-ID daemon test |
 | Client boundary | OpenCode TUI through SDK/protocol only | UI imports of daemon/provider internals | architecture dependency test |
@@ -192,7 +192,7 @@ silently perform Git operations.
 | Permissions | Pi explicit session trust and OpenCode all-resource evaluation with denial precedence | project extension trust, saved wildcard rules, and a general approval queue | locked startup, canonical repository binding, separate read/transmission grants, and hard write/execute denials |
 
 The protocol proofs above landed in Phase 1 foundation slices on 2026-07-16.
-The canonical contract is [Protocol v3](../protocol/v3/README.md). It keeps the
+The canonical contract is [Protocol v4](../protocol/v4/README.md). It keeps the
 pane busy through settlement without rendering acceptance as UI noise, bounds a
 frame at 1 MiB, drains malformed frames before continuing, prevents an active
 ID from being replaced, and joins daemon workers during shutdown. The follow-up
