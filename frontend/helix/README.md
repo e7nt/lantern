@@ -80,13 +80,13 @@ builds after checking out the two recorded upstream repositories, run:
 
 The Lantern pane starts focused. Click a pane to focus it. In Helix, click to
 position the cursor, drag to select code, and use the wheel to scroll. The
-repository opens as a trusted workbench. Press `Ctrl-a` after selecting a saved
-symbol to resolve its bounded LSP context and focus Lantern; type the question
-directly and press Enter. Pi can inspect, edit, and run development commands in
-the repository. Its activity is visible in Lantern, successful edits open in
-Helix, and Git counts refresh for review. `Space-g` opens the 10% Lazygit rail.
-Missing LSP support or a repository definition is a visible error; Lantern does
-not substitute another context path.
+repository opens as a trusted workbench. Press `Ctrl-a` to open the small agent
+composer over Helix. With a saved selection it quietly adds bounded LSP
+context; without one it asks about the repository directly. Enter submits and
+focuses Lantern, while Esc dismisses the composer. Pi can inspect, edit, and run
+development commands in the repository. Press `F2` from Helix or Lantern to
+toggle the response pane between its compact 20% height and the full terminal;
+the same key restores the editor layout. `Space-g` opens the 10% Lazygit rail.
 
 The initial Helix explorer is mouse-aware too. Click or wheel over the left
 result list to choose a file, drag across source in the right preview, and
