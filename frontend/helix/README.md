@@ -79,13 +79,13 @@ builds after checking out the two recorded upstream repositories, run:
 
 The Lantern pane starts focused. Click a pane to focus it. In Helix, click to
 position the cursor, drag to select code, and use the wheel to scroll. The
-workspace starts locked. Enter `/trust read` for local-only questions or
-`/trust model` to additionally allow selected evidence to reach the configured
-model for this session. `/trust none` revokes both grants. Press `Ctrl-a` after
-selecting a saved symbol to resolve its bounded LSP context and focus Lantern;
-type the question directly and press Enter. `Space-g` opens the 10% Lazygit
-rail. Missing trust, LSP support, or a repository definition is a visible
-error; Lantern does not substitute another capability or search path.
+repository opens as a trusted workbench. Press `Ctrl-a` after selecting a saved
+symbol to resolve its bounded LSP context and focus Lantern; type the question
+directly and press Enter. Pi can inspect, edit, and run development commands in
+the repository. Its activity is visible in Lantern, successful edits open in
+Helix, and Git counts refresh for review. `Space-g` opens the 10% Lazygit rail.
+Missing LSP support or a repository definition is a visible error; Lantern does
+not substitute another context path.
 
 The initial Helix explorer is mouse-aware too. Click or wheel over the left
 result list to choose a file, drag across source in the right preview, and
