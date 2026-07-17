@@ -15,7 +15,7 @@ use lantern_diagnostics::{
     DaemonState as DiagnosticDaemonState, bundle_from_stderr, summarize_stderr,
 };
 use lantern_protocol::{
-    BoundedTail, Capability, ChangeProposal, Event, Evidence, MAX_DIAGNOSTIC_BYTES,
+    BoundedTail, Capability, ChangeProposal, Event, Evidence, EvidenceSource, MAX_DIAGNOSTIC_BYTES,
     MAX_SELECTION_BYTES, PROTOCOL_VERSION, Request, SelectionContext, SymbolContext,
     SymbolContextExport, search_term,
 };
@@ -138,6 +138,7 @@ struct UiState {
     next_id: u64,
     pending_symbol_context: Option<SymbolContext>,
     navigated_for: Option<u64>,
+    selected_evidence: Option<usize>,
     capabilities: BTreeSet<Capability>,
 }
 
@@ -155,6 +156,7 @@ impl UiState {
             next_id: 1,
             pending_symbol_context: None,
             navigated_for: None,
+            selected_evidence: None,
             capabilities: BTreeSet::new(),
         }
     }
@@ -192,7 +194,41 @@ impl UiState {
         self.next_id += 1;
         self.active_id = Some(id);
         self.accepted_id = None;
+        self.selected_evidence = None;
         Some(id)
+    }
+
+    fn evidence_count(&self) -> usize {
+        self.transcript
+            .iter()
+            .filter(|item| matches!(item, TranscriptItem::Evidence(_)))
+            .count()
+    }
+
+    fn evidence(&self, index: usize) -> Option<&Evidence> {
+        self.transcript
+            .iter()
+            .filter_map(|item| match item {
+                TranscriptItem::Evidence(evidence) => Some(evidence),
+                _ => None,
+            })
+            .nth(index)
+    }
+
+    fn select_evidence(&mut self, direction: i8) {
+        let count = self.evidence_count();
+        if count == 0 {
+            self.selected_evidence = None;
+            return;
+        }
+        self.selected_evidence = Some(match (self.selected_evidence, direction) {
+            (Some(0), direction) if direction < 0 => count - 1,
+            (Some(index), direction) if direction < 0 => index - 1,
+            (Some(index), _) => (index + 1) % count,
+            (None, direction) if direction < 0 => count - 1,
+            (None, _) => 0,
+        });
+        self.scroll_from_bottom = 0;
     }
 
     fn access_label(&self) -> &'static str {
@@ -257,7 +293,13 @@ struct Layout {
     toolbar_row: u16,
     input_row: u16,
     actions: Vec<ActionHit>,
-    evidence_rows: Vec<(u16, Evidence)>,
+    evidence_rows: Vec<(u16, usize, Evidence)>,
+}
+
+struct TranscriptRow {
+    text: String,
+    evidence: Option<(usize, Evidence)>,
+    muted: bool,
 }
 
 fn send_request(stdin: &Arc<Mutex<BufWriter<ChildStdin>>>, request: &Request) -> io::Result<()> {
@@ -346,27 +388,46 @@ fn toolbar(right_edge: u16) -> (String, Vec<ActionHit>) {
     (rendered, hits)
 }
 
-fn flattened_transcript(state: &UiState, width: usize) -> Vec<(String, Option<Evidence>, bool)> {
+fn evidence_source_text(source: EvidenceSource) -> (&'static str, &'static str) {
+    match source {
+        EvidenceSource::Selection => ("Selected code", "exact code highlighted in Helix"),
+        EvidenceSource::Definition => ("Definition", "symbol definition resolved by Helix"),
+        EvidenceSource::Reference => ("Reference", "bounded symbol usage resolved by Helix"),
+        EvidenceSource::LiteralMatch => ("Exact match", "local repository text match"),
+    }
+}
+
+fn flattened_transcript(state: &UiState, width: usize) -> Vec<TranscriptRow> {
     let mut rows = Vec::new();
+    let mut evidence_index = 0;
     for item in &state.transcript {
         match item {
             TranscriptItem::Line(line) => {
                 rows.extend(
                     wrap_text(line, width)
                         .into_iter()
-                        .map(|line| (line, None, true)),
+                        .map(|text| TranscriptRow {
+                            text,
+                            evidence: None,
+                            muted: true,
+                        }),
                 );
             }
             TranscriptItem::Answer { text, .. } => {
                 rows.extend(
                     wrap_text(text, width)
                         .into_iter()
-                        .map(|line| (line, None, false)),
+                        .map(|text| TranscriptRow {
+                            text,
+                            evidence: None,
+                            muted: false,
+                        }),
                 );
             }
             TranscriptItem::Evidence(evidence) => {
+                let (source, reason) = evidence_source_text(evidence.source);
                 let label = format!(
-                    "↗ {}:{}:{}-{}:{}",
+                    "↗ {}:{}:{}-{}:{}  {source} · {reason}",
                     evidence.relative_path.display(),
                     evidence.start_line,
                     evidence.start_column,
@@ -376,8 +437,13 @@ fn flattened_transcript(state: &UiState, width: usize) -> Vec<(String, Option<Ev
                 rows.extend(
                     wrap_text(&label, width)
                         .into_iter()
-                        .map(|line| (line, Some(evidence.clone()), false)),
+                        .map(|text| TranscriptRow {
+                            text,
+                            evidence: Some((evidence_index, evidence.clone())),
+                            muted: false,
+                        }),
                 );
+                evidence_index += 1;
             }
         }
     }
@@ -465,20 +531,28 @@ fn render(state: &UiState) -> io::Result<Layout> {
     let end = rows.len().saturating_sub(scroll);
     let start = end.saturating_sub(transcript_height);
     let mut evidence_rows = Vec::new();
-    for (offset, (line, evidence, muted)) in rows[start..end].iter().enumerate() {
+    for (offset, transcript_row) in rows[start..end].iter().enumerate() {
         let row = transcript_start + offset as u16;
-        if let Some(evidence) = evidence {
-            evidence_rows.push((row, evidence.clone()));
+        if let Some((index, evidence)) = &transcript_row.evidence {
+            evidence_rows.push((row, *index, evidence.clone()));
             queue!(stdout, SetForegroundColor(LINK))?;
-        } else if *muted {
+            if state.selected_evidence == Some(*index) {
+                queue!(stdout, SetAttribute(Attribute::Reverse))?;
+            }
+        } else if transcript_row.muted {
             queue!(stdout, SetForegroundColor(MUTED))?;
         }
         queue!(
             stdout,
             MoveTo(HORIZONTAL_PADDING, row),
-            Print(truncate(line, width_usize))
+            Print(truncate(&transcript_row.text, width_usize))
         )?;
-        if evidence.is_some() || *muted {
+        if let Some((index, _)) = &transcript_row.evidence {
+            if state.selected_evidence == Some(*index) {
+                queue!(stdout, SetAttribute(Attribute::NoReverse))?;
+            }
+            queue!(stdout, SetForegroundColor(TEXT))?;
+        } else if transcript_row.muted {
             queue!(stdout, SetForegroundColor(TEXT))?;
         }
     }
@@ -490,6 +564,9 @@ fn render(state: &UiState) -> io::Result<Layout> {
             state.input.iter().collect::<String>()
         ),
         (DaemonState::Ready, Some(_)) => "›  Working…  Esc to interrupt".to_owned(),
+        (DaemonState::Ready, None) if state.selected_evidence.is_some() => {
+            "›  ↑↓ choose evidence · Enter opens in Helix · Esc returns to prompt".to_owned()
+        }
         (DaemonState::Ready, None) => format!("› {}", state.input.iter().collect::<String>()),
     };
     queue!(
@@ -501,7 +578,10 @@ fn render(state: &UiState) -> io::Result<Layout> {
         SetAttribute(Attribute::NoBold),
         SetForegroundColor(TEXT)
     )?;
-    if state.daemon != DaemonState::Starting && state.active_id.is_none() {
+    if state.daemon != DaemonState::Starting
+        && state.active_id.is_none()
+        && state.selected_evidence.is_none()
+    {
         let cursor_column = usize::from(HORIZONTAL_PADDING)
             .saturating_add(2)
             .saturating_add(state.cursor)
@@ -997,12 +1077,30 @@ fn handle_key(
         cancel_active(state, daemon_stdin)?;
         return Ok(false);
     }
+    if key.code == KeyCode::Esc && state.selected_evidence.take().is_some() {
+        return Ok(false);
+    }
     if state.active_id.is_some() {
         return Ok(false);
     }
     if state.daemon == DaemonState::Starting {
         return Ok(false);
     }
+    if state.input.is_empty() && matches!(key.code, KeyCode::Up | KeyCode::Down) {
+        state.select_evidence(if key.code == KeyCode::Up { -1 } else { 1 });
+        return Ok(false);
+    }
+    if key.code == KeyCode::Enter
+        && let Some(index) = state.selected_evidence
+    {
+        if let Some(evidence) = state.evidence(index)
+            && let Err(cause) = navigate(evidence)
+        {
+            state.line(format!("Navigation failed: {cause}"));
+        }
+        return Ok(false);
+    }
+    state.selected_evidence = None;
     match key.code {
         KeyCode::Enter => {
             let line = state.take_input();
@@ -1116,11 +1214,12 @@ fn handle_mouse(
                     daemon_stdin,
                 );
             }
-            if let Some((_, evidence)) = layout
+            if let Some((_, index, evidence)) = layout
                 .evidence_rows
                 .iter()
-                .find(|(row, _)| *row == mouse.row)
+                .find(|(row, _, _)| *row == mouse.row)
             {
+                state.selected_evidence = Some(*index);
                 if let Err(cause) = navigate(evidence) {
                     state.line(format!("Navigation failed: {cause}"));
                 }
@@ -1128,6 +1227,7 @@ fn handle_mouse(
                 && state.daemon != DaemonState::Starting
                 && state.active_id.is_none()
             {
+                state.selected_evidence = None;
                 let input_origin = HORIZONTAL_PADDING.saturating_add(2);
                 state.cursor =
                     usize::from(mouse.column.saturating_sub(input_origin)).min(state.input.len());
@@ -1363,6 +1463,18 @@ fn main() -> io::Result<()> {
 mod tests {
     use super::*;
 
+    fn evidence(source: EvidenceSource, path: &str) -> Evidence {
+        Evidence {
+            source,
+            relative_path: path.into(),
+            start_line: 4,
+            start_column: 2,
+            end_line: 4,
+            end_column: 8,
+            excerpt: "private source body".into(),
+        }
+    }
+
     #[test]
     fn toolbar_hit_targets_match_rendered_buttons() {
         let (rendered, hits) = toolbar(120);
@@ -1429,6 +1541,46 @@ mod tests {
     #[test]
     fn wrapping_preserves_explicit_blank_lines() {
         assert_eq!(wrap_text("abcd\n\nef", 2), ["ab", "cd", "", "ef"]);
+    }
+
+    #[test]
+    fn evidence_rows_explain_typed_provenance_without_rendering_source() {
+        let mut state = UiState::new(Path::new("."));
+        state.transcript = vec![
+            TranscriptItem::Evidence(evidence(EvidenceSource::Selection, "src/main.rs")),
+            TranscriptItem::Evidence(evidence(EvidenceSource::Definition, "src/lib.rs")),
+        ];
+
+        let rendered = flattened_transcript(&state, 200)
+            .into_iter()
+            .map(|row| row.text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(rendered.contains("Selected code · exact code highlighted in Helix"));
+        assert!(rendered.contains("Definition · symbol definition resolved by Helix"));
+        assert!(!rendered.contains("private source body"));
+    }
+
+    #[test]
+    fn evidence_selection_cycles_without_scanning_or_model_work() {
+        let mut state = UiState::new(Path::new("."));
+        state.transcript = vec![
+            TranscriptItem::Evidence(evidence(EvidenceSource::Selection, "src/main.rs")),
+            TranscriptItem::Evidence(evidence(EvidenceSource::Definition, "src/lib.rs")),
+        ];
+
+        state.select_evidence(1);
+        assert_eq!(state.selected_evidence, Some(0));
+        assert_eq!(
+            state.evidence(0).map(|item| item.source),
+            Some(EvidenceSource::Selection)
+        );
+        state.select_evidence(1);
+        assert_eq!(state.selected_evidence, Some(1));
+        state.select_evidence(1);
+        assert_eq!(state.selected_evidence, Some(0));
+        state.select_evidence(-1);
+        assert_eq!(state.selected_evidence, Some(1));
     }
 
     #[test]

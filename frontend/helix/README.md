@@ -111,8 +111,10 @@ Diagnostic commands remain available:
   session-scoped bridge and streams its grounded, deterministic acknowledgement.
 - `/agent <question>` sends the selection, one LSP definition, and at most
   eight LSP references to the pinned Pi RPC driver using the selected
-  `openai-codex` model. Every range is clickable. Pi receives no tools,
-  extensions, skills, session, or ambient repository context.
+  `openai-codex` model. Each compact evidence row explains whether it is the
+  selection, definition, or a bounded reference. Every range is clickable. Pi
+  receives no tools, extensions, skills, session, or ambient repository
+  context.
 - `/preview <one-line replacement>` shows a transient unified diff for the
   selected text; closing it leaves the repository unchanged.
 - `/show <literal text>` streams bounded local evidence and selects its exact
@@ -128,6 +130,11 @@ Diagnostic commands remain available:
 Press `Ctrl-d` from an empty, idle Lantern prompt to close the session without
 typing `/quit`. `Esc` remains the interruption shortcut while an agent turn is
 active; quitting never silently abandons active work.
+
+With an empty idle prompt, `Up` and `Down` cycle through prior evidence and
+`Enter` opens the highlighted exact range in Helix. `Esc` returns to the input
+prompt. This navigation operates only on evidence already in the pane; it does
+not start a repository search or model request.
 
 The launch command fails with an actionable error when a required binary is
 missing. It does not silently substitute another editor or Git interface.

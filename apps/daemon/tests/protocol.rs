@@ -1,7 +1,7 @@
 use lantern_diagnostics::{Code as DiagnosticCode, Record as DiagnosticRecord};
 use lantern_protocol::{
-    Capability, Event, Evidence, MAX_FRAME_BYTES, PROTOCOL_VERSION, Request, SelectionContext,
-    SymbolContext, SymbolLocation,
+    Capability, Event, Evidence, EvidenceSource, MAX_FILES, MAX_FRAME_BYTES, PROTOCOL_VERSION,
+    Request, SelectionContext, SymbolContext, SymbolLocation,
 };
 use std::fs;
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
@@ -107,11 +107,11 @@ impl Daemon {
 }
 
 #[test]
-fn golden_wire_fixtures_match_the_v3_types() {
-    for line in include_str!("../../../protocol/v3/requests.jsonl").lines() {
+fn golden_wire_fixtures_match_the_v4_types() {
+    for line in include_str!("../../../protocol/v4/requests.jsonl").lines() {
         serde_json::from_str::<Request>(line).expect("golden request must deserialize");
     }
-    for line in include_str!("../../../protocol/v3/events.jsonl").lines() {
+    for line in include_str!("../../../protocol/v4/events.jsonl").lines() {
         serde_json::from_str::<Event>(line).expect("golden event must deserialize");
     }
 }
@@ -320,7 +320,7 @@ fn cancelling_an_idle_operation_is_an_idempotent_no_op() {
 #[test]
 fn rejects_unknown_fields_and_recovers_at_the_next_frame() {
     let mut daemon = Daemon::spawn();
-    daemon.send_raw(br#"{"method":"initialize","protocol_version":3,"surprise":true}"#);
+    daemon.send_raw(br#"{"method":"initialize","protocol_version":4,"surprise":true}"#);
     assert!(matches!(daemon.next(), Event::Error { id: None, .. }));
     daemon.initialize();
 }
@@ -686,6 +686,7 @@ fn streams_an_exact_evidence_range() {
     assert_eq!(
         evidence,
         Evidence {
+            source: EvidenceSource::LiteralMatch,
             relative_path: "sample.rs".into(),
             start_line: 2,
             start_column: 1,
@@ -700,6 +701,10 @@ fn streams_an_exact_evidence_range() {
 #[test]
 fn acknowledges_cancellation_within_budget() {
     let root = fixture("cancellation", "interruptible evidence\n");
+    for index in 0..MAX_FILES {
+        fs::write(root.join(format!("candidate-{index}.rs")), "unrelated\n")
+            .expect("write cancellation fixture");
+    }
     let mut daemon = Daemon::spawn();
     daemon.initialize();
     daemon.trust_read(&root);
@@ -759,6 +764,7 @@ fn accepts_selection_context_as_exact_evidence() {
             break evidence;
         }
     };
+    assert_eq!(evidence.source, EvidenceSource::Selection);
     assert_eq!(evidence.relative_path, PathBuf::from("sample.rs"));
     assert_eq!((evidence.start_column, evidence.end_column), (1, 17));
     fs::remove_dir_all(root).expect("remove fixture");
@@ -1059,10 +1065,12 @@ fn streams_definition_and_references_before_a_symbol_grounded_answer() {
         },
     });
 
-    let mut locations = Vec::new();
+    let mut evidence_records = Vec::new();
     loop {
         match daemon.next() {
-            Event::Evidence { id: 13, evidence } => locations.push(evidence.relative_path),
+            Event::Evidence { id: 13, evidence } => {
+                evidence_records.push((evidence.source, evidence.relative_path))
+            }
             Event::Completed {
                 id: 13,
                 evidence_count,
@@ -1074,11 +1082,11 @@ fn streams_definition_and_references_before_a_symbol_grounded_answer() {
         }
     }
     assert_eq!(
-        locations,
+        evidence_records,
         vec![
-            PathBuf::from("sample.rs"),
-            PathBuf::from("definition.rs"),
-            PathBuf::from("sample.rs"),
+            (EvidenceSource::Selection, PathBuf::from("sample.rs")),
+            (EvidenceSource::Definition, PathBuf::from("definition.rs")),
+            (EvidenceSource::Reference, PathBuf::from("sample.rs")),
         ]
     );
     let prompt = fs::read_to_string(model_workdir.join("prompt.json")).unwrap();

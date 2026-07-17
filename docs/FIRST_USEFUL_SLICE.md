@@ -245,6 +245,13 @@ Deliver:
 - Path, symbol, range, content hash, freshness, and selection-reason metadata.
 - Pre-render validation and stale-evidence state.
 
+The first promoted evidence-provenance slice records a closed local source enum
+for selected code, Helix-resolved definitions and references, and bounded
+literal matches. The terminal derives compact reasons from that enum and opens
+the existing exact range on click or keyboard selection. It adds no model call,
+index, or repository scan to the answer path. Content hashes, freshness, and
+claim classification remain later FS-07 work.
+
 Acceptance:
 
 - Every important durable claim links to valid evidence or explicit

@@ -1,9 +1,10 @@
 use lantern_diagnostics::{Code as DiagnosticCode, Component, Level, Record, emit as diagnose};
 use lantern_policy_engine::WorkspacePolicy;
 use lantern_protocol::{
-    Capability, ChangeProposal, Event, Evidence, FrameError, MAX_EVENT_BYTES, MAX_EVIDENCE,
-    MAX_FILE_BYTES, MAX_FILES, MAX_SELECTION_BYTES, PROTOCOL_VERSION, Request, SelectionContext,
-    SymbolContext, SymbolLocation, read_frame, validate_selection, validate_symbol_context,
+    Capability, ChangeProposal, Event, Evidence, EvidenceSource, FrameError, MAX_EVENT_BYTES,
+    MAX_EVIDENCE, MAX_FILE_BYTES, MAX_FILES, MAX_SELECTION_BYTES, PROTOCOL_VERSION, Request,
+    SelectionContext, SymbolContext, SymbolLocation, read_frame, validate_selection,
+    validate_symbol_context,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -13,7 +14,7 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 type SharedWriter = Arc<Mutex<BufWriter<io::Stdout>>>;
 type Operations = Arc<Mutex<HashMap<u64, Arc<Cancellation>>>>;
@@ -243,7 +244,20 @@ fn settle(id: u64, operations: &Operations, writer: &SharedWriter) {
 fn should_skip(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(|name| matches!(name, ".git" | ".lantern" | "node_modules" | "target"))
+        .is_some_and(|name| {
+            matches!(
+                name,
+                ".git"
+                    | ".lantern"
+                    | ".pytest_cache"
+                    | ".ruff_cache"
+                    | ".venv"
+                    | "__pycache__"
+                    | "node_modules"
+                    | "target"
+                    | "venv"
+            )
+        })
 }
 
 fn evidence_for(
@@ -268,6 +282,7 @@ fn evidence_for(
 
     debug_assert!(path.is_file());
     Some(Evidence {
+        source: EvidenceSource::LiteralMatch,
         relative_path,
         start_line,
         start_column,
@@ -281,6 +296,7 @@ fn evidence_from_symbol_location(
     root: &Path,
     location: &SymbolLocation,
     excerpt_lines: usize,
+    source: EvidenceSource,
 ) -> Result<Evidence, String> {
     let path = root.join(&location.relative_path);
     let canonical_path = path
@@ -315,6 +331,7 @@ fn evidence_from_symbol_location(
         .take(1_024)
         .collect();
     Ok(Evidence {
+        source,
         relative_path: location.relative_path.clone(),
         start_line: location.start_line,
         start_column: location.start_column,
@@ -425,7 +442,7 @@ fn stream_answer(
 ) -> io::Result<()> {
     let answer = if let Some(first) = evidence.first() {
         format!(
-            "Found {} exact repository match{}. The strongest evidence is {}:{} and is now selected in Helix. This first slice uses literal local evidence; symbol and LSP reasoning are not enabled yet.",
+            "Found {} exact repository match{}. The first evidence is {}:{} and is now selected in Helix. This first slice uses literal local evidence; symbol and LSP reasoning are not enabled yet.",
             evidence.len(),
             if evidence.len() == 1 { "" } else { "es" },
             first.relative_path.display(),
@@ -437,18 +454,8 @@ fn stream_answer(
         )
     };
 
-    for word in answer.split_inclusive(' ') {
-        if cancellation.is_requested() {
-            return Ok(());
-        }
-        emit(
-            writer,
-            &Event::TextDelta {
-                id,
-                delta: word.to_owned(),
-            },
-        )?;
-        thread::sleep(Duration::from_millis(35));
+    if !cancellation.is_requested() {
+        emit(writer, &Event::TextDelta { id, delta: answer })?;
     }
     Ok(())
 }
@@ -536,6 +543,7 @@ fn run_selection_operation(
         )
         .map_err(|cause| format!("cannot stream operation start: {cause}"))?;
         let evidence = Evidence {
+            source: EvidenceSource::Selection,
             relative_path: selection.relative_path.clone(),
             start_line: selection.start_line,
             start_column: selection.start_column,
@@ -568,19 +576,9 @@ fn run_selection_operation(
                 ""
             },
         );
-        for word in answer.split_inclusive(' ') {
-            if cancellation.is_requested() {
-                return Ok(());
-            }
-            emit(
-                &writer,
-                &Event::TextDelta {
-                    id,
-                    delta: word.to_owned(),
-                },
-            )
-            .map_err(|cause| format!("cannot stream answer: {cause}"))?;
-            thread::sleep(Duration::from_millis(35));
+        if !cancellation.is_requested() {
+            emit(&writer, &Event::TextDelta { id, delta: answer })
+                .map_err(|cause| format!("cannot stream answer: {cause}"))?;
         }
         Ok(())
     })();
@@ -666,6 +664,7 @@ fn run_pi_operation(
         .map_err(|cause| format!("cannot stream operation start: {cause}"))?;
 
         let selection_evidence = Evidence {
+            source: EvidenceSource::Selection,
             relative_path: selection.relative_path.clone(),
             start_line: selection.start_line,
             start_column: selection.start_column,
@@ -693,12 +692,17 @@ fn run_pi_operation(
         if let Some(context) = &symbol_context {
             symbol_evidence.push((
                 "definition",
-                evidence_from_symbol_location(&root, &context.definition, 4)?,
+                evidence_from_symbol_location(
+                    &root,
+                    &context.definition,
+                    4,
+                    EvidenceSource::Definition,
+                )?,
             ));
             for reference in &context.references {
                 symbol_evidence.push((
                     "reference",
-                    evidence_from_symbol_location(&root, reference, 1)?,
+                    evidence_from_symbol_location(&root, reference, 1, EvidenceSource::Reference)?,
                 ));
             }
             for (_, evidence) in &symbol_evidence {
@@ -1342,5 +1346,27 @@ mod tests {
         let diagnostics = vec![b'x'; 32 * 1024];
         assert!(drain_provider_stderr(diagnostics.as_slice()));
         assert!(!drain_provider_stderr([].as_slice()));
+    }
+
+    #[test]
+    fn repository_search_skips_dependency_and_tool_cache_directories() {
+        for directory in [
+            ".git",
+            ".lantern",
+            ".pytest_cache",
+            ".ruff_cache",
+            ".venv",
+            "__pycache__",
+            "node_modules",
+            "target",
+            "venv",
+        ] {
+            assert!(
+                should_skip(Path::new(directory)),
+                "did not skip {directory}"
+            );
+        }
+        assert!(!should_skip(Path::new("src")));
+        assert!(!should_skip(Path::new("tests")));
     }
 }

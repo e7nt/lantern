@@ -3,7 +3,7 @@ use std::fmt;
 use std::io::{self, BufRead};
 use std::path::{Component, Path, PathBuf};
 
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const MAX_EVENT_BYTES: usize = 256 * 1024;
 pub const MAX_DIAGNOSTIC_BYTES: usize = 8 * 1024;
@@ -142,12 +142,22 @@ pub enum Request {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Evidence {
+    pub source: EvidenceSource,
     pub relative_path: PathBuf,
     pub start_line: usize,
     pub start_column: usize,
     pub end_line: usize,
     pub end_column: usize,
     pub excerpt: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceSource {
+    Selection,
+    Definition,
+    Reference,
+    LiteralMatch,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -485,6 +495,12 @@ mod tests {
             validate_symbol_context(&context).unwrap_err(),
             "symbol context exceeds the 8-reference limit"
         );
+    }
+
+    #[test]
+    fn rejects_unknown_evidence_provenance() {
+        let event = r#"{"type":"evidence","id":1,"evidence":{"source":"model_guess","relative_path":"src/lib.rs","start_line":1,"start_column":1,"end_line":1,"end_column":2,"excerpt":"x"}}"#;
+        assert!(serde_json::from_str::<Event>(event).is_err());
     }
 
     #[test]

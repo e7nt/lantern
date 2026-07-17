@@ -272,7 +272,7 @@ decision unless ADR 001's revisit conditions occur.
 
 Foundation progress on 2026-07-16: the first `P1-03`/`P1-04` lifecycle slice is
 implemented in the maintained Rust workspace and
-[Protocol v3](../protocol/v3/README.md).
+[Protocol v4](../protocol/v4/README.md).
 It provides hard version negotiation, bounded recoverable JSONL framing,
 explicit admission and settlement, duplicate-submit protection, idempotent
 cancellation, and joined shutdown. This is not completion of daemon health,
@@ -287,7 +287,7 @@ excluded for the local stdio daemon: initialization is its ready boundary and
 restarting could conceal lost operation state. Durable crash reports,
 diagnostic redaction, and general supervision remain promotion work.
 
-The `P1-07` slice adds Protocol v3 workspace configuration and a dedicated
+The `P1-07` slice adds workspace configuration and a dedicated
 policy crate. Every session starts locked, binds one canonical repository, and
 requires all operation capabilities before admission. Local reads and model
 transmission are separate, revocable session grants; repository write and
@@ -312,6 +312,19 @@ credential input, protocol field, persistence, refresh path, or provider
 fallback. Provider rejection detail is treated as sensitive and replaced by a
 fixed error with an actionable Pi status and login recovery step. The boundary
 is defined in [the provider credential contract](CREDENTIALS.md).
+
+The first `P2-04` slice adds typed evidence provenance to Protocol v4. The
+terminal derives compact reasons locally and reuses the existing streamed
+evidence and exact-range navigation path; it performs no additional scan,
+index, or model request.
+
+A 2026-07-17 live probe found and removed two avoidable local-search costs:
+Python environment and tool-cache directories now share the existing explicit
+dependency exclusion, and deterministic answers no longer simulate model
+typing with a 35 ms delay per word. On the Lantern repository, the same exact
+search inspected 50 relevant files and reached `completed` in 75 ms, down from
+1.13 seconds and a 2,000-file ceiling before the correction. Real provider
+responses continue to stream as they arrive.
 
 ### Exit criteria
 
