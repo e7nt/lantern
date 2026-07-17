@@ -24,6 +24,8 @@ and tool vocabulary should not become user-facing ceremony.
 - Mouse and keyboard interaction across the surfaces.
 - A `Ctrl-a` contextual composer over Helix and reversible `F2` full-screen
   reading mode for the persistent agent pane.
+- Bounded, typed composer submission over a private session-local Unix socket;
+  tmux owns presentation and focus but never transports questions.
 - Maintained Rust terminal, daemon, diagnostics, and Protocol v6 crates.
 - Selection capture, exact navigation, bounded local literal search, and
   Helix-provided definition/reference context.

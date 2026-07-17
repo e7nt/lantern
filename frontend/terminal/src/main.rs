@@ -15,24 +15,24 @@ use lantern_diagnostics::{
     DaemonState as DiagnosticDaemonState, bundle_from_stderr, summarize_stderr,
 };
 use lantern_protocol::{
-    BoundedTail, ChangeProposal, Event, Evidence, EvidenceSource, MAX_DIAGNOSTIC_BYTES,
-    MAX_SELECTION_BYTES, PROTOCOL_VERSION, Request, SelectionContext, SymbolContext,
-    SymbolContextExport, search_term,
+    BoundedTail, ChangeProposal, ControlRequest, Event, Evidence, EvidenceSource,
+    MAX_DIAGNOSTIC_BYTES, MAX_QUESTION_BYTES, MAX_SELECTION_BYTES, PROTOCOL_VERSION, Request,
+    SelectionContext, SymbolContext, SymbolContextExport, read_frame, search_term,
 };
 use std::env;
 use std::fs;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::{ChildStdin, Command, Stdio};
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt;
-#[cfg(all(unix, test))]
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+#[cfg(unix)]
+use std::os::unix::net::UnixListener;
 
 const CANVAS: Color = Color::Rgb {
     r: 58,
@@ -67,6 +67,8 @@ enum Input {
     Daemon(Event),
     DaemonClosed { diagnostics: String },
     DaemonStartupTimeout,
+    Question(String),
+    ControlError(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -511,7 +513,7 @@ fn show_proposal(selection_path: &Path, proposal: &ChangeProposal) -> Result<(),
     }
 }
 
-fn spawn_terminal_reader(sender: Sender<Input>) {
+fn spawn_terminal_reader(sender: SyncSender<Input>) {
     thread::spawn(move || {
         while let Ok(event) = event::read() {
             if sender.send(Input::Terminal(event)).is_err() {
@@ -543,7 +545,7 @@ fn spawn_diagnostic_reader(
 fn spawn_daemon_reader(
     reader: impl io::Read + Send + 'static,
     diagnostics: Arc<Mutex<BoundedTail>>,
-    sender: Sender<Input>,
+    sender: SyncSender<Input>,
 ) {
     thread::spawn(move || {
         for line in BufReader::new(reader).lines() {
@@ -568,11 +570,53 @@ fn spawn_daemon_reader(
     });
 }
 
-fn spawn_startup_deadline(sender: Sender<Input>) {
+fn spawn_startup_deadline(sender: SyncSender<Input>) {
     thread::spawn(move || {
         thread::sleep(DAEMON_STARTUP_TIMEOUT);
         let _ = sender.send(Input::DaemonStartupTimeout);
     });
+}
+
+#[cfg(unix)]
+fn spawn_control_listener(path: &Path, sender: SyncSender<Input>) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => {}
+        Err(cause) if cause.kind() == io::ErrorKind::NotFound => {}
+        Err(cause) => return Err(cause),
+    }
+    let listener = UnixListener::bind(path)?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    thread::spawn(move || {
+        for connection in listener.incoming() {
+            let result = (|| -> Result<String, String> {
+                let stream = connection.map_err(|cause| cause.to_string())?;
+                let mut reader = BufReader::new(stream);
+                let frame = read_frame(&mut reader)
+                    .map_err(|cause| cause.to_string())?
+                    .ok_or("composer closed without a request")?;
+                match serde_json::from_str::<ControlRequest>(&frame)
+                    .map_err(|cause| format!("invalid composer request: {cause}"))?
+                {
+                    ControlRequest::SubmitQuestion { question }
+                        if !question.trim().is_empty() && question.len() <= MAX_QUESTION_BYTES =>
+                    {
+                        Ok(question)
+                    }
+                    ControlRequest::SubmitQuestion { .. } => Err(format!(
+                        "question must contain 1 to {MAX_QUESTION_BYTES} bytes"
+                    )),
+                }
+            })();
+            let input = match result {
+                Ok(question) => Input::Question(question),
+                Err(message) => Input::ControlError(message),
+            };
+            if sender.send(input).is_err() {
+                break;
+            }
+        }
+    });
+    Ok(())
 }
 
 fn navigate(evidence: &Evidence) -> io::Result<()> {
@@ -793,27 +837,7 @@ fn handle_line(
         state.line(message);
         return Ok(false);
     }
-    if let Some(query) = line.strip_prefix("/agent ") {
-        start_agent_question(state, repository, selection_path, daemon_stdin, query)?;
-    } else if let Some(query) = line.strip_prefix("/ask ") {
-        match selection_for_question(state, selection_path) {
-            Ok(selection) => {
-                let Some(id) = state.begin_operation() else {
-                    return Ok(false);
-                };
-                send_request(
-                    daemon_stdin,
-                    &Request::AskSelection {
-                        id,
-                        repository: repository.to_owned(),
-                        query: query.trim().to_owned(),
-                        selection,
-                    },
-                )?;
-            }
-            Err(message) => state.line(format!("Selection failed: {message}")),
-        }
-    } else if let Some(replacement) = line.strip_prefix("/preview ") {
+    if let Some(replacement) = line.strip_prefix("/preview ") {
         match selection_for_question(state, selection_path) {
             Ok(selection) => {
                 let Some(id) = state.begin_operation() else {
@@ -1152,7 +1176,12 @@ fn close_session(
     shutdown
 }
 
-fn run(repository: PathBuf, daemon_path: PathBuf, selection_path: PathBuf) -> io::Result<()> {
+fn run(
+    repository: PathBuf,
+    daemon_path: PathBuf,
+    selection_path: PathBuf,
+    control_socket: PathBuf,
+) -> io::Result<()> {
     let mut daemon = Command::new(daemon_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1164,7 +1193,8 @@ fn run(repository: PathBuf, daemon_path: PathBuf, selection_path: PathBuf) -> io
     let daemon_stdout = daemon.stdout.take().expect("daemon stdout");
     let daemon_stderr = daemon.stderr.take().expect("daemon stderr");
     let diagnostics = Arc::new(Mutex::new(BoundedTail::new(MAX_DIAGNOSTIC_BYTES)));
-    let (sender, receiver): (Sender<Input>, Receiver<Input>) = mpsc::channel();
+    let (sender, receiver): (SyncSender<Input>, Receiver<Input>) = mpsc::sync_channel(256);
+    spawn_control_listener(&control_socket, sender.clone())?;
     let _terminal = TerminalGuard::enter()?;
     spawn_terminal_reader(sender.clone());
     spawn_diagnostic_reader(daemon_stderr, diagnostics.clone());
@@ -1221,6 +1251,18 @@ fn run(repository: PathBuf, daemon_path: PathBuf, selection_path: PathBuf) -> io
                 }
                 false
             }
+            Input::Question(question) => handle_line(
+                question,
+                &mut state,
+                &repository,
+                &selection_path,
+                &daemon_stdin,
+                &diagnostics,
+            )?,
+            Input::ControlError(message) => {
+                state.line(format!("Could not submit question: {message}"));
+                false
+            }
         };
         if should_quit {
             close_session(&daemon_stdin, state.daemon)?;
@@ -1243,7 +1285,10 @@ fn main() -> io::Result<()> {
     let selection_path = env::var_os("LANTERN_SELECTION_PATH")
         .map(PathBuf::from)
         .ok_or_else(|| io::Error::other("LANTERN_SELECTION_PATH is not configured"))?;
-    run(repository, daemon, selection_path)
+    let control_socket = env::var_os("LANTERN_CONTROL_SOCKET")
+        .map(PathBuf::from)
+        .ok_or_else(|| io::Error::other("LANTERN_CONTROL_SOCKET is not configured"))?;
+    run(repository, daemon, selection_path, control_socket)
 }
 
 #[cfg(test)]
@@ -1267,6 +1312,46 @@ mod tests {
         let state = UiState::new(Path::new("."));
         assert!(state.transcript.is_empty());
         assert!(state.activity.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn composer_control_channel_delivers_a_typed_question() {
+        use std::os::unix::net::UnixStream;
+
+        let directory = env::temp_dir().join(format!(
+            "lantern-control-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        fs::create_dir(&directory).expect("create control fixture");
+        let socket = directory.join("control.sock");
+        let (sender, receiver) = mpsc::sync_channel(1);
+        spawn_control_listener(&socket, sender).expect("start control listener");
+
+        let mut stream = UnixStream::connect(&socket).expect("connect submit client");
+        serde_json::to_writer(
+            &mut stream,
+            &ControlRequest::SubmitQuestion {
+                question: "explain λ and $(literal)".into(),
+            },
+        )
+        .expect("write control request");
+        stream.write_all(b"\n").expect("frame control request");
+        drop(stream);
+
+        match receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("receive question")
+        {
+            Input::Question(question) => assert_eq!(question, "explain λ and $(literal)"),
+            _ => panic!("expected a composer question"),
+        }
+        fs::remove_file(&socket).expect("remove control socket");
+        fs::remove_dir(&directory).expect("remove control fixture");
     }
 
     #[test]

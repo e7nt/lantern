@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+session=${1:?Lantern session is required}
+runtime_dir=${2:?Lantern runtime directory is required}
+temp_root=$(realpath "${TMPDIR:-/tmp}")
+case $runtime_dir in
+	"$temp_root"/lantern.*) ;;
+	*)
+		echo "Refusing to clean an unexpected runtime directory: $runtime_dir" >&2
+		exit 2
+		;;
+esac
+
+while tmux has-session -t "$session" 2>/dev/null; do
+	sleep 1
+done
+
+rm -f "$runtime_dir/selection.json" "$runtime_dir/selection.tmp" \
+	"$runtime_dir/control.sock" "$runtime_dir/proposal.before" \
+	"$runtime_dir/proposal.after"
+rmdir "$runtime_dir" 2>/dev/null || true

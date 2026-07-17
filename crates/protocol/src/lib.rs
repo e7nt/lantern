@@ -11,6 +11,7 @@ pub const MAX_FILES: usize = 2_000;
 pub const MAX_FILE_BYTES: u64 = 512 * 1024;
 pub const MAX_EVIDENCE: usize = 5;
 pub const MAX_SELECTION_BYTES: usize = 64 * 1024;
+pub const MAX_QUESTION_BYTES: usize = 64 * 1024;
 pub const MAX_SYMBOL_REFERENCES: usize = 8;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -121,6 +122,12 @@ pub enum Request {
         id: u64,
     },
     Shutdown,
+}
+
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ControlRequest {
+    SubmitQuestion { question: String },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

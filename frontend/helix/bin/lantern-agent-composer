@@ -14,8 +14,13 @@ submit_question() {
 	local agent_pane=$1
 	local question=$2
 	[[ -n ${question//[[:space:]]/} ]] || return 0
-	tmux send-keys -t "$agent_pane" -l -- "$question"
-	tmux send-keys -t "$agent_pane" Enter
+	: "${LANTERN_SUBMIT_BIN:?Lantern submit client is not configured}"
+	: "${LANTERN_CONTROL_SOCKET:?Lantern control socket is not configured}"
+	if ! printf '%s' "$question" | "$LANTERN_SUBMIT_BIN"; then
+		printf '\n\n  Lantern could not receive the question. Press Enter to close.' >&2
+		IFS= read -r _ || true
+		return 1
+	fi
 	tmux select-pane -t "$agent_pane"
 }
 
@@ -43,4 +48,6 @@ tmux display-popup -t "$TMUX_PANE" -E -w '70%' -h 7 \
 	-T ' Ask Lantern ' \
 	-e "LANTERN_AGENT_PANE=$agent_pane" \
 	-e "LANTERN_SELECTION_PATH=${LANTERN_SELECTION_PATH:-}" \
+	-e "LANTERN_CONTROL_SOCKET=${LANTERN_CONTROL_SOCKET:?}" \
+	-e "LANTERN_SUBMIT_BIN=${LANTERN_SUBMIT_BIN:?}" \
 	"$popup_command"
