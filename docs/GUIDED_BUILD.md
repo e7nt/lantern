@@ -1,5 +1,9 @@
 # Guided Build
 
+> **Status note:** This future interaction design predates ADR 003. Preserve its
+> visibility, interruption, and narrative goals without rebuilding
+> mode-specific permission gates.
+
 ## Purpose
 
 Guided Build is an optional implementation mode in which the agent constructs a

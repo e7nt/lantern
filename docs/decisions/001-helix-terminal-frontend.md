@@ -3,6 +3,8 @@
 - **Status:** Accepted
 - **Date:** 2026-07-15
 - **Decision owner:** Lantern project
+- **Partially superseded by:** ADR 003 and ADR 004 for agent access and harness
+  scope; the frontend decision remains accepted
 
 ## Context
 

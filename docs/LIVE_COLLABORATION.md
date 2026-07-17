@@ -1,5 +1,9 @@
 # Live Collaboration
 
+> **Status note:** This deferred evaluation predates ADR 003. Its voice UX and
+> interruption findings remain useful, but capability and approval language
+> must be reconciled with the trusted-workbench model before implementation.
+
 ## Status
 
 - **Status:** Proposed evaluation track

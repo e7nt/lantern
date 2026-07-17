@@ -27,19 +27,19 @@ involvement in software development rather than remove them from it.
 
 1. Open or clone an unfamiliar repository.
 2. Discover repository instructions, packages, entry points, tests, and runtime
-   boundaries without executing untrusted code.
+   boundaries using the trusted local workbench.
 3. Build a code map whose claims are marked observed, inferred, unknown, or
    contradictory.
 4. Learn one representative vertical execution path.
 5. Ask selection-based questions without leaving the editor.
 6. Request a feature and let the agent investigate the current behavior.
 7. Review an understanding/readiness report before planning.
-8. Collaborate on and approve a durable plan.
+8. Collaborate on and refine a durable plan.
 9. Implement the plan through interruptible Guided Build chapters.
 10. Review semantic change explanations and verification evidence.
 11. Optionally talk through exploration and implementation with an
     interruptible voice collaborator while preserving the same evidence,
-    permissions, plans, and checkpoints as the text experience.
+    plans, visible operations, and checkpoints as the text experience.
 
 ## Guided learning
 
@@ -84,8 +84,8 @@ The plan is a durable Markdown-backed document containing:
 - Testing, migration, rollout, and documentation.
 - Risks and unresolved assumptions.
 
-Plan approval is granular. When implementation discovers a material constraint,
-the agent proposes a plan amendment rather than silently deviating.
+Plan changes remain visible. When implementation discovers a material
+constraint, the agent proposes a plan amendment rather than silently deviating.
 
 ## Semantic change overlay
 
@@ -107,54 +107,48 @@ staleness warning.
 Formatting, generated files, import organization, and other mechanical edits
 should normally be collapsed rather than individually explained.
 
-## Agent policy model
+## Trusted workbench model
 
-One agent runtime operates under different enforced policies:
+Launching Lantern inside an explicitly chosen workbench grants the initial
+single agent normal coding access: repository search and reads, edits, local
+development commands, Git operations, and the configured model. Quick Ask,
+Learn, Investigate, Plan, Implement, and Review describe user intent and
+presentation—not separate permission profiles.
 
-| Mode | Capabilities |
-| --- | --- |
-| Quick Ask | Read selection and related evidence; no edit or execution |
-| Learn | Read, search, navigate, and trace; no repository modification |
-| Investigate | Inspect repository and run separately approved diagnostics |
-| Plan | Modify planning artifacts only |
-| Implement | Modify approved scope and run permitted commands |
-| Review | Inspect plans, diffs, and verification; read-only by default |
-
-These boundaries must be enforced by the runtime, not merely described to the
-model in a prompt.
-
-Voice is a modality over these modes, not an additional privileged mode. A
-spoken request receives exactly the capabilities available to the current
-Quick Ask, Learn, Investigate, Plan, Implement, or Review session.
+The agent narrates meaningful actions, shows edits and Git state through the
+workbench, and remains immediately interruptible. Destructive Git history
+operations require an explicit request. Voice is another interaction modality
+over the same visible, interruptible agent session.
 
 ## Architecture direction
 
 ```text
 Lantern terminal environment (Helix + Lantern pane + Lazygit)
-  -> local editor-neutral RPC
+  -> local editor-neutral typed stdio protocol
       -> agent daemon
           -> model adapters
-          -> policy and permission engine
+          -> typed workbench tools
           -> repository intelligence
           -> learning engine
           -> planning engine
           -> change narrative store
-          -> execution sandbox
+          -> hybrid repository index
 ```
 
 The first frontend is a pinned Helix build with a narrow, documented Lantern
 patch layer, a full-width terminal agent pane, and a focused Lazygit rail.
 Helix remains the editing and language-intelligence authority. The daemon
-remains independent so policy, agent execution, and durable state do not become
-coupled to editor internals.
+remains independent so agent execution and durable state do not become coupled
+to editor internals. Pi is the initial harness behind a replaceable adapter.
 
 ## Initial scope boundaries
 
 - Local repositories only.
-- One agent with mode-specific policies.
+- One trusted, visible, interruptible agent.
 - macOS and Linux first.
 - TypeScript and Rust as reference ecosystems.
-- LSP and syntax indexes before broad embedding-based retrieval.
+- Hybrid LSP, exact, structural, Git, and semantic/vector retrieval with
+  measured incremental indexing.
 - Markdown-backed plans rather than a general Notion clone.
 - No multi-user cloud collaboration.
 - No multi-agent orchestration in the first release.

@@ -26,7 +26,8 @@ meantime. Deferral removes a path; it does not create a fallback.
 ## Consequences
 
 - `P1-06` remains deferred rather than silently marked complete.
-- Workspace trust is revoked when the Lantern session ends.
+- Transitional Protocol v4 workspace grants are revoked when the Lantern
+  session ends; ADR 003 replaces that UX in the next protocol revision.
 - Diagnostic bundles are explicit metadata-only exports, not a persistence
   layer.
 - The future database change must still provide numbered forward migrations,

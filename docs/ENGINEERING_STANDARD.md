@@ -19,7 +19,7 @@ real property of the change; process that cannot explain its value is bloat.
   explicit state transitions.
 - Prefer plain control flow and descriptive names over cleverness.
 - Add an abstraction only after a real boundary or repeated concept exists.
-- Keep provider behavior, editor integration, policy, and durable state behind
+- Keep provider behavior, editor integration, tools, and durable state behind
   narrow interfaces without hiding meaningful differences.
 - Preserve root causes in errors and fail visibly. Do not add silent fallbacks.
 - Comment intent, constraints, and non-obvious tradeoffs—not syntax.
@@ -38,8 +38,8 @@ reviewable evidence.
 
 ### Architecture and implementation
 
-- Responsibility belongs at the documented editor, daemon, protocol, policy,
-  provider, or storage boundary.
+- Responsibility belongs at the documented editor, daemon, protocol, tool,
+  provider, index, or storage boundary.
 - Public contracts are typed, minimal, documented where their behavior is not
   self-evident, and versioned when persisted or sent across processes.
 - Inputs are validated at trust boundaries; cancellation, resource bounds, and
@@ -68,8 +68,8 @@ reviewable evidence.
 - Normal editing remains usable when Lantern is idle or unavailable.
 - Accessibility covers keyboard operation, focus, semantics, contrast, and
   reduced-motion behavior for affected UI.
-- Failure, degraded capability, permissions, and external model use are visible
-  to the developer.
+- Failure, meaningful tool activity, degraded intelligence, and external model
+  use are visible to the developer.
 - Security and privacy implications are reviewed at every new data, tool,
   process, network, or persistence boundary.
 - User-facing language is concise, specific, and localizable where required by

@@ -22,7 +22,8 @@ developer is exploring rather than attempting to replace the developer.
 2. Teach from real code and real execution paths.
 3. Keep explanations grounded in files, symbols, tests, and runtime evidence.
 4. Make plans durable, editable artifacts rather than disposable chat output.
-5. Keep learning read-only and implementation explicitly permissioned.
+5. Start from a trusted workbench; keep agent operations visible and
+   immediately interruptible.
 6. Explain logical changes outside source files.
 7. Let the developer interrupt, question, revise, or take over at any time.
 8. Keep the agent runtime independent from the editor frontend.
@@ -38,10 +39,9 @@ The first implementation uses:
 
 - A pinned Helix editor with a narrow, documented Lantern patch layer, a
   compact Lazygit rail, and a full-width terminal agent pane.
-- A separate local, Pi-inspired agent daemon for sessions, models, tools,
-  permissions, repository understanding, learner state, plans, and change
-  narratives.
-- An editor-neutral protocol that keeps policy and model execution out of the
+- A separate local daemon that connects the Pi agent harness to typed workbench
+  tools, repository intelligence, plans, and change narratives.
+- An editor-neutral protocol that keeps agent and model execution out of the
   editor process.
 
 ## Core experiences
@@ -65,6 +65,9 @@ The first implementation uses:
 
 More detail is captured in:
 
+- [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md)
+- [docs/decisions/003-trusted-workspace-default.md](docs/decisions/003-trusted-workspace-default.md)
+- [docs/decisions/004-pi-harness-hybrid-retrieval.md](docs/decisions/004-pi-harness-hybrid-retrieval.md)
 - [docs/PRODUCT_BRIEF.md](docs/PRODUCT_BRIEF.md)
 - [docs/GUIDED_BUILD.md](docs/GUIDED_BUILD.md)
 - [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md)
@@ -81,11 +84,11 @@ More detail is captured in:
 
 Lantern's maintained Rust code is one workspace with five explicit owners:
 `crates/protocol` defines the wire contract, `crates/policy-engine` owns
-capability enforcement, `crates/diagnostics` owns safe diagnostic records and
-exports, `apps/daemon` owns agent execution, and `frontend/terminal` owns the
-developer-facing terminal surface.
+the transitional Protocol v4 capability gates, `crates/diagnostics` owns safe
+diagnostic records and exports, `apps/daemon` owns agent execution, and
+`frontend/terminal` owns the developer-facing terminal surface.
 
-Run its complete deterministic gate from the repository root:
+Run the Rust gate from the repository root:
 
 ```bash
 cargo fmt --all --check
@@ -93,6 +96,25 @@ cargo test --workspace --all-targets
 cargo clippy --workspace --all-targets -- -D warnings
 cargo build --workspace --release --locked
 ```
+
+Run the terminal composition contract:
+
+```bash
+node --test scripts/test/terminal-foundation.test.mjs
+```
+
+Run the deterministic model-behavior contracts and Python quality checks:
+
+```bash
+cd evaluations
+DEEPEVAL_DISABLE_DOTENV=1 uv run pytest
+uv run ruff format --check .
+uv run ruff check .
+```
+
+Live provider evaluation is explicit and credential-dependent; it is not part
+of ordinary contributor CI. See
+[evaluations/README.md](evaluations/README.md) for the separate command.
 
 The reproducible Helix/Lazygit environment and its launch command remain
 documented in [frontend/helix/README.md](frontend/helix/README.md).

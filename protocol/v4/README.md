@@ -1,5 +1,11 @@
 # Lantern Protocol v4
 
+> **Current implementation, transitional product contract:** v4 is the wire
+> format the checked-in client and daemon run today. Its locked capability model
+> is superseded by ADR 003. The next deliberate protocol revision should replace
+> capability negotiation with trusted-workbench initialization; do not extend
+> v4 permissions or add a compatibility fallback.
+
 This directory defines the executable wire contract between the Lantern pane
 and the local agent daemon. The Rust `Request` and `Event` types are canonical;
 the JSONL files are golden examples that the test suite deserializes on every

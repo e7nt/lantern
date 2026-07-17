@@ -3,8 +3,8 @@
 ## Purpose
 
 Lantern contains both deterministic software and nondeterministic model
-behavior. Conventional tests prove that the system obeys protocols, policies,
-and state transitions. They cannot prove that an explanation is faithful, a
+behavior. Conventional tests prove that the system obeys protocols, tool
+contracts, and state transitions. They cannot prove that an explanation is faithful, a
 learning route is useful, or an implementation narrative improves
 understanding.
 
@@ -79,9 +79,9 @@ Every case records:
 
 - Stable case and dataset version.
 - Repository fixture and Git revision.
-- User intent and current Lantern mode.
+- User intent and current workbench state.
 - Editor selection or starting evidence.
-- Allowed capabilities and approvals.
+- Available typed tools and any explicit destructive request.
 - Model and provider identifier.
 - Prompt and tool-schema hashes.
 - Retrieved evidence and freshness hashes.
@@ -99,11 +99,11 @@ Raw hidden reasoning is never required or stored.
 
 These remain deterministic assertions outside model judging:
 
-- A read-only mode performs no write or execution operation.
+- Tools remain within attached workbench folders and their typed schemas.
 - Evidence targets exist and match the recorded content hash.
 - Every durable claim has an evidence or explicit uncertainty link.
 - Tool names and arguments satisfy schemas.
-- Approval gates and capability decisions are respected.
+- Destructive Git history operations occur only after an explicit request.
 - Cancellation prevents new operations.
 - Verification status matches actual command outcomes.
 - Voice interruption stops playback and preserves work state correctly.

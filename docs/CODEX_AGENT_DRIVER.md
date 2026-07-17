@@ -1,5 +1,9 @@
 # ChatGPT-subscription agent-driver spike
 
+> **Status:** Historical selection-only spike. ADR 004 promotes Pi as the
+> initial coding harness and supersedes the no-tools scope below. Authentication
+> ownership and credential isolation remain current.
+
 ## Decision
 
 Lantern will evaluate Pi RPC as the first live `AgentDriver` in the terminal

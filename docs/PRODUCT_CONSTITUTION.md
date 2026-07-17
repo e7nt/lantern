@@ -66,6 +66,17 @@ service or paid product tier.
 - Manual coding is always supported; Lantern must not make ordinary editing
   worse in order to promote agent usage.
 
+### Trusted workbench, visible agency
+
+- Launching Lantern for an explicitly chosen workbench starts a trusted local
+  coding session rather than a capability-configuration workflow.
+- The initial agent may read, edit, run development commands, use Git, and
+  contact the selected model without repeated permission prompts.
+- Meaningful operations remain visible and immediately interruptible.
+- Destructive Git history operations require an explicit developer request.
+- Full access does not authorize invisible background autonomy, credential
+  exposure, or silent expansion beyond attached workbench folders.
+
 ### Build for the love of coding
 
 - Interactions should preserve curiosity, flow, craft, and satisfaction.
@@ -105,7 +116,7 @@ promotion gates and a clear deletion path.
   capabilities poorly.
 
 Intentional graceful degradation is allowed only when it is visible, preserves
-correctness and policy, and remains a designed product state. For example,
+correctness, and remains a designed product state. For example,
 Quick Ask may report that symbol intelligence is unavailable and operate on the
 selection alone, but it must not imply that symbol-backed investigation
 occurred.
@@ -115,7 +126,8 @@ occurred.
 - The Helix patch set stays small, documented, pinned, and justified by product
   blockers.
 - The editor owns presentation and editor-native transactions.
-- The daemon owns policy, agent execution, evidence, and durable state.
+- The daemon owns agent execution, tool coordination, evidence, and durable
+  state.
 - Provider contracts stay replaceable and provider-specific behavior stays in
   adapters.
 - Persist only artifacts that help the developer understand, resume, audit, or
@@ -162,9 +174,10 @@ narration, or agent-flow quality.
 
 ## Roadmap implications
 
-- Quick Ask must prove evidence-backed understanding before broad automation.
+- The full-access Pi harness must prove one evidence-backed coding journey
+  before broader product modes.
 - Guided learning is a core capability, not decorative onboarding.
-- Planning remains a durable artifact and approval boundary.
+- Planning remains a durable, developer-editable artifact.
 - Guided Build optimizes for legibility and intervention, not agent spectacle.
 - Live Collaboration advances only if it improves understanding and control.
 - Multi-agent orchestration, autonomous background work, dashboards, social
@@ -183,3 +196,7 @@ Changes to this constitution require:
 4. Consequences for openness, authorship, simplicity, and fallback behavior.
 5. An explicit project decision rather than an incidental implementation
    choice.
+
+Accepted amendments are recorded in
+[ADR 003](decisions/003-trusted-workspace-default.md) and later decision
+records. Historical read-only spikes remain evidence, not current direction.
