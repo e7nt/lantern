@@ -3,7 +3,7 @@ use std::fmt;
 use std::io::{self, BufRead};
 use std::path::{Component, Path, PathBuf};
 
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const MAX_EVENT_BYTES: usize = 256 * 1024;
 pub const MAX_DIAGNOSTIC_BYTES: usize = 8 * 1024;
@@ -99,6 +99,11 @@ pub enum Request {
         repository: PathBuf,
         query: String,
         selection: SelectionContext,
+    },
+    AskAgent {
+        id: u64,
+        repository: PathBuf,
+        query: String,
     },
     AskAgentSymbol {
         id: u64,

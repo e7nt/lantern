@@ -22,13 +22,15 @@ and tool vocabulary should not become user-facing ceremony.
 - Reproducible pinned Helix and Lazygit preparation.
 - The 80/20 Helix/agent composition and on-demand 10% Lazygit rail.
 - Mouse and keyboard interaction across the surfaces.
-- Maintained Rust terminal, daemon, diagnostics, and Protocol v5 crates.
+- Maintained Rust terminal, daemon, diagnostics, and Protocol v6 crates.
 - Selection capture, exact navigation, bounded local literal search, and
   Helix-provided definition/reference context.
 - Trusted-workbench initialization with repository-bound requests and no
   capability ceremony.
 - Selection- and symbol-grounded Pi RPC questions using Pi-owned OpenAI Codex
   authentication.
+- Repository-grounded Pi questions from the empty prompt; editor context is an
+  optional accelerator and never a prerequisite for talking to the agent.
 - Pi's pinned `read`, `grep`, `find`, `ls`, `edit`, `write`, and `bash` tools,
   launched inside the repository with typed activity in Lantern.
 - Successful edit/write activity opens the changed file in Helix; `Space-g` or
@@ -39,7 +41,7 @@ and tool vocabulary should not become user-facing ceremony.
 
 ## Current boundary
 
-Protocol v5 and the terminal open one trusted repository directly. The old
+Protocol v6 and the terminal open one trusted repository directly. The old
 policy engine, capability fields, and `/trust` commands have been removed. Pi
 runs its explicit built-in coding-tool allowlist in that repository. Raw tool
 arguments, command output, and provider stderr are not copied into Lantern's

@@ -476,7 +476,7 @@ fn symbol_context_for_question(
     if selection_path.exists() {
         return read_symbol_context_file(selection_path, false);
     }
-    capture_symbol_context(selection_path)
+    Err("no editor selection is available".into())
 }
 
 fn selection_for_question(
@@ -624,12 +624,12 @@ fn start_agent_question(
         state.line("Type a question about the selection, then press Enter.");
         return Ok(());
     }
+    let Some(id) = state.begin_operation() else {
+        state.line("The agent is already working.");
+        return Ok(());
+    };
     match symbol_context_for_question(state, selection_path) {
         Ok(context) => {
-            let Some(id) = state.begin_operation() else {
-                state.line("The agent is already working.");
-                return Ok(());
-            };
             send_request(
                 daemon_stdin,
                 &Request::AskAgentSymbol {
@@ -639,9 +639,15 @@ fn start_agent_question(
                     context,
                 },
             )?;
-            state.line("Agent started with one definition and bounded LSP references.");
         }
-        Err(message) => state.line(format!("Symbol context failed: {message}")),
+        Err(_) => send_request(
+            daemon_stdin,
+            &Request::AskAgent {
+                id,
+                repository: repository.to_owned(),
+                query: query.to_owned(),
+            },
+        )?,
     }
     Ok(())
 }

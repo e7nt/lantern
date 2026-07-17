@@ -41,7 +41,8 @@ A developer can:
 5. Ask the local Lantern daemon to locate a literal symbol or phrase, watch
    progress and evidence stream, and have the exact result range selected in
    the existing Helix process.
-6. Ask a subscription-authenticated agent about a selected symbol using one
+6. Ask the subscription-authenticated agent directly from the empty prompt, or
+   enrich a question about a selected symbol using one
    LSP definition and at most eight references, watch its evidence and answer
    stream, and interrupt it without granting repository tools.
 7. Interrupt an active answer and see measured cancellation latency.

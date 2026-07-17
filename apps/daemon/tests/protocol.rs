@@ -101,11 +101,11 @@ impl Daemon {
 }
 
 #[test]
-fn golden_wire_fixtures_match_the_v5_types() {
-    for line in include_str!("../../../protocol/v5/requests.jsonl").lines() {
+fn golden_wire_fixtures_match_the_v6_types() {
+    for line in include_str!("../../../protocol/v6/requests.jsonl").lines() {
         serde_json::from_str::<Request>(line).expect("golden request must deserialize");
     }
-    for line in include_str!("../../../protocol/v5/events.jsonl").lines() {
+    for line in include_str!("../../../protocol/v6/events.jsonl").lines() {
         serde_json::from_str::<Event>(line).expect("golden event must deserialize");
     }
 }
@@ -860,6 +860,33 @@ fn streams_bounded_typed_pi_tool_activity() {
     )));
     fs::remove_dir_all(root).expect("remove repository fixture");
     fs::remove_dir_all(model_workdir).expect("remove driver fixture");
+}
+
+#[cfg(unix)]
+#[test]
+fn repository_question_reaches_pi_without_editor_context() {
+    let root = fixture("pi-repository-question", "fn selected() {}\n");
+    let driver = fixture("pi-repository-question-driver", "private\n");
+    let pi_bin = fake_pi(&driver);
+    let mut daemon = Daemon::spawn_with_pi(&pi_bin, &driver, "stream");
+    daemon.initialize();
+    daemon.open(&root);
+    daemon.send(&Request::AskAgent {
+        id: 35,
+        repository: root.clone(),
+        query: "What does this project do?".into(),
+    });
+
+    while !matches!(daemon.next(), Event::Settled { id: 35 }) {
+        // Read the captured prompt after settlement; deltas are covered by the
+        // selection-backed stream contract.
+    }
+    let prompt = fs::read_to_string(driver.join("prompt.json")).expect("read Pi prompt");
+    assert!(prompt.contains("No editor selection was supplied"));
+    assert!(prompt.contains("What does this project do?"));
+    assert!(!prompt.contains("Selected source"));
+    fs::remove_dir_all(root).expect("remove repository fixture");
+    fs::remove_dir_all(driver).expect("remove driver fixture");
 }
 
 #[cfg(unix)]

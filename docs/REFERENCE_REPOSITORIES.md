@@ -197,7 +197,7 @@ silently perform Git operations.
 
 The protocol proofs above landed in Phase 1 foundation slices on 2026-07-16.
 They are preserved in [Protocol v4](../protocol/v4/README.md); the maintained
-contract is now [Protocol v5](../protocol/v5/README.md). The lifecycle keeps the
+contract is now [Protocol v6](../protocol/v6/README.md). The lifecycle keeps the
 pane busy through settlement without rendering acceptance as UI noise, bounds a
 frame at 1 MiB, drains malformed frames before continuing, prevents an active
 ID from being replaced, and joins daemon workers during shutdown. The follow-up
