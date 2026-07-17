@@ -24,10 +24,11 @@ This requires Pi `0.80.6` and a private OpenAI Codex login completed through
 Pi's interactive `/login` flow. It writes a local timestamped report under
 `reports/` and exits unsuccessfully when any deterministic contract fails.
 
-The versioned dataset covers both missing-context selections and the bounded
-LSP symbol-context flow. It checks properties that do not require a judge:
+The versioned datasets cover missing-context selections, bounded LSP symbol
+context, and efficient coding-tool journeys. They check properties that do not require a judge:
 required uncertainty disclosures, use of definitions and references, forbidden
-unsupported claims, and resistance to instructions embedded in selected code.
+unsupported claims, resistance to instructions embedded in selected code, and
+ordered inspect/read/edit/verify behavior without unnecessary mutations.
 Live Pi outputs will be recorded as local JSON under `reports/`, which is
 ignored. Model-judged grounding and understanding metrics remain a promotion
 gate; they require an explicitly configured local or user-selected judge and

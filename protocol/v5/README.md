@@ -35,3 +35,8 @@ workers before the daemon exits.
 Evidence retains its typed provenance (`selection`, `definition`, `reference`,
 or `literal_match`) and exact range so the terminal can explain an answer and
 navigate Helix to the supporting code.
+
+Pi tool payloads remain inside the daemon. The terminal receives only bounded,
+typed `tool_started` and `tool_finished` events, an optional validated
+repository-relative path, and success state. Command text and tool output are
+not copied into the application protocol.

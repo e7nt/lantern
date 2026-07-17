@@ -139,6 +139,32 @@ pub enum EvidenceSource {
     LiteralMatch,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkbenchTool {
+    Read,
+    Grep,
+    Find,
+    List,
+    Edit,
+    Write,
+    Bash,
+}
+
+impl WorkbenchTool {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Read => "Reading code",
+            Self::Grep => "Searching code",
+            Self::Find => "Finding files",
+            Self::List => "Listing files",
+            Self::Edit => "Editing code",
+            Self::Write => "Writing code",
+            Self::Bash => "Running a development command",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ChangeProposal {
@@ -181,6 +207,17 @@ pub enum Event {
     TextDelta {
         id: u64,
         delta: String,
+    },
+    ToolStarted {
+        id: u64,
+        tool: WorkbenchTool,
+        relative_path: Option<PathBuf>,
+    },
+    ToolFinished {
+        id: u64,
+        tool: WorkbenchTool,
+        relative_path: Option<PathBuf>,
+        success: bool,
     },
     Completed {
         id: u64,

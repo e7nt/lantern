@@ -123,7 +123,6 @@ agent_command=(env
 	"LANTERN_DAEMON_BIN=$DAEMON_BIN"
 	"LANTERN_PI_BIN=$PI_BIN"
 	"LANTERN_PI_MODEL=${LANTERN_PI_MODEL:-gpt-5.4}"
-	"LANTERN_MODEL_WORKDIR=$runtime_dir"
 	"$PANE_BIN")
 printf -v agent_shell '%q ' "${agent_command[@]}"
 

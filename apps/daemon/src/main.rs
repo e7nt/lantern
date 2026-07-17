@@ -2,7 +2,8 @@ use lantern_diagnostics::{Code as DiagnosticCode, Component, Level, Record, emit
 use lantern_protocol::{
     ChangeProposal, Event, Evidence, EvidenceSource, FrameError, MAX_EVENT_BYTES, MAX_EVIDENCE,
     MAX_FILE_BYTES, MAX_FILES, MAX_SELECTION_BYTES, PROTOCOL_VERSION, Request, SelectionContext,
-    SymbolContext, SymbolLocation, read_frame, validate_selection, validate_symbol_context,
+    SymbolContext, SymbolLocation, WorkbenchTool, read_frame, validate_relative_path,
+    validate_selection, validate_symbol_context,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -653,8 +654,6 @@ fn run_pi_operation(
             std::env::var_os("LANTERN_PI_BIN").ok_or("LANTERN_PI_BIN is not configured")?;
         let model =
             std::env::var("LANTERN_PI_MODEL").map_err(|_| "LANTERN_PI_MODEL is not configured")?;
-        let workdir = std::env::var_os("LANTERN_MODEL_WORKDIR")
-            .ok_or("LANTERN_MODEL_WORKDIR is not configured")?;
         emit(
             &writer,
             &Event::OperationStarted {
@@ -728,16 +727,17 @@ fn run_pi_operation(
                 "--model",
                 &model,
                 "--no-session",
-                "--no-tools",
+                "--tools",
+                "read,grep,find,ls,edit,write,bash",
                 "--no-extensions",
                 "--no-skills",
                 "--no-prompt-templates",
                 "--no-context-files",
                 "--no-approve",
                 "--system-prompt",
-                "You explain selected code only from evidence supplied by Lantern. Never request tools. Separate observation from inference and state uncertainty explicitly.",
+                "You are Lantern's coding agent inside a trusted repository. Help the developer understand and write code. Inspect the repository before making claims, narrate meaningful intent concisely, make focused edits, run the narrowest useful verification, and use Git deliberately while explaining mutations. Never expose credentials or unrelated private data.",
             ])
-            .current_dir(workdir)
+            .current_dir(&root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -799,6 +799,7 @@ fn run_pi_operation(
             .take()
             .ok_or("Pi stdout is unavailable")?;
         let stream_result = (|| -> Result<bool, String> {
+            let mut active_tools = HashMap::new();
             for line in BufReader::new(stdout).lines() {
                 let line = line.map_err(|cause| format!("cannot read Pi event: {cause}"))?;
                 let event: serde_json::Value = serde_json::from_str(&line)
@@ -825,8 +826,48 @@ fn run_pi_operation(
                         return Err("Pi rejected the request; provider detail was excluded".into());
                     }
                     Some("tool_execution_start") => {
-                        cancellation.request();
-                        return Err("Pi requested a tool despite the no-tools boundary".into());
+                        let call_id = event["toolCallId"]
+                            .as_str()
+                            .filter(|value| value.len() <= 256)
+                            .ok_or("Pi tool call has an invalid identifier")?;
+                        let name = event["toolName"]
+                            .as_str()
+                            .ok_or("Pi tool call has no tool name")?;
+                        let tool = pi_tool(name)
+                            .ok_or_else(|| format!("Pi requested unsupported tool `{name}`"))?;
+                        let relative_path = pi_tool_path(&event, &root);
+                        emit(
+                            &writer,
+                            &Event::ToolStarted {
+                                id,
+                                tool,
+                                relative_path: relative_path.clone(),
+                            },
+                        )
+                        .map_err(|cause| format!("cannot stream tool start: {cause}"))?;
+                        active_tools.insert(call_id.to_owned(), (tool, relative_path));
+                    }
+                    Some("tool_execution_end") => {
+                        let call_id = event["toolCallId"]
+                            .as_str()
+                            .ok_or("Pi tool result has no identifier")?;
+                        let (tool, relative_path) = active_tools
+                            .remove(call_id)
+                            .ok_or("Pi completed a tool that was not started")?;
+                        let success = event["isError"]
+                            .as_bool()
+                            .map(|is_error| !is_error)
+                            .ok_or("Pi tool result has no error status")?;
+                        emit(
+                            &writer,
+                            &Event::ToolFinished {
+                                id,
+                                tool,
+                                relative_path,
+                                success,
+                            },
+                        )
+                        .map_err(|cause| format!("cannot stream tool result: {cause}"))?;
                     }
                     _ => {}
                 }
@@ -894,6 +935,30 @@ fn drain_provider_stderr(mut reader: impl Read) -> bool {
         }
     }
     saw_output
+}
+
+fn pi_tool(name: &str) -> Option<WorkbenchTool> {
+    match name {
+        "read" => Some(WorkbenchTool::Read),
+        "grep" => Some(WorkbenchTool::Grep),
+        "find" => Some(WorkbenchTool::Find),
+        "ls" => Some(WorkbenchTool::List),
+        "edit" => Some(WorkbenchTool::Edit),
+        "write" => Some(WorkbenchTool::Write),
+        "bash" => Some(WorkbenchTool::Bash),
+        _ => None,
+    }
+}
+
+fn pi_tool_path(event: &serde_json::Value, root: &Path) -> Option<PathBuf> {
+    let path = PathBuf::from(event.get("args")?.get("path")?.as_str()?);
+    let relative = if path.is_absolute() {
+        path.strip_prefix(root).ok()?.to_owned()
+    } else {
+        path
+    };
+    (relative.as_os_str().len() <= 4096 && validate_relative_path(&relative).is_ok())
+        .then_some(relative)
 }
 
 fn main() -> io::Result<()> {

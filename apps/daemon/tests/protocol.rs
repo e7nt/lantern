@@ -560,10 +560,11 @@ fn fake_pi(root: &Path) -> PathBuf {
         &path,
         r#"#!/usr/bin/env bash
 set -euo pipefail
-printf '%s\n' "$*" > invocation.args
-printf '%s\n' "$$" > pi.pid
+capture_dir=$(cd "$(dirname "$0")" && pwd)
+printf '%s\n' "$*" > "$capture_dir/invocation.args"
+printf '%s\n' "$$" > "$capture_dir/pi.pid"
 IFS= read -r prompt
-printf '%s\n' "$prompt" > prompt.json
+printf '%s\n' "$prompt" > "$capture_dir/prompt.json"
 printf '%s\n' '{"type":"response","command":"prompt","success":true}'
 if [[ ${LANTERN_FAKE_PI_MODE:?} == rejected ]]; then
     printf '%s\n' '{"type":"response","command":"prompt","success":false,"error":"credential sk-provider-response-secret was rejected"}'
@@ -584,7 +585,12 @@ if [[ ${LANTERN_FAKE_PI_MODE:?} == stderr-flood ]]; then
 fi
 if [[ ${LANTERN_FAKE_PI_MODE:?} == cancel ]]; then
     IFS= read -r abort
-    printf '%s\n' "$abort" > abort.json
+    printf '%s\n' "$abort" > "$capture_dir/abort.json"
+elif [[ ${LANTERN_FAKE_PI_MODE:?} == tools ]]; then
+    printf '%s\n' '{"type":"tool_execution_start","toolCallId":"call-read","toolName":"read","args":{"path":"sample.rs"}}'
+    printf '%s\n' '{"type":"tool_execution_end","toolCallId":"call-read","toolName":"read","result":{"content":[]},"isError":false}'
+    printf '%s\n' '{"type":"tool_execution_start","toolCallId":"call-edit","toolName":"edit","args":{"path":"sample.rs"}}'
+    printf '%s\n' '{"type":"tool_execution_end","toolCallId":"call-edit","toolName":"edit","result":{"content":[]},"isError":false}'
 else
     printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Evidence-grounded "}}'
     printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"answer."}}'
@@ -775,6 +781,8 @@ fn streams_pi_rpc_without_putting_source_in_process_arguments() {
     let arguments = fs::read_to_string(model_workdir.join("invocation.args")).unwrap();
     assert!(!arguments.contains("fn selected"));
     assert!(!arguments.contains("Explain the handoff"));
+    assert!(arguments.contains("--tools read,grep,find,ls,edit,write,bash"));
+    assert!(!arguments.contains("--no-tools"));
     let prompt = fs::read_to_string(model_workdir.join("prompt.json")).unwrap();
     assert!(prompt.contains("fn selected() {}"));
     assert_eq!(
@@ -783,6 +791,62 @@ fn streams_pi_rpc_without_putting_source_in_process_arguments() {
     );
     fs::remove_dir_all(root).expect("remove repository fixture");
     fs::remove_dir_all(model_workdir).expect("remove model fixture");
+}
+
+#[cfg(unix)]
+#[test]
+fn streams_bounded_typed_pi_tool_activity() {
+    use lantern_protocol::WorkbenchTool;
+
+    let root = fixture("pi-tools-repository", "fn selected() {}\n");
+    let model_workdir = fixture("pi-tools-driver", "private\n");
+    let pi_bin = fake_pi(&model_workdir);
+    let mut daemon = Daemon::spawn_with_pi(&pi_bin, &model_workdir, "tools");
+    daemon.initialize();
+    daemon.open(&root);
+    daemon.send(&Request::AskAgentSelection {
+        id: 34,
+        repository: root.clone(),
+        query: "Inspect and update this".into(),
+        selection: SelectionContext {
+            relative_path: "sample.rs".into(),
+            language: Some("rust".into()),
+            start_line: 1,
+            start_column: 1,
+            end_line: 1,
+            end_column: 17,
+            text: "fn selected() {}".into(),
+            document_modified: false,
+        },
+    });
+
+    let mut events = Vec::new();
+    loop {
+        let event = daemon.next();
+        if matches!(event, Event::Settled { id: 34 }) {
+            break;
+        }
+        events.push(event);
+    }
+    assert!(events.iter().any(|event| matches!(
+        event,
+        Event::ToolStarted {
+            id: 34,
+            tool: WorkbenchTool::Read,
+            relative_path: Some(path),
+        } if path == Path::new("sample.rs")
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        Event::ToolFinished {
+            id: 34,
+            tool: WorkbenchTool::Edit,
+            success: true,
+            ..
+        }
+    )));
+    fs::remove_dir_all(root).expect("remove repository fixture");
+    fs::remove_dir_all(model_workdir).expect("remove driver fixture");
 }
 
 #[cfg(unix)]
