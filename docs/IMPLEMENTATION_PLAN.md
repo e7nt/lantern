@@ -631,6 +631,44 @@ The private alpha should measure:
 
 Metrics remain local unless the user explicitly exports them.
 
+## Multi-folder workbench evaluation track
+
+Lantern should eventually allow a developer to attach multiple explicit local
+folders from unrelated filesystem locations to one workbench. This supports
+cross-repository questions and changes such as tracing a client into a service,
+updating a shared library and its consumer together, or comparing coordinated
+Git history without copying repositories into one parent directory.
+
+The workbench—not directory ancestry—defines the folder set. Each folder keeps
+its own repository identity, branch, working tree, instructions, index, and Git
+operations. Retrieval may search across the attached set and must identify the
+source repository of every result. Cross-repository plans and changes must show
+which repository each step affects, while Helix navigation opens the matching
+attached folder and Lazygit remains scoped to one repository at a time.
+
+Each multi-folder workbench has a human-readable `WORKBENCH.md`. It explains:
+
+- the attached repositories and their stable workbench aliases;
+- what each repository owns and why it belongs in the workbench;
+- important relationships such as client/service, library/consumer, or shared
+  protocol boundaries;
+- common development, test, and integration commands; and
+- cross-repository conventions or coordination notes the agent must understand.
+
+`WORKBENCH.md` is the reviewable source of workbench intent, not an embedding
+dump or generated inventory. Local attachment resolution may map aliases to
+machine-specific absolute paths without writing those paths into portable
+documentation. Derived symbol indexes, embeddings, and commit snapshots remain
+rebuildable caches. Lantern may propose an update when repository relationships
+change, but it must show that Markdown change like any other developer artifact.
+
+This is not part of the first single-repository slice. Evaluate it after the
+repository-understanding path is fast and reliable in one repository. A spike
+must measure incremental indexing cost, cross-repository retrieval quality,
+ambiguous symbol handling, coordinated change review, and whether explicit
+folder attachment remains understandable without introducing a heavyweight
+workspace manager.
+
 ## Live Collaboration evaluation track
 
 The detailed product and evaluation contract is in
@@ -692,6 +730,9 @@ or destructive defaults.
 ## Explicitly deferred beyond `v0.1`
 
 - Multi-agent orchestration.
+- Multi-folder, cross-repository workbenches; retain the evaluation track above
+  so the single-repository architecture does not accidentally make them
+  impossible.
 - Cloud-hosted repository indexing.
 - Multi-user plan collaboration.
 - Visual webpage element-to-source selection.
