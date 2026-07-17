@@ -3,7 +3,7 @@ use std::fmt;
 use std::io::{self, BufRead};
 use std::path::{Component, Path, PathBuf};
 
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const MAX_EVENT_BYTES: usize = 256 * 1024;
 pub const MAX_DIAGNOSTIC_BYTES: usize = 8 * 1024;
@@ -12,26 +12,6 @@ pub const MAX_FILE_BYTES: u64 = 512 * 1024;
 pub const MAX_EVIDENCE: usize = 5;
 pub const MAX_SELECTION_BYTES: usize = 64 * 1024;
 pub const MAX_SYMBOL_REFERENCES: usize = 8;
-
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(rename_all = "snake_case")]
-pub enum Capability {
-    RepositoryRead,
-    RepositoryWrite,
-    ProcessExecution,
-    NetworkAccess,
-}
-
-impl Capability {
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::RepositoryRead => "repository read access",
-            Self::RepositoryWrite => "repository write access",
-            Self::ProcessExecution => "process execution",
-            Self::NetworkAccess => "model transmission",
-        }
-    }
-}
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -100,9 +80,8 @@ pub enum Request {
     Initialize {
         protocol_version: u32,
     },
-    ConfigureWorkspace {
+    OpenWorkbench {
         repository: PathBuf,
-        capabilities: Vec<Capability>,
     },
     Ask {
         id: u64,
@@ -173,11 +152,10 @@ pub enum Event {
     Initialized {
         protocol_version: u32,
     },
-    WorkspaceConfigured {
+    WorkbenchOpened {
         repository: PathBuf,
-        capabilities: Vec<Capability>,
     },
-    WorkspaceConfigurationFailed {
+    WorkbenchOpenFailed {
         message: String,
         recovery: String,
     },

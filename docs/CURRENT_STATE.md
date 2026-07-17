@@ -22,23 +22,23 @@ and tool vocabulary should not become user-facing ceremony.
 - Reproducible pinned Helix and Lazygit preparation.
 - The 80/20 Helix/agent composition and on-demand 10% Lazygit rail.
 - Mouse and keyboard interaction across the surfaces.
-- Maintained Rust terminal, daemon, diagnostics, policy, and Protocol v4 crates.
+- Maintained Rust terminal, daemon, diagnostics, and Protocol v5 crates.
 - Selection capture, exact navigation, bounded local literal search, and
   Helix-provided definition/reference context.
-- Selection-only Pi RPC questions using Pi-owned OpenAI Codex authentication.
+- Trusted-workbench initialization with repository-bound requests and no
+  capability ceremony.
+- Selection-only Pi RPC questions using Pi-owned OpenAI Codex authentication;
+  Pi tools are not enabled yet.
 - Streaming, cancellation, crash survival, explicit local diagnostics, and
   typed evidence provenance.
 - Deterministic software tests and versioned DeepEval contracts.
 
-## Transitional behavior
+## Current boundary
 
-The running Protocol v4 product still starts locked, exposes `/trust`, denies
-write and execution capabilities, and starts Pi without tools. Those are facts
-about the current checkpoint, not instructions for future architecture.
-[ADR 003](decisions/003-trusted-workspace-default.md) and
-[ADR 004](decisions/004-pi-harness-hybrid-retrieval.md) supersede that product
-direction. Remove the old path cleanly when the replacement lands; do not
-preserve it as a fallback mode.
+Protocol v5 and the terminal now open one trusted repository directly. The old
+policy engine, capability fields, and `/trust` commands have been removed. Pi
+still starts without tools, so agent questions can explain supplied evidence
+but cannot yet inspect, edit, execute, or use Git on their own.
 
 SQLite remains deferred by
 [ADR 002](decisions/002-defer-sqlite-until-needed.md). There is no durable
@@ -48,11 +48,11 @@ session database or ad-hoc JSON replacement.
 
 Build the smallest end-to-end full-access Pi harness:
 
-1. Define a narrow typed tool contract for repository search/read, file edits,
-   command execution, Helix navigation, and Git operations.
-2. Replace Protocol v4 capability negotiation and `/trust` UX with trusted
-   workbench initialization in one deliberate protocol revision.
-3. Expose the tools to Pi with cancellation, bounded inputs/results, visible
+1. Define the narrow typed lifecycle Lantern uses to present Pi's repository
+   reads, edits, and development commands without exposing unbounded payloads.
+2. Start Pi in the repository with its pinned `read`, `write`, `edit`, and
+   `bash` tools.
+3. Preserve cancellation, bounded protocol events, visible
    activity, and deterministic fake-harness tests.
 4. Show edits through Helix and Git state through Lazygit; do not manipulate
    either surface by emitting arbitrary model keystrokes.

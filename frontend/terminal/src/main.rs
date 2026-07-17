@@ -15,11 +15,10 @@ use lantern_diagnostics::{
     DaemonState as DiagnosticDaemonState, bundle_from_stderr, summarize_stderr,
 };
 use lantern_protocol::{
-    BoundedTail, Capability, ChangeProposal, Event, Evidence, EvidenceSource, MAX_DIAGNOSTIC_BYTES,
+    BoundedTail, ChangeProposal, Event, Evidence, EvidenceSource, MAX_DIAGNOSTIC_BYTES,
     MAX_SELECTION_BYTES, PROTOCOL_VERSION, Request, SelectionContext, SymbolContext,
     SymbolContextExport, search_term,
 };
-use std::collections::BTreeSet;
 use std::env;
 use std::fs;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
@@ -139,7 +138,6 @@ struct UiState {
     pending_symbol_context: Option<SymbolContext>,
     navigated_for: Option<u64>,
     selected_evidence: Option<usize>,
-    capabilities: BTreeSet<Capability>,
 }
 
 impl UiState {
@@ -157,7 +155,6 @@ impl UiState {
             pending_symbol_context: None,
             navigated_for: None,
             selected_evidence: None,
-            capabilities: BTreeSet::new(),
         }
     }
 
@@ -229,16 +226,6 @@ impl UiState {
             (None, _) => 0,
         });
         self.scroll_from_bottom = 0;
-    }
-
-    fn access_label(&self) -> &'static str {
-        if self.capabilities.contains(&Capability::NetworkAccess) {
-            "model access"
-        } else if self.capabilities.contains(&Capability::RepositoryRead) {
-            "local access"
-        } else {
-            "locked"
-        }
     }
 
     fn daemon_failed(&mut self, reason: &str, diagnostics: &str) {
@@ -483,10 +470,7 @@ fn render(state: &UiState) -> io::Result<Layout> {
             )
         }
     };
-    let title = format!(
-        "Lantern  /  {repository_state}  /  {}",
-        state.access_label()
-    );
+    let title = format!("Lantern  /  {repository_state}  /  {}", "trusted workbench");
     let (toolbar, actions) = toolbar(width.saturating_sub(HORIZONTAL_PADDING));
     let toolbar_width = toolbar.chars().count();
     let title_width = width_usize.saturating_sub(toolbar_width.saturating_add(2));
@@ -834,23 +818,6 @@ fn open_git(state: &mut UiState, repository: &Path) {
     state.summary = RepositorySummary::load(repository);
 }
 
-fn configure_workspace(
-    state: &mut UiState,
-    repository: &Path,
-    daemon_stdin: &Arc<Mutex<BufWriter<ChildStdin>>>,
-    capabilities: Vec<Capability>,
-) -> io::Result<()> {
-    send_request(
-        daemon_stdin,
-        &Request::ConfigureWorkspace {
-            repository: repository.to_owned(),
-            capabilities,
-        },
-    )?;
-    state.line("Updating session trust…");
-    Ok(())
-}
-
 fn diagnostic_state(state: DaemonState) -> DiagnosticDaemonState {
     match state {
         DaemonState::Starting => DiagnosticDaemonState::Starting,
@@ -964,33 +931,7 @@ fn handle_line(
         state.line(message);
         return Ok(false);
     }
-    if line == "/trust" {
-        state.line(match state.access_label() {
-            "locked" => "Workspace is locked. No repository content may be read or transmitted.",
-            "local access" => {
-                "Local repository reads are enabled. Model transmission remains disabled."
-            }
-            _ => "Local repository reads and model transmission are enabled.",
-        });
-    } else if line == "/trust none" {
-        configure_workspace(state, repository, daemon_stdin, vec![])?;
-    } else if line == "/trust read" {
-        configure_workspace(
-            state,
-            repository,
-            daemon_stdin,
-            vec![Capability::RepositoryRead],
-        )?;
-    } else if line == "/trust model" {
-        configure_workspace(
-            state,
-            repository,
-            daemon_stdin,
-            vec![Capability::RepositoryRead, Capability::NetworkAccess],
-        )?;
-    } else if line.starts_with("/trust ") {
-        state.line("Use `/trust read`, `/trust model`, or `/trust none`.");
-    } else if let Some(query) = line.strip_prefix("/agent ") {
+    if let Some(query) = line.strip_prefix("/agent ") {
         start_agent_question(state, repository, selection_path, daemon_stdin, query)?;
     } else if let Some(query) = line.strip_prefix("/ask ") {
         match selection_for_question(state, selection_path) {
@@ -1243,24 +1184,15 @@ fn handle_daemon_event(event: Event, state: &mut UiState, selection_path: &Path)
         Event::Initialized { .. } => {
             state.daemon = DaemonState::Ready;
             state.transcript.clear();
-            state.line("Binding the workspace with no permissions…");
+            state.line("Opening the trusted workbench…");
         }
-        Event::WorkspaceConfigured { capabilities, .. } => {
-            state.capabilities = capabilities.into_iter().collect();
-            state.line(match state.access_label() {
-                "locked" => {
-                    "Workspace locked. Use `/trust read` for local questions or `/trust model` to allow selected code to reach the configured model."
-                }
-                "local access" => {
-                    "Local repository reads enabled for this session. Model transmission remains off; write and execution are unavailable."
-                }
-                _ => {
-                    "Local reads and model transmission enabled for this session. Write and execution remain unavailable."
-                }
-            });
+        Event::WorkbenchOpened { .. } => {
+            state.line(
+                "Workbench ready. The agent can inspect, edit, and run development commands here.",
+            );
         }
-        Event::WorkspaceConfigurationFailed { message, recovery } => {
-            state.line(format!("Trust unchanged: {message}"));
+        Event::WorkbenchOpenFailed { message, recovery } => {
+            state.line(format!("Could not open workbench: {message}"));
             state.line(format!("Recovery: {recovery}"));
         }
         Event::Accepted { id } => {
@@ -1385,9 +1317,8 @@ fn run(repository: PathBuf, daemon_path: PathBuf, selection_path: PathBuf) -> io
     )?;
     send_request(
         &daemon_stdin,
-        &Request::ConfigureWorkspace {
+        &Request::OpenWorkbench {
             repository: repository.clone(),
-            capabilities: vec![],
         },
     )?;
 
@@ -1636,21 +1567,19 @@ mod tests {
     }
 
     #[test]
-    fn workspace_events_make_transmission_state_visible() {
+    fn workbench_open_event_makes_readiness_visible() {
         let mut state = UiState::new(Path::new("."));
         handle_daemon_event(
-            Event::WorkspaceConfigured {
+            Event::WorkbenchOpened {
                 repository: PathBuf::from("/workspace/project"),
-                capabilities: vec![Capability::RepositoryRead, Capability::NetworkAccess],
             },
             &mut state,
             Path::new("unused"),
         )
         .expect("handle workspace configuration");
 
-        assert_eq!(state.access_label(), "model access");
         assert!(state.transcript.iter().any(
-            |item| matches!(item, TranscriptItem::Line(line) if line.contains("transmission enabled"))
+            |item| matches!(item, TranscriptItem::Line(line) if line.contains("Workbench ready"))
         ));
     }
 }

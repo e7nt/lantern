@@ -82,9 +82,8 @@ More detail is captured in:
 
 ## Contributor verification
 
-Lantern's maintained Rust code is one workspace with five explicit owners:
-`crates/protocol` defines the wire contract, `crates/policy-engine` owns
-the transitional Protocol v4 capability gates, `crates/diagnostics` owns safe
+Lantern's maintained Rust code is one workspace with four explicit owners:
+`crates/protocol` defines the wire contract, `crates/diagnostics` owns safe
 diagnostic records and exports, `apps/daemon` owns agent execution, and
 `frontend/terminal` owns the developer-facing terminal surface.
 

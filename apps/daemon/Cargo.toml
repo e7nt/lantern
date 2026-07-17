@@ -6,7 +6,6 @@ publish.workspace = true
 
 [dependencies]
 lantern-diagnostics.workspace = true
-lantern-policy-engine.workspace = true
 lantern-protocol.workspace = true
 serde_json.workspace = true
 

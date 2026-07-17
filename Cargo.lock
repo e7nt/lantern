@@ -60,7 +60,6 @@ name = "lantern-daemon"
 version = "0.1.0"
 dependencies = [
  "lantern-diagnostics",
- "lantern-policy-engine",
  "lantern-protocol",
  "serde_json",
 ]
@@ -71,13 +70,6 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "lantern-policy-engine"
-version = "0.1.0"
-dependencies = [
- "lantern-protocol",
 ]
 
 [[package]]
