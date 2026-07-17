@@ -16,6 +16,10 @@ ADR 001 accepts the Helix-centered terminal frontend after the recorded spike.
 Code OSS/VSCodium workbench tasks below remain as rejected-alternative history
 and are not part of the active implementation sequence.
 
+ADR 003 and ADR 004 also supersede the dossier's capability engine, read-only
+agent, JSON-RPC, and native-loop direction. See
+[CURRENT_STATE.md](CURRENT_STATE.md) for current work.
+
 ## Canonical user journeys
 
 ### J1: Ask about a selection

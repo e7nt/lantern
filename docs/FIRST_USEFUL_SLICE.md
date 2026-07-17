@@ -1,5 +1,11 @@
 # First useful slice: evidence-backed Quick Ask
 
+> **Status:** Completed historical slice. This document records the locked,
+> selection-only foundation that proved the editor/daemon boundary. ADR 003 and
+> ADR 004 supersede its read-only product direction. New implementation work
+> starts from [CURRENT_STATE.md](CURRENT_STATE.md); do not extend the permission
+> model or build the native loop proposed below.
+
 ## Outcome
 
 The first useful Lantern software is a bootable Lantern editor in which a

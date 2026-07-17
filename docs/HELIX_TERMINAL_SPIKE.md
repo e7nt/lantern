@@ -2,11 +2,15 @@
 
 ## Decision status
 
-- **Status:** Evidence gathering; no frontend pivot is committed
+- **Status:** Historical evidence; frontend promoted by ADR 001
 - **Date:** 2026-07-15
 - **Question:** Can Lantern combine Helix, Lazygit, and a persistent agent pane
   into a smaller coherent product than the current Code OSS foundation?
 - **Promoted artifact:** [`frontend/helix`](../frontend/helix/README.md)
+
+The spike's selection-only, no-tools agent boundary was subsequently superseded
+by ADR 003 and ADR 004. See [CURRENT_STATE.md](CURRENT_STATE.md) for the active
+implementation direction.
 
 ## Proposed product surface
 

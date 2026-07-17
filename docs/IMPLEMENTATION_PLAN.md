@@ -2,7 +2,8 @@
 
 ## Document status
 
-- **Status:** Active; frontend decision accepted in ADR 001
+- **Status:** Active; immediate sequence summarized in
+  [CURRENT_STATE.md](CURRENT_STATE.md)
 - **Target:** Open-source-quality `v0.1`
 - **Primary user:** One experienced developer onboarding into unfamiliar code
 - **Initial frontend:** Pinned Helix, a narrow Lazygit rail, and a full-width
@@ -31,12 +32,13 @@ the behavior to a Lantern-owned test or evaluation.
 `v0.1` is complete when a developer can open an unfamiliar reference
 repository and perform this workflow:
 
-1. Trust the workspace and inspect what Lantern is allowed to access.
-2. Select code and receive a fast, evidence-linked answer.
+1. Ask a natural repository question and move directly to the relevant code.
+2. Request a small change and watch the agent inspect, edit, test, and expose
+   the Git diff while remaining interruptible.
 3. Generate and follow one repository-specific learning mission.
 4. Request a feature and receive an evidence-backed readiness report.
-5. Collaborate on and approve a durable implementation plan.
-6. Implement the approved plan through interruptible semantic chapters.
+5. Collaborate on and refine a durable implementation plan.
+6. Implement the plan through interruptible semantic chapters.
 7. Hover over changed code to understand intent, behavior, and verification.
 8. Review the result against acceptance criteria and tests.
 
@@ -70,35 +72,36 @@ local by default.
 
 The Lantern terminal client is the editor-facing presentation and integration layer.
 It owns editor-native operations such as selections, navigation, decorations,
-hovers, diffs, commands, and plan views. It does not own agent state or security
-policy. Lantern-specific Helix changes remain narrow, pinned, and documented.
+hovers, diffs, commands, and plan views. It does not own agent state or model
+execution. Lantern-specific Helix changes remain narrow, pinned, and documented.
 
 The daemon owns:
 
 - Agent sessions and model interaction.
-- Tool registration and policy enforcement.
+- Typed tool registration and execution coordination.
 - Repository and learner models.
-- Plans, decisions, and approval state.
+- Plans and decisions.
 - Guided Build change sets and checkpoints.
 - Change narratives and anchors.
 - Durable storage and migrations.
 - Audit events and redaction.
 
-This boundary keeps the Helix client replaceable without moving security-critical
-behavior into the editor integration.
+This boundary keeps the Helix client replaceable without moving agent behavior
+into the editor integration.
 
 ### Use a small, typed protocol
 
-The Lantern workbench starts the daemon and communicates over JSON-RPC 2.0 on
-standard input/output for `v0.1`. This avoids ports, discovery, and persistent
-background processes while preserving process isolation.
+The Lantern workbench starts the daemon and communicates through strict,
+versioned LF-delimited JSON on standard input/output for `v0.1`. This avoids
+ports, discovery, and persistent background processes while preserving process
+isolation.
 
 Protocol requirements:
 
 - Versioned request, response, and event schemas.
 - Cancellation for every model, index, and execution operation.
 - Request correlation and structured errors.
-- Capability negotiation during initialization.
+- Explicit trusted-workbench initialization.
 - No credentials or source bodies in ordinary logs.
 - Back-pressure for streamed model and tool events.
 - Golden protocol fixtures shared by TypeScript and Rust tests.
@@ -106,9 +109,9 @@ Protocol requirements:
 A persistent local socket daemon may be evaluated after `v0.1` if startup cost
 or cross-editor session sharing justifies it.
 
-### Prefer deterministic code intelligence
+### Use measured hybrid code intelligence
 
-Lantern uses deterministic evidence before semantic retrieval:
+Lantern combines complementary repository signals:
 
 1. Current editor selection and open document.
 2. Repository instructions and documentation.
@@ -116,46 +119,47 @@ Lantern uses deterministic evidence before semantic retrieval:
 4. Fast text and file search.
 5. Tree-sitter structure and import relationships.
 6. Git history and diff context.
-7. Embedding-based retrieval only after measured need.
+7. Incremental semantic/vector retrieval.
+8. Commit-synchronized summaries verified against current source.
 
 The Helix adapter normalizes editor language features into the editor-neutral
-protocol. Quick Ask fails explicitly when required LSP evidence is unavailable;
-literal search remains a separately invoked diagnostic operation, never a
-substitute for symbol intelligence.
+protocol. Retrieval ranks these sources into one bounded context package and
+records provenance internally. Generated summaries and embeddings remain
+disposable indexes rather than source of truth. Each component must earn its
+latency and relevance cost in repository-question evaluations.
 
 ### Keep the agent harness replaceable
 
 The runtime exposes an `AgentDriver` boundary around model turns and tool calls.
-The first driver is a minimal single-agent loop with:
+The first driver is the pinned Pi harness with:
 
 - Provider-neutral messages and streaming.
 - Typed tools.
 - Context compaction hooks.
 - Cancellation and retry limits.
 - Tool-result size limits.
-- Deterministic mock models for tests.
+- Deterministic fake-harness behavior for tests.
 
-Pi inspires the small harness, but Lantern core does not depend on Pi session
-formats, extensions, tools, or prompts. Phase 0 evaluates a pinned Pi RPC
-adapter for the selection-only `/agent` path before committing to a permanent
-driver. Driver selection is explicit; failure never triggers an automatic
-provider fallback.
+Lantern owns typed workbench tools, context assembly, visibility, and
+evaluation; Pi owns the initial agent loop behind a replaceable adapter. Do not
+build a parallel native loop unless ADR 004's revisit condition is met. Driver
+failure never triggers an automatic provider fallback.
 
-### Store local state in SQLite
+### Defer durable operational storage
 
-SQLite stores private operational state and supports transactional migrations.
-Portable, reviewable plans remain Markdown with structured metadata rather than
-being trapped in the database.
+ADR 002 defers SQLite until a proven journey requires state across process
+restarts. Session-only state remains in memory and portable plans remain
+Markdown. Do not introduce ad-hoc JSON persistence as a substitute.
 
-Core records include:
+If the revisit condition is met, evaluate durable records such as:
 
-- Repositories and trust grants.
+- Repositories and workbenches.
 - Sessions, branches, and compacted context.
 - Evidence references and freshness hashes.
 - Learning missions, stops, questions, and checkpoints.
-- Feature briefs, plans, decisions, tasks, and approvals.
+- Feature briefs, plans, decisions, and tasks.
 - Change sets, chapters, operations, anchors, and verification.
-- Tool calls, permission decisions, and audit metadata.
+- Tool calls and audit metadata.
 
 Raw model reasoning is not treated as a durable product artifact.
 
@@ -169,15 +173,14 @@ lantern/
 ├── apps/
 │   └── daemon/                  # Rust executable
 ├── crates/
-│   ├── agent-runtime/           # agent loop and provider abstractions
+│   ├── agent-driver/            # Pi adapter and deterministic fake harness
 │   ├── change-engine/           # change sets, chapters, replay, anchors
-│   ├── code-intelligence/       # search, syntax, evidence, repository model
+│   ├── code-intelligence/       # hybrid repository retrieval
 │   ├── diagnostics/             # metadata-only records and local export
 │   ├── learning-engine/         # missions, guidance, learner state
-│   ├── planning-engine/         # briefs, plans, decisions, approvals
-│   ├── policy-engine/           # capabilities and permission enforcement
-│   ├── protocol/                # Rust protocol types
-│   └── storage/                 # SQLite schema and migrations
+│   ├── planning-engine/         # briefs, plans, tasks, and decisions
+│   ├── workbench-tools/         # typed file, command, Git, and editor actions
+│   └── protocol/                # Rust protocol types
 ├── fixtures/
 │   ├── rust-service/
 │   └── typescript-service/
@@ -187,7 +190,8 @@ lantern/
 ```
 
 The structure can be introduced incrementally; empty architectural directories
-should not be created before their first real module exists.
+should not be created before their first real module exists. A storage crate is
+not part of this structure unless ADR 002's revisit condition is met.
 
 ## Work breakdown
 
@@ -207,6 +211,10 @@ Some work overlaps, but the exit criteria are sequential. The implementation
 should not begin a later user-facing phase while a foundational security or data
 integrity criterion remains unmet.
 
+Phases 0 and 1 include historical tasks that explain the current Protocol v4
+checkpoint. They are not the next-work queue. `CURRENT_STATE.md` and accepted
+ADRs take precedence when those records describe superseded architecture.
+
 ## Phase 0: product and architecture spikes
 
 ### Objectives
@@ -219,24 +227,22 @@ Remove the highest-risk assumptions before building permanent infrastructure.
   latency.
 - `P0-02` Select two non-trivial public fixture repositories: one TypeScript and
   one Rust project.
-- `P0-03` Prototype workbench-to-daemon JSON-RPC with cancellation and
+- `P0-03` Prototype workbench-to-daemon typed JSONL with cancellation and
   streamed events.
-- `P0-04` Compare a minimal native agent loop with a Pi RPC adapter on one
-  read-only repository question.
+- `P0-04` Validate the Pi RPC adapter on one repository question.
 - `P0-05` Prototype editor hover, decoration, navigation, and selection capture.
 - `P0-06` Prototype one Markdown-backed plan with structured task metadata.
 - `P0-07` Write the initial threat model and identify all trust boundaries.
 - `P0-08` Record architecture decisions as short ADRs.
 - `P0-09` Prototype interruptible Live Collaboration using a realtime voice
-  model, one read-only editor-context tool, visible transcript truncation, and
-  the existing policy boundary.
+  model, one editor-context tool, and visible transcript truncation.
 
 ### Exit criteria
 
 - A selection can cross the process boundary and stream a mock response back.
 - Cancelling the editor request terminates daemon work.
 - A real Helix language-server session supplies bounded definition/reference
-  evidence to a read-only answer with no evidence fallback.
+  evidence to a grounded answer.
 - The plan format round-trips without losing hand edits.
 - Security-sensitive operations have named enforcement points.
 - The voice spike measures interruption latency, grounding, cost, privacy, and
@@ -263,9 +269,10 @@ decision unless ADR 001's revisit conditions occur.
   and daemon types from the same source.
 - `P1-05` Add structured errors, correlation IDs, cancellation, and event
   back-pressure.
-- `P1-06` Create SQLite migrations and transactional repository initialization.
-- `P1-07` Implement workspace trust with explicit read, write, execution, and
-  network capabilities.
+- `P1-06` **Deferred by ADR 002:** create SQLite migrations only after a proven
+  durable-state requirement.
+- `P1-07` **Historical, superseded by ADR 003:** the Protocol v4 workspace trust
+  implementation.
 - `P1-08` Add redacted structured logging and an opt-in diagnostic bundle.
 - `P1-09` Add provider credential resolution without copying secrets into the
   database.
@@ -287,12 +294,11 @@ excluded for the local stdio daemon: initialization is its ready boundary and
 restarting could conceal lost operation state. Durable crash reports,
 diagnostic redaction, and general supervision remain promotion work.
 
-The `P1-07` slice adds workspace configuration and a dedicated
-policy crate. Every session starts locked, binds one canonical repository, and
-requires all operation capabilities before admission. Local reads and model
-transmission are separate, revocable session grants; repository write and
-process execution are hard-denied in Quick Ask. There is no implicit trust,
-parent-directory inheritance, saved wildcard, or approval fallback.
+The historical `P1-07` slice added locked workspace configuration and a
+dedicated policy crate. ADR 003 supersedes that product direction: the current
+code remains useful transition evidence, but the next protocol revision should
+replace it with trusted-workbench initialization and remove `/trust` rather
+than extend capability negotiation.
 
 `P1-06` is deliberately deferred by
 [ADR 002](decisions/002-defer-sqlite-until-needed.md). The current session has
@@ -331,8 +337,7 @@ responses continue to stream as they arrive.
 - Lantern starts the session-scoped daemon only with the agent pane.
 - Daemon failure does not crash or block normal editing.
 - Protocol compatibility failures produce actionable errors.
-- A workspace begins locked and untrusted; read and model transmission require
-  separate visible grants.
+- A workbench initializes through one explicit trusted-session boundary.
 - CI tests protocol and patch replay on Linux, then adds macOS at the public
   release gate.
 
@@ -346,12 +351,13 @@ responses continue to stream as they arrive.
 - `P2-03` Implement bounded file reading, file discovery, and text search tools.
 - `P2-04` Build a context assembler that records why each context item was
   selected.
-- `P2-05` Implement the read-only agent policy and reject edit or execution tool
-  calls at runtime.
-- `P2-06` Render concise answers as hovers and expanded answers in a side view.
+- `P2-05` Expose typed repository read, edit, command, Git, and navigation tools
+  to the Pi harness.
+- `P2-06` Render natural concise answers in the full-width bottom pane and open
+  supporting code directly in Helix.
 - `P2-07` Link claims to files, symbols, and line ranges.
 - `P2-08` Support cancellation, retry, provider errors, and usage visibility.
-- `P2-09` Add a deterministic mock provider and golden end-to-end scenarios.
+- `P2-09` Add a deterministic fake Pi harness and golden end-to-end scenarios.
 
 ### Performance budgets
 
@@ -362,8 +368,9 @@ responses continue to stream as they arrive.
 
 ### Exit criteria
 
-- A user can ask what selected code does and inspect supporting evidence.
-- The agent cannot modify files or execute commands in Quick Ask.
+- A user can ask what code does and move directly to supporting evidence.
+- A user can request a small change and watch Pi inspect, edit, run the focused
+  test, and expose the resulting diff.
 - Answers degrade clearly when symbols or provider access are unavailable.
 - Repeated questions reuse fresh deterministic context without re-indexing the
   entire repository.
@@ -377,6 +384,8 @@ responses continue to stream as they arrive.
 - `P3-02` Detect languages, frameworks, build tools, entry points, tests, generated
   code, and deployment surfaces.
 - `P3-03` Build an incremental file, package, import, and symbol inventory.
+- `P3-03a` Add incremental semantic/vector indexing and commit-synchronized
+  summaries, measured against the LSP/exact baseline.
 - `P3-04` Add an explicit syntax-only inspection mode for the two reference
   ecosystems, with its reduced evidence capabilities visible to the user.
 - `P3-05` Model executable entry points and representative runtime handoffs.
@@ -442,18 +451,19 @@ responses continue to stream as they arrive.
   verification requirements.
 - `P5-06` Add plan comments and agent suggestions without silently overwriting
   user text.
-- `P5-07` Add granular approval for the brief, architecture, and implementation
-  phases.
+- `P5-07` Add visible checkpoints for the brief, architecture, and
+  implementation phases.
 - `P5-08` Version plan revisions and preserve resolved decisions.
-- `P5-09` Enforce that implementation tools remain unavailable until required
-  approvals exist.
+- `P5-09` Keep plan changes and implementation divergence visible without
+  turning the plan into a tool permission gate.
 
 ### Exit criteria
 
 - A feature request becomes a human-editable plan grounded in repository
   evidence.
 - Hand editing the Markdown remains safe and round-trippable.
-- The daemon refuses implementation without required approval state.
+- Implementation can proceed from natural developer intent while material plan
+  divergence remains visible.
 - Material unknowns cannot be hidden by a high-confidence narrative.
 - Plan revisions preserve authorship and decision history.
 
@@ -530,11 +540,13 @@ The detailed interaction contract is in
 
 - `P8-01` Complete a threat model covering repository prompt injection, secret
   exposure, tool escalation, malicious paths, symlinks, and command execution.
-- `P8-02` Add adversarial fixture repositories and policy regression tests.
+- `P8-02` Add adversarial fixture repositories and tool-boundary regression
+  tests.
 - `P8-03` Protect credential files, VCS internals, environment files, and paths
   outside the trusted workspace.
 - `P8-04` Make remote transmission visible and redact likely secrets.
-- `P8-05` Add command classification, approvals, timeouts, and resource limits.
+- `P8-05` Add visible command classification, timeouts, cancellation, and
+  resource limits without routine approval prompts.
 - `P8-06` Document what Lantern reads, stores, executes, and transmits.
 
 ### Reliability
@@ -557,7 +569,7 @@ The detailed interaction contract is in
 - `P8-17` Package, checksum, and validate installable Lantern builds containing
   the supported Helix, Lazygit, pane, and daemon revisions.
 - `P8-18` Add dependency, license, secret, and vulnerability checks to CI.
-- `P8-19` Write user documentation for trust, model configuration, learning,
+- `P8-19` Write user documentation for workbenches, model configuration, learning,
   planning, Guided Build, review, and recovery.
 - `P8-20` Identify bounded good-first issues that do not require agent-runtime
   expertise.
@@ -571,7 +583,8 @@ The repository can become public only after:
 - The threat model and security-reporting process are published.
 - Fresh-machine setup succeeds on supported macOS and Linux versions.
 - CI passes without paid model credentials.
-- Destructive tools are disabled by default and enforcement is covered by tests.
+- Destructive Git history operations require an explicit request and are
+  covered by tests.
 - Persisted schemas have migrations and a documented compatibility policy.
 - Known limitations and unsupported languages are clearly stated.
 
@@ -584,9 +597,9 @@ the production editor and daemon.
 
 ### Deterministic tests
 
-- Unit tests for policy, planning, learning, anchoring, replay, and migrations.
+- Unit tests for tools, planning, learning, anchoring, replay, and migrations.
 - Protocol contract tests shared between Rust and TypeScript.
-- State-machine tests for approvals and Guided Build checkpoints.
+- State-machine tests for Guided Build checkpoints and interruption.
 - Property tests for patch application and anchor re-identification.
 - Golden tests for portable plan serialization.
 - Extension-host tests for selections, hovers, decorations, and commands.
@@ -679,10 +692,9 @@ visible code, narrate semantic implementation stages, call constrained Lantern
 tools, and be interrupted naturally. It is not a v0.1 release commitment until
 the evaluation gate passes.
 
-The spike begins read-only. Voice must reuse the same session coordinator,
-policy engine, evidence model, plan state, and Guided Build checkpoints as text.
-It must not create a second agent state or allow spoken requests to bypass
-approval.
+Voice must reuse the same session coordinator, evidence model, plan state,
+visible tool activity, and Guided Build checkpoints as text. It must not create
+a second agent state or hidden action path.
 
 If promoted, implementation should begin after Quick Ask and before Guided
 Build playback is finalized, so interruption and narration become inputs to the
@@ -724,7 +736,7 @@ or destructive defaults.
 | Editor choice locks the architecture | Thin frontend and versioned editor-neutral protocol |
 | Model/provider churn destabilizes core | Provider-neutral driver and deterministic mock tests |
 | Indexing makes the editor feel heavy | Lazy activation, incremental invalidation, resource budgets |
-| Repository instructions manipulate the agent | Trust separation and untrusted-content handling |
+| Repository instructions manipulate the agent | Treat repository content as data and validate typed tool boundaries |
 | Cross-platform scope delays usefulness | macOS/Linux first; defer Windows release guarantee |
 
 ## Explicitly deferred beyond `v0.1`
@@ -745,14 +757,12 @@ or destructive defaults.
 - Organization analytics and learner ranking.
 - Claims of universal language support.
 
-## First implementation slice
+## Immediate implementation slice
 
-The authoritative scope, contracts, delivery sequence, exclusions, and
-acceptance criteria are defined in
-[FIRST_USEFUL_SLICE.md](FIRST_USEFUL_SLICE.md).
-
-The first internally useful milestone is a Lantern editor connected to a
-streaming mock daemon. The first externally meaningful slice adds enforced
-read-only tools, one explicit provider, validated evidence, DeepEval behavioral
-tests, and a usefulness gate. It does not include indexing, SQLite, planning,
-Guided Build, file mutation, command execution, voice, or provider fallbacks.
+The authoritative current sequence is in
+[CURRENT_STATE.md](CURRENT_STATE.md). The completed selection-only Quick Ask
+scope remains documented in [FIRST_USEFUL_SLICE.md](FIRST_USEFUL_SLICE.md) as
+historical implementation evidence. The next slice promotes Pi into a trusted
+coding harness with typed search, edit, command, Git, and Helix-navigation
+tools, followed by measured hybrid indexing. It does not include SQLite, voice,
+multiple agents, or provider fallbacks.

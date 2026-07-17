@@ -1,5 +1,9 @@
 # Reference repositories
 
+> **Direction note:** Earlier adoption records below accurately describe the
+> Protocol v4 checkpoint. ADR 003 and ADR 004 supersede its locked, no-tools
+> product scope; reference findings do not override accepted Lantern decisions.
+
 ## Purpose
 
 Lantern studies upstream projects as architectural references. Their source is
