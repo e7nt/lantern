@@ -27,18 +27,23 @@ and tool vocabulary should not become user-facing ceremony.
   Helix-provided definition/reference context.
 - Trusted-workbench initialization with repository-bound requests and no
   capability ceremony.
-- Selection-only Pi RPC questions using Pi-owned OpenAI Codex authentication;
-  Pi tools are not enabled yet.
+- Selection- and symbol-grounded Pi RPC questions using Pi-owned OpenAI Codex
+  authentication.
+- Pi's pinned `read`, `grep`, `find`, `ls`, `edit`, `write`, and `bash` tools,
+  launched inside the repository with typed activity in Lantern.
+- Successful edit/write activity opens the changed file in Helix; tool
+  completion refreshes the visible branch and change counts for Git review.
 - Streaming, cancellation, crash survival, explicit local diagnostics, and
   typed evidence provenance.
 - Deterministic software tests and versioned DeepEval contracts.
 
 ## Current boundary
 
-Protocol v5 and the terminal now open one trusted repository directly. The old
+Protocol v5 and the terminal open one trusted repository directly. The old
 policy engine, capability fields, and `/trust` commands have been removed. Pi
-still starts without tools, so agent questions can explain supplied evidence
-but cannot yet inspect, edit, execute, or use Git on their own.
+runs its explicit built-in coding-tool allowlist in that repository. Raw tool
+arguments, command output, and provider stderr are not copied into Lantern's
+bounded UI protocol or diagnostics.
 
 SQLite remains deferred by
 [ADR 002](decisions/002-defer-sqlite-until-needed.md). There is no durable
@@ -48,18 +53,12 @@ session database or ad-hoc JSON replacement.
 
 Build the smallest end-to-end full-access Pi harness:
 
-1. Define the narrow typed lifecycle Lantern uses to present Pi's repository
-   reads, edits, and development commands without exposing unbounded payloads.
-2. Start Pi in the repository with its pinned `read`, `write`, `edit`, and
-   `bash` tools.
-3. Preserve cancellation, bounded protocol events, visible
-   activity, and deterministic fake-harness tests.
-4. Show edits through Helix and Git state through Lazygit; do not manipulate
-   either surface by emitting arbitrary model keystrokes.
-5. Prove one journey: ask for a small change, inspect the relevant code, edit
+1. Prove one live journey: ask for a small change, inspect the relevant code, edit
    it, run its focused test, and show the resulting diff.
-6. Add DeepEval cases for natural explanation, correct tool choice, grounding,
-   and interruption.
+2. Extend the DeepEval dataset from deterministic tool-order contracts to
+   recorded live traces for natural explanation, grounding, and interruption.
+3. Tighten changed-file navigation from file start to Pi's exact edit range
+   when the pinned harness exposes that range reliably.
 
 After that journey works, spike the incremental hybrid repository index. Start
 with measured LSP/exact baselines, then add semantic/vector retrieval and

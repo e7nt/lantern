@@ -196,7 +196,8 @@ silently perform Git operations.
 | Permissions | Pi explicit session trust and OpenCode all-resource evaluation with denial precedence | project extension trust, saved wildcard rules, and a general approval queue | locked startup, canonical repository binding, separate read/transmission grants, and hard write/execute denials |
 
 The protocol proofs above landed in Phase 1 foundation slices on 2026-07-16.
-The canonical contract is [Protocol v4](../protocol/v4/README.md). It keeps the
+They are preserved in [Protocol v4](../protocol/v4/README.md); the maintained
+contract is now [Protocol v5](../protocol/v5/README.md). The lifecycle keeps the
 pane busy through settlement without rendering acceptance as UI noise, bounds a
 frame at 1 MiB, drains malformed frames before continuing, prevents an active
 ID from being replaced, and joins daemon workers during shutdown. The follow-up

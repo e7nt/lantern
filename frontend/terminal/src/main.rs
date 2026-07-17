@@ -1179,7 +1179,12 @@ fn handle_mouse(
     Ok(false)
 }
 
-fn handle_daemon_event(event: Event, state: &mut UiState, selection_path: &Path) -> io::Result<()> {
+fn handle_daemon_event(
+    event: Event,
+    state: &mut UiState,
+    repository: &Path,
+    selection_path: &Path,
+) -> io::Result<()> {
     match event {
         Event::Initialized { .. } => {
             state.daemon = DaemonState::Ready;
@@ -1230,7 +1235,48 @@ fn handle_daemon_event(event: Event, state: &mut UiState, selection_path: &Path)
             }
         }
         Event::TextDelta { id, delta } => state.answer_delta(id, &delta),
+        Event::ToolStarted {
+            tool,
+            relative_path,
+            ..
+        } => {
+            let location = relative_path
+                .map(|path| format!(" `{}`", path.display()))
+                .unwrap_or_default();
+            state.line(format!("{}{}…", tool.label(), location));
+        }
+        Event::ToolFinished {
+            tool,
+            relative_path,
+            success,
+            ..
+        } => {
+            state.summary = RepositorySummary::load(repository);
+            let outcome = if success { "finished" } else { "failed" };
+            state.line(format!("{} {outcome}.", tool.label()));
+            if success
+                && matches!(
+                    tool,
+                    lantern_protocol::WorkbenchTool::Edit | lantern_protocol::WorkbenchTool::Write
+                )
+                && let Some(relative_path) = relative_path
+            {
+                let changed = Evidence {
+                    source: EvidenceSource::LiteralMatch,
+                    relative_path,
+                    start_line: 1,
+                    start_column: 1,
+                    end_line: 1,
+                    end_column: 1,
+                    excerpt: String::new(),
+                };
+                if let Err(cause) = navigate(&changed) {
+                    state.line(format!("Could not show the changed file: {cause}"));
+                }
+            }
+        }
         Event::Completed { id, .. } => {
+            state.summary = RepositorySummary::load(repository);
             state.line(format!("Completed operation {id}."));
         }
         Event::Cancelled {
@@ -1345,7 +1391,7 @@ fn run(repository: PathBuf, daemon_path: PathBuf, selection_path: PathBuf) -> io
             Input::Terminal(TerminalEvent::Resize(_, _)) => false,
             Input::Terminal(_) => false,
             Input::Daemon(event) => {
-                handle_daemon_event(event, &mut state, &selection_path)?;
+                handle_daemon_event(event, &mut state, &repository, &selection_path)?;
                 if state.daemon == DaemonState::Unavailable {
                     let _ = daemon.kill();
                 }
@@ -1560,6 +1606,7 @@ mod tests {
                 protocol_version: PROTOCOL_VERSION,
             },
             &mut state,
+            Path::new("."),
             Path::new("unused"),
         )
         .expect("handle initialization");
@@ -1574,6 +1621,7 @@ mod tests {
                 repository: PathBuf::from("/workspace/project"),
             },
             &mut state,
+            Path::new("."),
             Path::new("unused"),
         )
         .expect("handle workspace configuration");

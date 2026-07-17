@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 
 from deepeval.metrics import BaseMetric
@@ -39,6 +40,57 @@ class SelectionAnswerContractMetric(BaseMetric):
         if present_forbidden:
             failures.append(f"forbidden claims were present: {present_forbidden}")
         self.reason = "; ".join(failures) if failures else "all deterministic constraints passed"
+        return self.score
+
+    async def a_measure(self, test_case: LLMTestCase, *args, **kwargs) -> float:
+        return self.measure(test_case, *args, **kwargs)
+
+    def is_successful(self) -> bool:
+        return self.success
+
+
+class ToolJourneyContractMetric(BaseMetric):
+    """Checks an agent trace for ordered intent and unnecessary mutations."""
+
+    threshold = 1.0
+    evaluation_model = None
+    strict_mode = True
+    async_mode = False
+    verbose_mode = False
+    error = None
+
+    def __init__(self, required_order: Sequence[str], forbidden: Sequence[str]) -> None:
+        self.required_order = tuple(required_order)
+        self.forbidden = frozenset(forbidden)
+        self.score = 0.0
+        self.reason = "not measured"
+        self.success = False
+
+    @property
+    def __name__(self) -> str:
+        return "Tool journey contract"
+
+    def measure(self, test_case: LLMTestCase, *args, **kwargs) -> float:
+        try:
+            trace = json.loads(test_case.actual_output)
+        except (json.JSONDecodeError, TypeError):
+            trace = []
+        if not isinstance(trace, list) or not all(isinstance(tool, str) for tool in trace):
+            trace = []
+        ordered = []
+        for tool in trace:
+            category = {"grep": "search", "find": "search"}.get(tool, tool)
+            if category in self.required_order and category not in ordered:
+                ordered.append(category)
+        forbidden = [tool for tool in trace if tool in self.forbidden]
+        self.success = ordered == list(self.required_order) and not forbidden
+        self.score = 1.0 if self.success else 0.0
+        failures = []
+        if ordered != list(self.required_order):
+            failures.append(f"required order was {self.required_order}, observed {ordered}")
+        if forbidden:
+            failures.append(f"forbidden tools were used: {forbidden}")
+        self.reason = "; ".join(failures) if failures else "tool journey contract passed"
         return self.score
 
     async def a_measure(self, test_case: LLMTestCase, *args, **kwargs) -> float:
