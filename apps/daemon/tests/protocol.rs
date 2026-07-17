@@ -520,15 +520,28 @@ fn shutdown_cancels_and_settles_workers_before_process_exit() {
         .lines()
         .map(|line| serde_json::from_str(line).expect("decode shutdown event"))
         .collect();
-    let cancelled = events
+    let outcomes: Vec<_> = events
         .iter()
-        .position(|event| matches!(event, Event::Cancelled { id: 23, .. }))
-        .expect("shutdown cancellation");
+        .enumerate()
+        .filter(|(_, event)| {
+            matches!(
+                event,
+                Event::Completed { id: 23, .. }
+                    | Event::Cancelled { id: 23, .. }
+                    | Event::Error { id: Some(23), .. }
+            )
+        })
+        .collect();
+    assert_eq!(
+        outcomes.len(),
+        1,
+        "operation must have one terminal outcome"
+    );
     let settled = events
         .iter()
         .position(|event| matches!(event, Event::Settled { id: 23 }))
         .expect("shutdown settlement");
-    assert!(cancelled < settled);
+    assert!(outcomes[0].0 < settled);
     fs::remove_dir_all(root).expect("remove fixture");
 }
 

@@ -22,7 +22,6 @@ use lantern_protocol::{
 use std::env;
 use std::fs;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
-use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 use std::process::{ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -35,11 +34,6 @@ use std::os::unix::fs::OpenOptionsExt;
 #[cfg(all(unix, test))]
 use std::os::unix::fs::PermissionsExt;
 
-const TOOLBAR_LABELS: &[(ToolbarAction, &str)] = &[
-    (ToolbarAction::Ask, "Ask"),
-    (ToolbarAction::Git, "Git"),
-    (ToolbarAction::Cancel, "Cancel"),
-];
 const CANVAS: Color = Color::Rgb {
     r: 58,
     g: 42,
@@ -82,13 +76,6 @@ enum DaemonState {
     Unavailable,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ToolbarAction {
-    Ask,
-    Git,
-    Cancel,
-}
-
 #[derive(Clone)]
 enum TranscriptItem {
     Line(String),
@@ -96,41 +83,12 @@ enum TranscriptItem {
     Evidence(Evidence),
 }
 
-struct RepositorySummary {
-    branch: String,
-    staged: usize,
-    changed: usize,
-    untracked: usize,
-}
-
-impl RepositorySummary {
-    fn load(repository: &Path) -> Self {
-        let branch = command_output(repository, &["branch", "--show-current"]);
-        Self {
-            branch: if branch.trim().is_empty() {
-                "detached HEAD".into()
-            } else {
-                branch.trim().into()
-            },
-            staged: count_entries(&command_output(
-                repository,
-                &["diff", "--cached", "--name-status"],
-            )),
-            changed: count_entries(&command_output(repository, &["diff", "--name-status"])),
-            untracked: count_entries(&command_output(
-                repository,
-                &["ls-files", "--others", "--exclude-standard"],
-            )),
-        }
-    }
-}
-
 struct UiState {
     input: Vec<char>,
     cursor: usize,
     transcript: Vec<TranscriptItem>,
     scroll_from_bottom: usize,
-    summary: RepositorySummary,
+    activity: Option<String>,
     daemon: DaemonState,
     active_id: Option<u64>,
     accepted_id: Option<u64>,
@@ -141,13 +99,13 @@ struct UiState {
 }
 
 impl UiState {
-    fn new(repository: &Path) -> Self {
+    fn new(_repository: &Path) -> Self {
         Self {
             input: Vec::new(),
             cursor: 0,
-            transcript: vec![TranscriptItem::Line("Starting the local agent…".into())],
+            transcript: Vec::new(),
             scroll_from_bottom: 0,
-            summary: RepositorySummary::load(repository),
+            activity: None,
             daemon: DaemonState::Starting,
             active_id: None,
             accepted_id: None,
@@ -270,16 +228,8 @@ impl Drop for TerminalGuard {
     }
 }
 
-#[derive(Clone)]
-struct ActionHit {
-    columns: RangeInclusive<u16>,
-    action: ToolbarAction,
-}
-
 struct Layout {
-    toolbar_row: u16,
     input_row: u16,
-    actions: Vec<ActionHit>,
     evidence_rows: Vec<(u16, usize, Evidence)>,
 }
 
@@ -294,22 +244,6 @@ fn send_request(stdin: &Arc<Mutex<BufWriter<ChildStdin>>>, request: &Request) ->
     serde_json::to_writer(&mut *stdin, request)?;
     stdin.write_all(b"\n")?;
     stdin.flush()
-}
-
-fn command_output(repository: &Path, arguments: &[&str]) -> String {
-    Command::new("git")
-        .arg("-C")
-        .arg(repository)
-        .args(arguments)
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .and_then(|output| String::from_utf8(output.stdout).ok())
-        .unwrap_or_default()
-}
-
-fn count_entries(contents: &str) -> usize {
-    contents.lines().count()
 }
 
 fn clean_text(text: &str) -> String {
@@ -345,34 +279,6 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
         }
     }
     wrapped
-}
-
-fn toolbar(right_edge: u16) -> (String, Vec<ActionHit>) {
-    let mut rendered = String::new();
-    for (_, label) in TOOLBAR_LABELS {
-        if !rendered.is_empty() {
-            rendered.push_str("  ");
-        }
-        rendered.push_str(&format!(" {label} "));
-    }
-
-    let origin = right_edge.saturating_sub(rendered.chars().count() as u16);
-    let mut hits = Vec::new();
-    let mut offset = 0_u16;
-    for (action, label) in TOOLBAR_LABELS {
-        if offset > 0 {
-            offset = offset.saturating_add(2);
-        }
-        let start = origin.saturating_add(offset);
-        let button_width = label.chars().count() as u16 + 2;
-        let end = start.saturating_add(button_width.saturating_sub(1));
-        hits.push(ActionHit {
-            columns: start..=end,
-            action: *action,
-        });
-        offset = offset.saturating_add(button_width);
-    }
-    (rendered, hits)
 }
 
 fn evidence_source_text(source: EvidenceSource) -> (&'static str, &'static str) {
@@ -441,9 +347,8 @@ fn render(state: &UiState) -> io::Result<Layout> {
     let (width, height) = terminal::size()?;
     let content_width = width.saturating_sub(HORIZONTAL_PADDING.saturating_mul(2));
     let width_usize = usize::from(content_width.max(1));
-    let toolbar_row = 0;
     let input_row = height.saturating_sub(1);
-    let transcript_start = 2.min(input_row);
+    let transcript_start = 0;
     let transcript_height = input_row.saturating_sub(transcript_start) as usize;
     let mut stdout = io::stdout();
     queue!(
@@ -454,60 +359,6 @@ fn render(state: &UiState) -> io::Result<Layout> {
         MoveTo(0, 0),
         Clear(ClearType::All)
     )?;
-
-    let unstaged = state
-        .summary
-        .changed
-        .saturating_add(state.summary.untracked);
-    let repository_state = match (state.summary.staged, unstaged) {
-        (0, 0) => format!("{}  ·  clean", state.summary.branch),
-        (0, unstaged) => format!("{}  ·  {unstaged} changes", state.summary.branch),
-        (staged, 0) => format!("{}  ·  {staged} staged", state.summary.branch),
-        (staged, unstaged) => {
-            format!(
-                "{}  ·  {staged} staged  ·  {unstaged} changes",
-                state.summary.branch
-            )
-        }
-    };
-    let title = format!("Lantern  /  {repository_state}  /  {}", "trusted workbench");
-    let (toolbar, actions) = toolbar(width.saturating_sub(HORIZONTAL_PADDING));
-    let toolbar_width = toolbar.chars().count();
-    let title_width = width_usize.saturating_sub(toolbar_width.saturating_add(2));
-    queue!(
-        stdout,
-        MoveTo(HORIZONTAL_PADDING, 0),
-        SetForegroundColor(ACCENT),
-        SetAttribute(Attribute::Bold),
-        Print(truncate(&title, title_width)),
-        SetAttribute(Attribute::NoBold),
-        SetForegroundColor(TEXT)
-    )?;
-
-    if height > 0 {
-        queue!(
-            stdout,
-            MoveTo(
-                width
-                    .saturating_sub(HORIZONTAL_PADDING)
-                    .saturating_sub(toolbar_width as u16),
-                toolbar_row
-            ),
-            SetForegroundColor(ACCENT),
-            Print(toolbar),
-            SetForegroundColor(TEXT)
-        )?;
-    }
-
-    if height > 1 {
-        queue!(
-            stdout,
-            MoveTo(HORIZONTAL_PADDING, 1),
-            SetForegroundColor(MUTED),
-            Print("─".repeat(width_usize)),
-            SetForegroundColor(TEXT)
-        )?;
-    }
 
     let rows = flattened_transcript(state, width_usize);
     let max_scroll = rows.len().saturating_sub(transcript_height);
@@ -547,7 +398,10 @@ fn render(state: &UiState) -> io::Result<Layout> {
             "› {}  · Agent unavailable · /diagnostics exports metadata",
             state.input.iter().collect::<String>()
         ),
-        (DaemonState::Ready, Some(_)) => "›  Working…  Esc to interrupt".to_owned(),
+        (DaemonState::Ready, Some(_)) => format!(
+            "● {}  ·  Esc cancel",
+            state.activity.as_deref().unwrap_or("Thinking…")
+        ),
         (DaemonState::Ready, None) if state.selected_evidence.is_some() => {
             "›  ↑↓ choose evidence · Enter opens in Helix · Esc returns to prompt".to_owned()
         }
@@ -557,9 +411,7 @@ fn render(state: &UiState) -> io::Result<Layout> {
         stdout,
         MoveTo(HORIZONTAL_PADDING, input_row),
         SetForegroundColor(ACCENT),
-        SetAttribute(Attribute::Bold),
         Print(truncate(&prompt, width_usize)),
-        SetAttribute(Attribute::NoBold),
         SetForegroundColor(TEXT)
     )?;
     if state.daemon != DaemonState::Starting
@@ -575,9 +427,7 @@ fn render(state: &UiState) -> io::Result<Layout> {
     stdout.flush()?;
 
     Ok(Layout {
-        toolbar_row,
         input_row,
-        actions,
         evidence_rows,
     })
 }
@@ -809,13 +659,12 @@ fn cancel_active(
     Ok(())
 }
 
-fn open_git(state: &mut UiState, repository: &Path) {
+fn open_git(state: &mut UiState) {
     match Command::new("lantern-lazygit").status() {
         Ok(status) if status.success() => state.line("Returned from Lazygit."),
         Ok(status) => state.line(format!("Lazygit exited with {status}.")),
         Err(cause) => state.line(format!("Could not start Lazygit: {cause}")),
     }
-    state.summary = RepositorySummary::load(repository);
 }
 
 fn diagnostic_state(state: DaemonState) -> DiagnosticDaemonState {
@@ -905,11 +754,10 @@ fn handle_line(
         return Ok(false);
     }
     if line == "/git" {
-        open_git(state, repository);
+        open_git(state);
         return Ok(false);
     }
     if line == "/refresh" || line.is_empty() {
-        state.summary = RepositorySummary::load(repository);
         return Ok(false);
     }
     if line == "/diagnostics" {
@@ -1097,47 +945,7 @@ fn is_quit_shortcut(key: KeyEvent, agent_active: bool, input_empty: bool) -> boo
         && input_empty
 }
 
-fn action_at(layout: &Layout, mouse: MouseEvent) -> Option<ToolbarAction> {
-    if mouse.row != layout.toolbar_row {
-        return None;
-    }
-    layout
-        .actions
-        .iter()
-        .find(|hit| hit.columns.contains(&mouse.column))
-        .map(|hit| hit.action)
-}
-
-fn handle_toolbar_action(
-    action: ToolbarAction,
-    state: &mut UiState,
-    repository: &Path,
-    selection_path: &Path,
-    daemon_stdin: &Arc<Mutex<BufWriter<ChildStdin>>>,
-) -> io::Result<bool> {
-    match action {
-        ToolbarAction::Ask if state.daemon == DaemonState::Starting => {
-            state.line("The local agent is still starting.")
-        }
-        ToolbarAction::Ask if state.daemon == DaemonState::Unavailable => {
-            state.line("The local agent is unavailable. Restart the Lantern session to retry.")
-        }
-        ToolbarAction::Ask if state.active_id.is_none() => prepare_selection(state, selection_path),
-        ToolbarAction::Ask => state.line("The agent is already working."),
-        ToolbarAction::Git => open_git(state, repository),
-        ToolbarAction::Cancel => cancel_active(state, daemon_stdin)?,
-    }
-    Ok(false)
-}
-
-fn handle_mouse(
-    mouse: MouseEvent,
-    layout: &Layout,
-    state: &mut UiState,
-    repository: &Path,
-    selection_path: &Path,
-    daemon_stdin: &Arc<Mutex<BufWriter<ChildStdin>>>,
-) -> io::Result<bool> {
+fn handle_mouse(mouse: MouseEvent, layout: &Layout, state: &mut UiState) -> io::Result<bool> {
     match mouse.kind {
         MouseEventKind::ScrollUp => {
             state.scroll_from_bottom = state.scroll_from_bottom.saturating_add(3);
@@ -1146,15 +954,6 @@ fn handle_mouse(
             state.scroll_from_bottom = state.scroll_from_bottom.saturating_sub(3);
         }
         MouseEventKind::Down(MouseButton::Left) => {
-            if let Some(action) = action_at(layout, mouse) {
-                return handle_toolbar_action(
-                    action,
-                    state,
-                    repository,
-                    selection_path,
-                    daemon_stdin,
-                );
-            }
             if let Some((_, index, evidence)) = layout
                 .evidence_rows
                 .iter()
@@ -1179,22 +978,15 @@ fn handle_mouse(
     Ok(false)
 }
 
-fn handle_daemon_event(
-    event: Event,
-    state: &mut UiState,
-    repository: &Path,
-    selection_path: &Path,
-) -> io::Result<()> {
+fn handle_daemon_event(event: Event, state: &mut UiState, selection_path: &Path) -> io::Result<()> {
     match event {
         Event::Initialized { .. } => {
             state.daemon = DaemonState::Ready;
             state.transcript.clear();
-            state.line("Opening the trusted workbench…");
+            state.activity = Some("Opening workbench…".into());
         }
         Event::WorkbenchOpened { .. } => {
-            state.line(
-                "Workbench ready. The agent can inspect, edit, and run development commands here.",
-            );
+            state.activity = None;
         }
         Event::WorkbenchOpenFailed { message, recovery } => {
             state.line(format!("Could not open workbench: {message}"));
@@ -1207,21 +999,24 @@ fn handle_daemon_event(
         }
         Event::OperationStarted { search_term, .. } => {
             if search_term.starts_with("Pi ") {
-                state.line(format!(
-                    "Starting {search_term} with bounded LSP symbol evidence…"
-                ));
+                state.activity = Some("Thinking…".into());
             } else {
-                state.line(format!("Searching local files for `{search_term}`…"));
+                state.activity = Some(format!("Searching for `{search_term}`…"));
             }
         }
         Event::Progress {
             files_inspected, ..
-        } => state.line(format!("Inspected {files_inspected} file(s).")),
+        } => state.activity = Some(format!("Inspected {files_inspected} files…")),
         Event::Evidence { id, evidence } => {
-            state
-                .transcript
-                .push(TranscriptItem::Evidence(evidence.clone()));
-            state.scroll_from_bottom = 0;
+            if matches!(
+                evidence.source,
+                EvidenceSource::Definition | EvidenceSource::LiteralMatch
+            ) {
+                state
+                    .transcript
+                    .push(TranscriptItem::Evidence(evidence.clone()));
+                state.scroll_from_bottom = 0;
+            }
             if state.navigated_for != Some(id) {
                 if let Err(cause) = navigate(&evidence) {
                     state.line(format!("Navigation failed: {cause}"));
@@ -1234,7 +1029,10 @@ fn handle_daemon_event(
                 state.line(format!("Preview failed: {message}"));
             }
         }
-        Event::TextDelta { id, delta } => state.answer_delta(id, &delta),
+        Event::TextDelta { id, delta } => {
+            state.activity = Some("Responding…".into());
+            state.answer_delta(id, &delta);
+        }
         Event::ToolStarted {
             tool,
             relative_path,
@@ -1243,7 +1041,7 @@ fn handle_daemon_event(
             let location = relative_path
                 .map(|path| format!(" `{}`", path.display()))
                 .unwrap_or_default();
-            state.line(format!("{}{}…", tool.label(), location));
+            state.activity = Some(format!("{}{}…", tool.label(), location));
         }
         Event::ToolFinished {
             tool,
@@ -1251,9 +1049,10 @@ fn handle_daemon_event(
             success,
             ..
         } => {
-            state.summary = RepositorySummary::load(repository);
-            let outcome = if success { "finished" } else { "failed" };
-            state.line(format!("{} {outcome}.", tool.label()));
+            if !success {
+                state.line(format!("{} failed.", tool.label()));
+            }
+            state.activity = Some("Thinking…".into());
             if success
                 && matches!(
                     tool,
@@ -1275,10 +1074,7 @@ fn handle_daemon_event(
                 }
             }
         }
-        Event::Completed { id, .. } => {
-            state.summary = RepositorySummary::load(repository);
-            state.line(format!("Completed operation {id}."));
-        }
+        Event::Completed { .. } => state.activity = Some("Finishing…".into()),
         Event::Cancelled {
             id,
             cancellation_latency_ms,
@@ -1305,6 +1101,7 @@ fn handle_daemon_event(
             }
         }
         Event::Settled { id } => {
+            state.activity = None;
             if state.active_id == Some(id) {
                 state.active_id = None;
                 state.accepted_id = None;
@@ -1380,18 +1177,13 @@ fn run(repository: PathBuf, daemon_path: PathBuf, selection_path: PathBuf) -> io
                 &daemon_stdin,
                 &diagnostics,
             )?,
-            Input::Terminal(TerminalEvent::Mouse(mouse)) => handle_mouse(
-                mouse,
-                &layout,
-                &mut state,
-                &repository,
-                &selection_path,
-                &daemon_stdin,
-            )?,
+            Input::Terminal(TerminalEvent::Mouse(mouse)) => {
+                handle_mouse(mouse, &layout, &mut state)?
+            }
             Input::Terminal(TerminalEvent::Resize(_, _)) => false,
             Input::Terminal(_) => false,
             Input::Daemon(event) => {
-                handle_daemon_event(event, &mut state, &repository, &selection_path)?;
+                handle_daemon_event(event, &mut state, &selection_path)?;
                 if state.daemon == DaemonState::Unavailable {
                     let _ = daemon.kill();
                 }
@@ -1453,13 +1245,10 @@ mod tests {
     }
 
     #[test]
-    fn toolbar_hit_targets_match_rendered_buttons() {
-        let (rendered, hits) = toolbar(120);
-        assert_eq!(rendered, " Ask    Git    Cancel ");
-        assert_eq!(hits.len(), TOOLBAR_LABELS.len());
-        assert_eq!(hits[0].action, ToolbarAction::Ask);
-        assert!(hits[0].columns.contains(&99));
-        assert_eq!(hits[1].action, ToolbarAction::Git);
+    fn resting_state_has_no_persistent_status_messages() {
+        let state = UiState::new(Path::new("."));
+        assert!(state.transcript.is_empty());
+        assert!(state.activity.is_none());
     }
 
     #[test]
@@ -1606,7 +1395,6 @@ mod tests {
                 protocol_version: PROTOCOL_VERSION,
             },
             &mut state,
-            Path::new("."),
             Path::new("unused"),
         )
         .expect("handle initialization");
@@ -1614,20 +1402,19 @@ mod tests {
     }
 
     #[test]
-    fn workbench_open_event_makes_readiness_visible() {
+    fn workbench_open_event_returns_to_the_quiet_prompt() {
         let mut state = UiState::new(Path::new("."));
+        state.activity = Some("Opening workbench…".into());
         handle_daemon_event(
             Event::WorkbenchOpened {
                 repository: PathBuf::from("/workspace/project"),
             },
             &mut state,
-            Path::new("."),
             Path::new("unused"),
         )
         .expect("handle workspace configuration");
 
-        assert!(state.transcript.iter().any(
-            |item| matches!(item, TranscriptItem::Line(line) if line.contains("Workbench ready"))
-        ));
+        assert!(state.transcript.is_empty());
+        assert!(state.activity.is_none());
     }
 }

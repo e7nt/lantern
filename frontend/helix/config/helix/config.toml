@@ -1,4 +1,4 @@
-theme = "boo_berry"
+theme = "lantern"
 
 [editor]
 bufferline = "multiple"
@@ -6,8 +6,8 @@ mouse = true
 true-color = true
 
 [editor.statusline]
-left = ["mode", "spinner", "file-name", "read-only-indicator", "file-modification-indicator"]
-right = ["diagnostics", "selections", "position", "file-encoding"]
+left = ["mode", "spinner", "file-name", "file-modification-indicator"]
+right = ["diagnostics", "position"]
 
 [keys.normal.space]
 g = ":run-shell-command lantern-lazygit"

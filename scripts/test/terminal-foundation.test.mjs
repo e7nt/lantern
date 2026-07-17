@@ -146,12 +146,13 @@ test('terminal surfaces declare one mouse-enabled interaction contract', async (
 	const launcher = await readFile(path.join(root, 'scripts/launch-lantern.sh'), 'utf8');
 
 	assert.match(helixConfig, /mouse = true/);
-	assert.match(helixConfig, /theme = "boo_berry"/);
+	assert.match(helixConfig, /theme = "lantern"/);
 	assert.match(helixConfig, /C-a = \[":lantern-export-symbol-context"/);
 	assert.match(lazygitConfig, /mouseEvents: true/);
 	assert.match(lazygitConfig, /activeBorderColor:\s+[^#]*"#C7B8E0"/s);
 	assert.match(lazygitConfig, /selectedLineBgColor:\s+[^#]*"#47345E"/s);
 	assert.match(launcher, /set-option -t "\$session" mouse on/);
+	assert.match(launcher, /set-option -t "\$session" status off/);
 	assert.match(launcher, /pane-border-status off/);
 	assert.match(launcher, /window-style 'fg=#C7B8E0,bg=#3A2A4D'/);
 });

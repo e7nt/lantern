@@ -92,29 +92,23 @@ result list to choose a file, drag across source in the right preview, and
 press `Ctrl-a`. Helix opens that previewed file with the exact dragged range
 selected, exports it, and focuses Lantern in one keypress.
 
-The quiet header keeps only clickable **Ask**, **Git**, and **Cancel** actions.
-Refresh and Quit remain explicit commands instead of permanent chrome. The
-response area scrolls with the wheel and evidence locations are clickable. Hold
-`Shift` while dragging when the terminal emulator's native text selection is
-needed.
+At rest Lantern shows only the prompt. During work that line becomes one
+transient activity message with an `Esc` cancellation hint; it does not build a
+second tool log. Git, diagnostics, refresh, and quit remain explicit commands
+instead of permanent chrome. The response area scrolls with the wheel and
+definition or exact-match locations are clickable. Hold `Shift` while dragging
+when the terminal emulator's native text selection is needed.
 
 Diagnostic commands remain available:
 
-- `/trust` shows the current session access.
-- `/trust read` allows bounded local repository reads without model
-  transmission.
-- `/trust model` allows bounded local reads and selected-evidence transmission
-  to the configured model.
-- `/trust none` immediately returns the idle session to locked state.
 - `/git` opens Lazygit.
 - `/ask <question>` captures the current primary Helix selection through the
   session-scoped bridge and streams its grounded, deterministic acknowledgement.
 - `/agent <question>` sends the selection, one LSP definition, and at most
   eight LSP references to the pinned Pi RPC driver using the selected
-  `openai-codex` model. Each compact evidence row explains whether it is the
-  selection, definition, or a bounded reference. Every range is clickable. Pi
-  receives no tools, extensions, skills, session, or ambient repository
-  context.
+  `openai-codex` model. Pi runs its explicit coding-tool allowlist inside the
+  trusted repository. Lantern keeps only a definition location in the quiet
+  transcript while Helix receives exact navigation.
 - `/preview <one-line replacement>` shows a transient unified diff for the
   selected text; closing it leaves the repository unchanged.
 - `/show <literal text>` streams bounded local evidence and selects its exact
