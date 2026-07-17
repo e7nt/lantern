@@ -1,7 +1,7 @@
 use lantern_diagnostics::{Code as DiagnosticCode, Record as DiagnosticRecord};
 use lantern_protocol::{
-    Capability, Event, Evidence, EvidenceSource, MAX_FILES, MAX_FRAME_BYTES, PROTOCOL_VERSION,
-    Request, SelectionContext, SymbolContext, SymbolLocation,
+    Event, Evidence, EvidenceSource, MAX_FILES, MAX_FRAME_BYTES, PROTOCOL_VERSION, Request,
+    SelectionContext, SymbolContext, SymbolLocation,
 };
 use std::fs;
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
@@ -74,44 +74,38 @@ impl Daemon {
         assert!(matches!(self.next(), Event::Initialized { .. }));
     }
 
-    fn configure(&mut self, repository: &Path, capabilities: Vec<Capability>) {
-        self.send(&Request::ConfigureWorkspace {
+    fn open(&mut self, repository: &Path) {
+        self.send(&Request::OpenWorkbench {
             repository: repository.to_owned(),
-            capabilities: capabilities.clone(),
         });
         match self.next() {
-            Event::WorkspaceConfigured {
+            Event::WorkbenchOpened {
                 repository: configured,
-                capabilities: configured_capabilities,
             } => {
                 assert_eq!(
                     configured,
                     repository.canonicalize().expect("canonical root")
                 );
-                assert_eq!(configured_capabilities, capabilities);
             }
-            event => panic!("expected workspace configuration, received {event:?}"),
+            event => panic!("expected workbench to open, received {event:?}"),
         }
     }
 
     fn trust_read(&mut self, repository: &Path) {
-        self.configure(repository, vec![Capability::RepositoryRead]);
+        self.open(repository);
     }
 
     fn trust_model(&mut self, repository: &Path) {
-        self.configure(
-            repository,
-            vec![Capability::RepositoryRead, Capability::NetworkAccess],
-        );
+        self.open(repository);
     }
 }
 
 #[test]
-fn golden_wire_fixtures_match_the_v4_types() {
-    for line in include_str!("../../../protocol/v4/requests.jsonl").lines() {
+fn golden_wire_fixtures_match_the_v5_types() {
+    for line in include_str!("../../../protocol/v5/requests.jsonl").lines() {
         serde_json::from_str::<Request>(line).expect("golden request must deserialize");
     }
-    for line in include_str!("../../../protocol/v4/events.jsonl").lines() {
+    for line in include_str!("../../../protocol/v5/events.jsonl").lines() {
         serde_json::from_str::<Event>(line).expect("golden event must deserialize");
     }
 }
@@ -139,9 +133,8 @@ fn diagnostics_are_structured_metadata_without_repository_content() {
         Request::Initialize {
             protocol_version: PROTOCOL_VERSION,
         },
-        Request::ConfigureWorkspace {
+        Request::OpenWorkbench {
             repository: root.clone(),
-            capabilities: vec![Capability::RepositoryRead],
         },
         Request::AskSelection {
             id: 33,
@@ -358,11 +351,10 @@ fn an_oversized_frame_is_drained_before_the_next_request() {
 }
 
 #[test]
-fn workspace_starts_locked_and_denies_before_operation_admission() {
-    let root = fixture("locked", "private evidence\n");
+fn work_requires_an_open_workbench() {
+    let root = fixture("unopened", "private evidence\n");
     let mut daemon = Daemon::spawn();
     daemon.initialize();
-    daemon.configure(&root, vec![]);
     daemon.send(&Request::Ask {
         id: 29,
         repository: root.clone(),
@@ -375,100 +367,44 @@ fn workspace_starts_locked_and_denies_before_operation_admission() {
             message,
             recovery,
         } => {
-            assert!(message.contains("repository read access is not granted"));
-            assert!(recovery.contains("/trust read"));
+            assert!(message.contains("does not belong to the open workbench"));
+            assert!(recovery.contains("open the repository"));
         }
-        event => panic!("expected a read denial, received {event:?}"),
+        event => panic!("expected an unopened-workbench denial, received {event:?}"),
     }
-    daemon.trust_read(&root);
+    daemon.open(&root);
     fs::remove_dir_all(root).expect("remove fixture");
 }
 
 #[test]
-fn model_transmission_requires_its_separate_capability() {
-    let root = fixture("transmission-denied", "fn selected() {}\n");
-    let mut daemon = Daemon::spawn();
-    daemon.initialize();
-    daemon.trust_read(&root);
-    daemon.send(&Request::AskAgentSelection {
-        id: 30,
-        repository: root.clone(),
-        query: "Explain this".into(),
-        selection: SelectionContext {
-            relative_path: "sample.rs".into(),
-            language: Some("rust".into()),
-            start_line: 1,
-            start_column: 1,
-            end_line: 1,
-            end_column: 17,
-            text: "fn selected() {}".into(),
-            document_modified: false,
-        },
-    });
-
-    match daemon.next() {
-        Event::Error {
-            id: Some(30),
-            message,
-            recovery,
-        } => {
-            assert!(message.contains("model transmission is not granted"));
-            assert!(recovery.contains("/trust model"));
-        }
-        event => panic!("expected a transmission denial, received {event:?}"),
-    }
-    fs::remove_dir_all(root).expect("remove fixture");
-}
-
-#[test]
-fn quick_ask_rejects_write_and_execution_grants() {
-    let root = fixture("unsupported-grants", "unchanged\n");
-    let mut daemon = Daemon::spawn();
-    daemon.initialize();
-    for capability in [Capability::RepositoryWrite, Capability::ProcessExecution] {
-        daemon.send(&Request::ConfigureWorkspace {
-            repository: root.clone(),
-            capabilities: vec![capability],
-        });
-        match daemon.next() {
-            Event::WorkspaceConfigurationFailed { message, .. } => {
-                assert!(message.contains("unavailable in read-only Quick Ask"));
-            }
-            event => panic!("expected a hard capability denial, received {event:?}"),
-        }
-    }
-    assert_eq!(
-        fs::read_to_string(root.join("sample.rs")).expect("read fixture"),
-        "unchanged\n"
-    );
-    daemon.configure(&root, vec![]);
-    fs::remove_dir_all(root).expect("remove fixture");
-}
-
-#[test]
-fn configured_workspace_cannot_be_retargeted() {
+fn requests_cannot_escape_the_open_workbench() {
     let root = fixture("bound-root", "root\n");
     let other = fixture("other-root", "other\n");
     let mut daemon = Daemon::spawn();
     daemon.initialize();
-    daemon.configure(&root, vec![]);
-    daemon.send(&Request::ConfigureWorkspace {
+    daemon.open(&root);
+    daemon.send(&Request::Ask {
+        id: 30,
         repository: other.clone(),
-        capabilities: vec![],
+        query: "other".into(),
     });
     match daemon.next() {
-        Event::WorkspaceConfigurationFailed { message, .. } => {
-            assert!(message.contains("workspace is bound"));
+        Event::Error {
+            id: Some(30),
+            message,
+            ..
+        } => {
+            assert!(message.contains("does not belong to the open workbench"));
         }
-        event => panic!("expected repository retarget denial, received {event:?}"),
+        event => panic!("expected repository boundary denial, received {event:?}"),
     }
     fs::remove_dir_all(root).expect("remove root fixture");
     fs::remove_dir_all(other).expect("remove other fixture");
 }
 
 #[test]
-fn trust_cannot_change_until_the_active_operation_settles() {
-    let root = fixture("trust-during-operation", "active evidence\n");
+fn workbench_cannot_change_until_the_active_operation_settles() {
+    let root = fixture("workbench-during-operation", "active evidence\n");
     let mut daemon = Daemon::spawn();
     daemon.initialize();
     daemon.trust_read(&root);
@@ -478,16 +414,15 @@ fn trust_cannot_change_until_the_active_operation_settles() {
         query: "active".into(),
     });
     assert!(matches!(daemon.next(), Event::Accepted { id: 31 }));
-    daemon.send(&Request::ConfigureWorkspace {
+    daemon.send(&Request::OpenWorkbench {
         repository: root.clone(),
-        capabilities: vec![],
     });
 
     let mut rejected_change = false;
     let mut settled = false;
     while !rejected_change || !settled {
         match daemon.next() {
-            Event::WorkspaceConfigurationFailed { message, .. } => {
+            Event::WorkbenchOpenFailed { message, .. } => {
                 assert!(message.contains("active operation"));
                 rejected_change = true;
             }
@@ -539,9 +474,8 @@ fn shutdown_cancels_and_settles_workers_before_process_exit() {
         Request::Initialize {
             protocol_version: PROTOCOL_VERSION,
         },
-        Request::ConfigureWorkspace {
+        Request::OpenWorkbench {
             repository: root.clone(),
-            capabilities: vec![Capability::RepositoryRead],
         },
         Request::Ask {
             id: 23,
@@ -562,7 +496,7 @@ fn shutdown_cancels_and_settles_workers_before_process_exit() {
         .expect("read workspace configuration");
     assert!(matches!(
         serde_json::from_str::<Event>(&line).expect("decode workspace configuration"),
-        Event::WorkspaceConfigured { .. }
+        Event::WorkbenchOpened { .. }
     ));
     line.clear();
     stdout.read_line(&mut line).expect("read acceptance");
