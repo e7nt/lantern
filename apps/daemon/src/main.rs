@@ -138,8 +138,8 @@ fn error(writer: &SharedWriter, id: Option<u64>, message: impl Into<String>, rec
 fn workspace_error(writer: &SharedWriter, message: impl Into<String>, recovery: &str) {
     let _ = diagnose(&Record::new(
         Level::Warning,
-        Component::Policy,
-        DiagnosticCode::WorkspaceRejected,
+        Component::Workbench,
+        DiagnosticCode::WorkbenchRejected,
     ));
     let _ = emit(
         writer,
@@ -1057,8 +1057,8 @@ fn main() -> io::Result<()> {
                 workbench = Some(root.clone());
                 let _ = diagnose(&Record::new(
                     Level::Info,
-                    Component::Policy,
-                    DiagnosticCode::WorkspaceConfigured,
+                    Component::Workbench,
+                    DiagnosticCode::WorkbenchOpened,
                 ));
                 emit(&writer, &Event::WorkbenchOpened { repository: root })?;
             }

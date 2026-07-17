@@ -17,7 +17,7 @@ pub enum Level {
 #[serde(rename_all = "snake_case")]
 pub enum Component {
     Daemon,
-    Policy,
+    Workbench,
     Protocol,
     Provider,
 }
@@ -29,8 +29,8 @@ pub enum Code {
     DaemonStopping,
     ProtocolInitialized,
     ProtocolRejected,
-    WorkspaceConfigured,
-    WorkspaceRejected,
+    WorkbenchOpened,
+    WorkbenchRejected,
     OperationAccepted,
     RequestFailed,
     OperationSettled,
@@ -44,8 +44,8 @@ impl Code {
             Self::DaemonStopping => "daemon stopping",
             Self::ProtocolInitialized => "protocol initialized",
             Self::ProtocolRejected => "protocol rejected",
-            Self::WorkspaceConfigured => "workspace configured",
-            Self::WorkspaceRejected => "workspace rejected",
+            Self::WorkbenchOpened => "workbench opened",
+            Self::WorkbenchRejected => "workbench rejected",
             Self::OperationAccepted => "operation accepted",
             Self::RequestFailed => "request failed",
             Self::OperationSettled => "operation settled",
