@@ -31,8 +31,8 @@ and tool vocabulary should not become user-facing ceremony.
   authentication.
 - Pi's pinned `read`, `grep`, `find`, `ls`, `edit`, `write`, and `bash` tools,
   launched inside the repository with typed activity in Lantern.
-- Successful edit/write activity opens the changed file in Helix; tool
-  completion refreshes the visible branch and change counts for Git review.
+- Successful edit/write activity opens the changed file in Helix; `Space-g` or
+  `/git` opens the focused Git review surface.
 - Streaming, cancellation, crash survival, explicit local diagnostics, and
   typed evidence provenance.
 - Deterministic software tests and versioned DeepEval contracts.

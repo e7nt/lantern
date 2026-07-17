@@ -131,9 +131,10 @@ printf -v agent_shell '%q ' "${agent_command[@]}"
 agent_pane=$(tmux split-window -v -l '20%' -P -F '#{pane_id}' \
 	-t "$editor_pane" -c "$repo" "$agent_shell")
 tmux select-pane -t "$agent_pane" -T Lantern
+tmux set-option -t "$session" status off
 tmux set-option -t "$session" pane-border-status off
-tmux set-option -t "$session" pane-border-style 'fg=#5A3D6E,bg=#3A2A4D'
-tmux set-option -t "$session" pane-active-border-style 'fg=#886C9C,bg=#3A2A4D'
+tmux set-option -t "$session" pane-border-style 'fg=#3A2A4D,bg=#3A2A4D'
+tmux set-option -t "$session" pane-active-border-style 'fg=#5A3D6E,bg=#3A2A4D'
 tmux set-window-option -t "$session" window-style 'fg=#C7B8E0,bg=#3A2A4D'
 tmux set-window-option -t "$session" window-active-style 'fg=#C7B8E0,bg=#3A2A4D'
 tmux set-option -t "$session" mouse on

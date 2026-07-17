@@ -1,0 +1,5 @@
+inherits = "boo_berry"
+
+"ui.window" = { fg = "berry_fade", bg = "berry" }
+"ui.statusline" = { fg = "berry_desaturated", bg = "berry" }
+"ui.statusline.inactive" = { fg = "berry_fade", bg = "berry" }
