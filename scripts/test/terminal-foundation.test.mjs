@@ -134,6 +134,64 @@ test('Ctrl-a focus bridge selects the Lantern pane', async () => {
 	assert.match(calls, /select-pane -t %8/);
 });
 
+test('Ctrl-a composer opens a small contextual popup', async () => {
+	const context = await fixture();
+	const result = spawnSync(path.join(frontendBin, 'lantern-agent-composer'), [], {
+		encoding: 'utf8',
+		env: {
+			...environment(context),
+			TMUX_PANE: '%7',
+			LANTERN_SELECTION_PATH: path.join(context.directory, 'selection.json')
+		}
+	});
+
+	assert.equal(result.status, 0, result.stderr);
+	const calls = await readFile(context.tmuxLog, 'utf8');
+	assert.match(calls, /display-popup -t %7 -E -w 70% -h 7 -T  Ask Lantern /);
+	assert.match(calls, /LANTERN_AGENT_PANE=%8/);
+});
+
+test('composer submits the question literally and focuses Lantern', async () => {
+	const context = await fixture();
+	const question = 'explain $(touch /tmp/never) and ; literally';
+	const result = spawnSync(
+		path.join(frontendBin, 'lantern-agent-composer'),
+		['--prompt'],
+		{
+			encoding: 'utf8',
+			input: `${question}\n`,
+			env: {
+				...environment(context),
+				TMUX_PANE: '%7',
+				LANTERN_AGENT_PANE: '%8'
+			}
+		}
+	);
+
+	assert.equal(result.status, 0, result.stderr);
+	assert.match(result.stdout, /Ask about this repository/);
+	const calls = await readFile(context.tmuxLog, 'utf8');
+	assert.ok(calls.includes(`send-keys -t %8 -l -- ${question}`));
+	assert.match(calls, /send-keys -t %8 Enter/);
+	assert.match(calls, /select-pane -t %8/);
+});
+
+test('agent zoom toggles the same Lantern pane without rebuilding the layout', async () => {
+	const context = await fixture();
+	const result = spawnSync(path.join(frontendBin, 'lantern-toggle-agent'), [], {
+		encoding: 'utf8',
+		env: {
+			...environment(context),
+			TMUX_PANE: '%7'
+		}
+	});
+
+	assert.equal(result.status, 0, result.stderr);
+	const calls = await readFile(context.tmuxLog, 'utf8');
+	assert.match(calls, /resize-pane -Z -t %8/);
+	assert.match(calls, /select-pane -t %8/);
+});
+
 test('terminal surfaces declare one mouse-enabled interaction contract', async () => {
 	const helixConfig = await readFile(
 		path.join(root, 'frontend/helix/config/helix/config.toml'),
@@ -147,7 +205,8 @@ test('terminal surfaces declare one mouse-enabled interaction contract', async (
 
 	assert.match(helixConfig, /mouse = true/);
 	assert.match(helixConfig, /theme = "lantern"/);
-	assert.match(helixConfig, /C-a = \[":lantern-export-symbol-context"/);
+	assert.match(helixConfig, /C-a = \[":lantern-export-symbol-context", ":run-shell-command lantern-agent-composer"\]/);
+	assert.match(helixConfig, /F2 = ":run-shell-command lantern-toggle-agent"/);
 	assert.match(lazygitConfig, /mouseEvents: true/);
 	assert.match(lazygitConfig, /activeBorderColor:\s+[^#]*"#C7B8E0"/s);
 	assert.match(lazygitConfig, /selectedLineBgColor:\s+[^#]*"#47345E"/s);

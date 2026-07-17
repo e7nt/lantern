@@ -1,5 +1,5 @@
 diff --git a/helix-term/src/commands/typed.rs b/helix-term/src/commands/typed.rs
-index 9a5bf971..51a85f3a 100644
+index 9a5bf971..d003b01a 100644
 --- a/helix-term/src/commands/typed.rs
 +++ b/helix-term/src/commands/typed.rs
 @@ -3,6 +3,7 @@
@@ -10,7 +10,7 @@ index 9a5bf971..51a85f3a 100644
  
  use super::*;
  
-@@ -176,6 +177,313 @@ fn open_impl(cx: &mut compositor::Context, args: Args, action: Action) -> anyhow
+@@ -176,6 +177,316 @@ fn open_impl(cx: &mut compositor::Context, args: Args, action: Action) -> anyhow
      Ok(())
  }
  
@@ -148,20 +148,23 @@ index 9a5bf971..51a85f3a 100644
 +        std::env::var_os("LANTERN_REPO").context("LANTERN_REPO is not configured")?,
 +    )
 +    .canonicalize()?;
++    let _ = std::fs::remove_file(&destination);
 +    let (view, doc) = current!(cx.editor);
 +    if doc.is_modified() {
-+        bail!("save the buffer before asking Lantern for LSP symbol context");
++        return Ok(());
 +    }
-+    let path = doc
-+        .path()
-+        .context("save the buffer before asking Lantern")?
-+        .canonicalize()?;
-+    let relative_path = path
-+        .strip_prefix(&repository)
-+        .context("selected buffer is outside the Lantern repository")?;
++    let Some(document_path) = doc.path() else {
++        return Ok(());
++    };
++    let Ok(path) = document_path.canonicalize() else {
++        return Ok(());
++    };
++    let Ok(relative_path) = path.strip_prefix(&repository) else {
++        return Ok(());
++    };
 +    let range = doc.selection(view.id).primary();
 +    if range.is_empty() {
-+        bail!("select a non-empty symbol before asking Lantern");
++        return Ok(());
 +    }
 +    let text = doc.text().slice(..);
 +    let selected_text = text.slice(range.from()..range.to()).to_string();
@@ -324,7 +327,7 @@ index 9a5bf971..51a85f3a 100644
  fn buffer_close_by_ids_impl(
      cx: &mut compositor::Context,
      doc_ids: &[DocumentId],
-@@ -3072,6 +3380,39 @@ fn noop(_cx: &mut compositor::Context, _args: Args, _event: PromptEvent) -> anyh
+@@ -3072,6 +3383,39 @@ fn noop(_cx: &mut compositor::Context, _args: Args, _event: PromptEvent) -> anyh
              ..Signature::DEFAULT
          },
      },

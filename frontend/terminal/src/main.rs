@@ -673,6 +673,14 @@ fn open_git(state: &mut UiState) {
     }
 }
 
+fn toggle_agent_zoom(state: &mut UiState) {
+    match Command::new("lantern-toggle-agent").status() {
+        Ok(status) if status.success() => {}
+        Ok(status) => state.line(format!("Could not resize Lantern: {status}.")),
+        Err(cause) => state.line(format!("Could not resize Lantern: {cause}.")),
+    }
+}
+
 fn diagnostic_state(state: DaemonState) -> DiagnosticDaemonState {
     match state {
         DaemonState::Starting => DiagnosticDaemonState::Starting,
@@ -863,6 +871,10 @@ fn handle_key(
         if state.daemon == DaemonState::Ready && state.active_id.is_none() {
             prepare_selection(state, selection_path);
         }
+        return Ok(false);
+    }
+    if key.code == KeyCode::F(2) {
+        toggle_agent_zoom(state);
         return Ok(false);
     }
     if is_quit_shortcut(key, state.active_id.is_some(), state.input.is_empty()) {

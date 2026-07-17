@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+: "${TMUX:?Lantern composer requires the Lantern tmux session}"
+
+find_agent_pane() {
+	tmux list-panes -t "${TMUX_PANE:?Lantern editor pane is not configured}" \
+		-F '#{pane_id} #{pane_title}' |
+		awk '$2 == "Lantern" { print $1; exit }'
+}
+
+submit_question() {
+	local agent_pane=$1
+	local question=$2
+	[[ -n ${question//[[:space:]]/} ]] || return 0
+	tmux send-keys -t "$agent_pane" -l -- "$question"
+	tmux send-keys -t "$agent_pane" Enter
+	tmux select-pane -t "$agent_pane"
+}
+
+if [[ ${1:-} == --prompt ]]; then
+	: "${LANTERN_AGENT_PANE:?Lantern agent pane is not configured}"
+	if [[ -s ${LANTERN_SELECTION_PATH:-} ]]; then
+		label="Ask about the selected code"
+	else
+		label="Ask about this repository"
+	fi
+	printf '\n  %s\n\n  › ' "$label"
+	IFS= read -r question || exit 0
+	submit_question "$LANTERN_AGENT_PANE" "$question"
+	exit 0
+fi
+
+agent_pane=$(find_agent_pane)
+if [[ -z $agent_pane ]]; then
+	echo "Lantern agent pane is not available." >&2
+	exit 1
+fi
+
+printf -v popup_command '%q --prompt' "$0"
+tmux display-popup -t "$TMUX_PANE" -E -w '70%' -h 7 \
+	-T ' Ask Lantern ' \
+	-e "LANTERN_AGENT_PANE=$agent_pane" \
+	-e "LANTERN_SELECTION_PATH=${LANTERN_SELECTION_PATH:-}" \
+	"$popup_command"

@@ -22,6 +22,8 @@ and tool vocabulary should not become user-facing ceremony.
 - Reproducible pinned Helix and Lazygit preparation.
 - The 80/20 Helix/agent composition and on-demand 10% Lazygit rail.
 - Mouse and keyboard interaction across the surfaces.
+- A `Ctrl-a` contextual composer over Helix and reversible `F2` full-screen
+  reading mode for the persistent agent pane.
 - Maintained Rust terminal, daemon, diagnostics, and Protocol v6 crates.
 - Selection capture, exact navigation, bounded local literal search, and
   Helix-provided definition/reference context.
