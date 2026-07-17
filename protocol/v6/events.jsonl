@@ -1,0 +1,15 @@
+{"type":"initialized","protocol_version":6}
+{"type":"workbench_opened","repository":"/workspace/project"}
+{"type":"workbench_open_failed","message":"cannot open repository","recovery":"open an existing repository and retry"}
+{"type":"accepted","id":1}
+{"type":"operation_started","id":1,"search_term":"Pi gpt-5"}
+{"type":"progress","id":1,"files_inspected":25}
+{"type":"evidence","id":1,"evidence":{"source":"definition","relative_path":"src/lib.rs","start_line":4,"start_column":4,"end_line":4,"end_column":10,"excerpt":"fn answer() {}"}}
+{"type":"change_proposal","id":1,"proposal":{"selection":{"relative_path":"src/lib.rs","language":"rust","start_line":4,"start_column":1,"end_line":4,"end_column":13,"text":"fn answer()","document_modified":false},"replacement":"fn explain()"}}
+{"type":"text_delta","id":1,"delta":"The definition is here."}
+{"type":"tool_started","id":1,"tool":"read","relative_path":"src/lib.rs"}
+{"type":"tool_finished","id":1,"tool":"read","relative_path":"src/lib.rs","success":true}
+{"type":"completed","id":1,"evidence_count":0}
+{"type":"settled","id":1}
+{"type":"cancelled","id":5,"cancellation_latency_ms":12}
+{"type":"error","id":null,"message":"invalid protocol request","recovery":"send one valid JSON request per line"}

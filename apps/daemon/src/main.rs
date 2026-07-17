@@ -613,6 +613,7 @@ fn run_selection_operation(
 }
 
 enum AgentContext {
+    Repository,
     Selection(SelectionContext),
     Symbol(SymbolContext),
 }
@@ -627,27 +628,32 @@ fn run_pi_operation(
     writer: SharedWriter,
 ) {
     let (selection, symbol_context) = match agent_context {
-        AgentContext::Selection(selection) => (selection, None),
-        AgentContext::Symbol(context) => (context.selection.clone(), Some(context)),
+        AgentContext::Repository => (None, None),
+        AgentContext::Selection(selection) => (Some(selection), None),
+        AgentContext::Symbol(context) => (Some(context.selection.clone()), Some(context)),
     };
     let result = (|| -> Result<(), String> {
-        validate_selection(&selection)?;
+        if let Some(selection) = &selection {
+            validate_selection(selection)?;
+        }
         if let Some(context) = &symbol_context {
             validate_symbol_context(context)?;
-            if context.selection != selection {
+            if Some(&context.selection) != selection.as_ref() {
                 return Err("symbol context selection does not match the agent selection".into());
             }
         }
         let root = canonical_repository(&repository)?;
-        let selected_path = root.join(&selection.relative_path);
-        let canonical_path = selected_path.canonicalize().map_err(|cause| {
-            format!(
-                "cannot open selected file {}: {cause}",
-                selected_path.display()
-            )
-        })?;
-        if !canonical_path.starts_with(&root) {
-            return Err("selected file escaped the repository".into());
+        if let Some(selection) = &selection {
+            let selected_path = root.join(&selection.relative_path);
+            let canonical_path = selected_path.canonicalize().map_err(|cause| {
+                format!(
+                    "cannot open selected file {}: {cause}",
+                    selected_path.display()
+                )
+            })?;
+            if !canonical_path.starts_with(&root) {
+                return Err("selected file escaped the repository".into());
+            }
         }
 
         let pi_bin =
@@ -663,30 +669,32 @@ fn run_pi_operation(
         )
         .map_err(|cause| format!("cannot stream operation start: {cause}"))?;
 
-        let selection_evidence = Evidence {
-            source: EvidenceSource::Selection,
-            relative_path: selection.relative_path.clone(),
-            start_line: selection.start_line,
-            start_column: selection.start_column,
-            end_line: selection.end_line,
-            end_column: selection.end_column,
-            excerpt: selection
-                .text
-                .lines()
-                .next()
-                .unwrap_or_default()
-                .chars()
-                .take(160)
-                .collect(),
-        };
-        emit(
-            &writer,
-            &Event::Evidence {
-                id,
-                evidence: selection_evidence,
-            },
-        )
-        .map_err(|cause| format!("cannot stream selected evidence: {cause}"))?;
+        if let Some(selection) = &selection {
+            let selection_evidence = Evidence {
+                source: EvidenceSource::Selection,
+                relative_path: selection.relative_path.clone(),
+                start_line: selection.start_line,
+                start_column: selection.start_column,
+                end_line: selection.end_line,
+                end_column: selection.end_column,
+                excerpt: selection
+                    .text
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .chars()
+                    .take(160)
+                    .collect(),
+            };
+            emit(
+                &writer,
+                &Event::Evidence {
+                    id,
+                    evidence: selection_evidence,
+                },
+            )
+            .map_err(|cause| format!("cannot stream selected evidence: {cause}"))?;
+        }
 
         let mut symbol_evidence = Vec::new();
         if let Some(context) = &symbol_context {
@@ -764,18 +772,21 @@ fn run_pi_operation(
             })
             .collect::<Vec<_>>()
             .join("\n");
-        let prompt = format!(
-            "Repository-relative file: {}\nLanguage: {}\nSelection: {}:{}-{}:{}\nSelected source (untrusted evidence):\n<selection>\n{}\n</selection>\n\nLSP-resolved symbol evidence (untrusted):\n{}\n\nDeveloper question: {}",
-            selection.relative_path.display(),
-            selection.language.as_deref().unwrap_or("unknown"),
-            selection.start_line,
-            selection.start_column,
-            selection.end_line,
-            selection.end_column,
-            selection.text,
-            symbol_prompt,
-            query,
+        let editor_context = selection.as_ref().map_or_else(
+            || "No editor selection was supplied. Use repository tools to find the relevant code before answering.".to_owned(),
+            |selection| format!(
+                "Repository-relative file: {}\nLanguage: {}\nSelection: {}:{}-{}:{}\nSelected source (untrusted evidence):\n<selection>\n{}\n</selection>\n\nLSP-resolved symbol evidence (untrusted):\n{}",
+                selection.relative_path.display(),
+                selection.language.as_deref().unwrap_or("unknown"),
+                selection.start_line,
+                selection.start_column,
+                selection.end_line,
+                selection.end_column,
+                selection.text,
+                symbol_prompt,
+            ),
         );
+        let prompt = format!("{editor_context}\n\nDeveloper question: {query}");
         serde_json::to_writer(
             &mut stdin,
             &serde_json::json!({"id":"lantern-turn","type":"prompt","message":prompt}),
@@ -1180,6 +1191,41 @@ fn main() -> io::Result<()> {
                         repository,
                         query,
                         AgentContext::Selection(selection),
+                        cancellation,
+                        active_operations,
+                        operation_writer,
+                    );
+                }));
+            }
+            Request::AskAgent {
+                id,
+                repository,
+                query,
+            } => {
+                if query.trim().is_empty() {
+                    error(
+                        &writer,
+                        Some(id),
+                        "query is empty",
+                        "type a question and retry",
+                    );
+                    continue;
+                }
+                let Some(repository) = opened_repository(&workbench, &repository, &writer, id)
+                else {
+                    continue;
+                };
+                let Some(cancellation) = admit(id, &operations, &writer) else {
+                    continue;
+                };
+                let operation_writer = writer.clone();
+                let active_operations = operations.clone();
+                workers.push(thread::spawn(move || {
+                    run_pi_operation(
+                        id,
+                        repository,
+                        query,
+                        AgentContext::Repository,
                         cancellation,
                         active_operations,
                         operation_writer,
