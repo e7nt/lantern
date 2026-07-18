@@ -57,12 +57,30 @@ restored directly from off to medium, while an answer that requests a tool is
 raised to medium before the tool result and restored after settlement. Existing
 repository coding journeys continue to run at medium reasoning.
 
+## Incomplete-evidence baseline
+
+Dataset v2 asks how Helix presents multiple definition locations. The supplied
+selection and definition evidence deliberately omit `goto_impl`, `Picker`, and
+`jump_to_location`, so a direct answer cannot satisfy the contract.
+
+| Run | Tools | First activity | First text | Settled | Three-second gate |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 1 | 3 (`grep`, `read`, `read`) | 3,586 ms | 10,176 ms | 11,581 ms | fail |
+| 2 | 3 (`grep`, `read`, `read`) | 3,223 ms | 10,658 ms | 11,910 ms | fail |
+| 3 | 3 (`grep`, `read`, `read`) | 2,932 ms | 7,570 ms | 10,036 ms | pass |
+
+All three answers contained `Picker` and `jump_to_location`, completed without
+mutation, and stayed within the three-tool ceiling. The escalation boundary is
+working; the 3,223 ms median and repeated discovery/read sequence remain a
+failing optimization target. The gate was not relaxed.
+
 ## Next evidence required
 
 Continue expanding curated cases that separate:
 
 - fully sufficient selection/definition/reference evidence;
-- evidence requiring one targeted repository read; and
+- evidence requiring targeted repository work (now represented by the failing
+  Helix multiple-location case); and
 - multi-step work where medium reasoning materially improves correctness.
 
 Keep the three-second gate strict and investigate observed outliers rather than

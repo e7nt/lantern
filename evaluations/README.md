@@ -38,8 +38,10 @@ Helix/LSP selection, definition, and reference context on the pinned Helix and
 Lazygit checkouts under `.lantern/upstream`. It fails if a checkout or revision
 does not match, runs both modes through the same daemon and Pi adapter, verifies
 read-only repository state, and reports LSP-minus-exact latency and tool-count
-deltas. Prepare the pinned upstream repositories using the normal Lantern setup
-before running it.
+deltas. Dataset v2 also includes an intentionally incomplete symbol question:
+it requires bounded tool escalation and measures first useful activity instead
+of pretending a direct answer is possible. Prepare the pinned upstream
+repositories using the normal Lantern setup before running it.
 
 The versioned datasets cover missing-context selections, bounded LSP symbol
 context, and efficient coding-tool journeys. They check properties that do not require a judge:

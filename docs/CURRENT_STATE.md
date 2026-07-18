@@ -75,10 +75,10 @@ opening line 1.
 
 Implement next:
 
-1. Expand the external baseline with incomplete and multi-step LSP questions,
-   repeated enough to expose provider variance and verify targeted escalation.
-2. Reduce the remaining first-text outliers for sufficient-evidence answers
-   without weakening the strict three-second gate.
+1. Reduce the incomplete-evidence Helix case from a repeated three-tool
+   grep/read/read sequence to the narrowest grounded lookup.
+2. Reduce remaining first-activity outliers without weakening the strict
+   three-second gate, then repeat the multi-step live journey at medium.
 3. Spike semantic/vector retrieval only for a measured miss; do not add it to
    the current passing cases.
 
@@ -112,6 +112,11 @@ reasoning disabled and escalate to medium before the first requested tool;
 repository and multi-step turns remain at medium. Three repeated Lazygit runs
 began text in 3.32, 2.40, and 2.23 seconds (2.40-second median), remained
 grounded, and used no tools. The strict per-run gate remains unchanged.
+The version 2 retrieval dataset adds intentionally incomplete Helix evidence.
+Across three live runs it correctly escalated, remained grounded and read-only,
+and used three bounded tools, but first activity arrived in 3.59, 3.22, and
+2.93 seconds. Its 3.22-second median is a recorded failure and the next measured
+optimization target.
 
 An incremental hybrid repository index remains conditional. Add
 semantic/vector retrieval or commit-synchronized summaries only when a curated
