@@ -1,0 +1,25 @@
+{
+  "dataset": "live_trace",
+  "version": 1,
+  "fixture": {
+    "src/admission.rs": "pub fn admit_request(token: Option<&str>) -> Result<(), &'static str> {\n    match token {\n        Some(value) if value.starts_with(\"Bearer \") => Ok(()),\n        _ => Err(\"missing bearer token\"),\n    }\n}\n",
+    "src/server.rs": "use crate::admission::admit_request;\n\npub fn handle_request(token: Option<&str>) -> u16 {\n    match admit_request(token) {\n        Ok(()) => 200,\n        Err(_) => 401,\n    }\n}\n",
+    "src/lib.rs": "mod admission;\nmod server;\n"
+  },
+  "explanation": {
+    "id": "grounded-request-admission",
+    "question": "Where is request admission enforced, and how does a missing token become an HTTP response? Show me the relevant code.",
+    "required_answer_terms": ["admission", "401"],
+    "required_path": "src/admission.rs",
+    "forbidden_tools": ["edit", "write"],
+    "max_tool_calls": 6,
+    "max_settled_ms": 30000
+  },
+  "interruption": {
+    "id": "interrupt-active-inspection",
+    "question": "Inspect the repository files and explain every step in the request admission flow.",
+    "cancel_after": "tool_started",
+    "max_cancellation_ms": 500,
+    "max_post_cancel_settled_ms": 1000
+  }
+}

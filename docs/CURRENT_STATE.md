@@ -66,11 +66,18 @@ opening line 1.
 
 Implement next:
 
-1. Extend DeepEval from deterministic trace contracts to an explicit live
-   trace runner for natural explanation, grounding, efficiency, and interruption.
-2. Establish measured LSP and exact-search baselines on representative external
+1. Establish measured LSP and exact-search baselines on representative external
    repositories.
-3. Spike semantic/vector retrieval only for questions those baselines miss.
+2. Spike semantic/vector retrieval only for questions those baselines miss.
+
+The explicit live trace runner now exercises a natural repository explanation
+and active interruption through the real Protocol v6 daemon. It records
+grounding, bounded tool activity, time to first tool and response text, settling
+time, cancellation latency, the dataset hash, and the Lantern revision in an
+ignored local report. The initial repeated baseline is recorded in
+[the 2026-07-18 live trace report](acceptance/2026-07-18-live-trace-baseline.md):
+grounding and interruption passed, while one repetition correctly failed the
+tool-efficiency ceiling instead of having its budget relaxed.
 
 After that journey works, spike the incremental hybrid repository index. Start
 with measured LSP/exact baselines, then add semantic/vector retrieval and

@@ -18,11 +18,18 @@ Run the live, subscription-authenticated Pi driver against the versioned cases:
 ```bash
 cd evaluations
 DEEPEVAL_DISABLE_DOTENV=1 uv run python run_pi_quick_ask.py
+DEEPEVAL_DISABLE_DOTENV=1 uv run python run_live_trace.py
 ```
 
 This requires Pi `0.80.6` and a private OpenAI Codex login completed through
 Pi's interactive `/login` flow. It writes a local timestamped report under
 `reports/` and exits unsuccessfully when any deterministic contract fails.
+Build Lantern first with `cargo build`; `run_live_trace.py` then exercises the
+real daemon through Protocol v6. It measures a grounded repository explanation,
+repository-relative evidence use, tool efficiency, time to first tool and text,
+settling time, and cancellation while a tool-driven turn is active. Override
+the binaries explicitly with `LANTERN_DAEMON_BIN` or `LANTERN_PI_BIN`; the
+runner never chooses a fallback binary or provider.
 
 The versioned datasets cover missing-context selections, bounded LSP symbol
 context, and efficient coding-tool journeys. They check properties that do not require a judge:
