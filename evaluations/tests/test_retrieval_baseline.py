@@ -7,7 +7,7 @@ from run_retrieval_baseline import comparison, evaluate_result
 
 
 DATASET_PATH = Path(__file__).parents[1] / "datasets" / "retrieval_baseline" / "v2.json"
-CALL_DATASET_PATH = Path(__file__).parents[1] / "datasets" / "retrieval_baseline" / "v4.json"
+CALL_DATASET_PATH = Path(__file__).parents[1] / "datasets" / "retrieval_baseline" / "v5.json"
 
 
 @pytest.fixture(scope="module")
@@ -61,14 +61,16 @@ def test_dataset_pins_external_repositories_and_explicit_lsp_budgets(
 
 def test_call_hierarchy_dataset_requires_typed_call_evidence() -> None:
     dataset = json.loads(CALL_DATASET_PATH.read_text(encoding="utf-8"))
-    assert dataset["version"] == 4
+    assert dataset["version"] == 5
     assert {case["context"]["selection"]["language"] for case in dataset["cases"]} == {
-        "go",
-        "rust",
+        "javascript",
+        "python",
+        "typescript",
     }
     for case in dataset["cases"]:
+        assert case["remote"].startswith("https://github.com/")
         assert case["required_lsp_evidence_sources"] == ["definition", "call"]
-        assert {call["depth"] for call in case["context"]["calls"]} == {1, 2}
+        assert 1 in {call["depth"] for call in case["context"]["calls"]}
         assert case["max_lsp_tool_calls"] == 0
 
 
@@ -91,12 +93,12 @@ def test_retrieval_contract_rejects_missing_definition_evidence(cases: list[dict
 def test_call_hierarchy_contract_rejects_missing_call_evidence() -> None:
     case = json.loads(CALL_DATASET_PATH.read_text(encoding="utf-8"))["cases"][0]
     result = {
-        "answer": "Picker jump_to_location",
+        "answer": " ".join(case["required_answer_terms"]),
         "tools": [],
         "evidence": [
             {
                 "source": "definition",
-                "relative_path": "helix-term/src/commands/lsp.rs",
+                "relative_path": case["required_paths"][0],
             }
         ],
         "first_tool_ms": None,
@@ -108,11 +110,12 @@ def test_call_hierarchy_contract_rejects_missing_call_evidence() -> None:
     passed, failures = evaluate_result(result, case, "lsp")
     assert not passed
     assert any("'call'" in failure for failure in failures)
-    result["evidence"].append(
+    result["evidence"].extend(
         {
             "source": "call",
-            "relative_path": "helix-term/src/commands/lsp.rs",
+            "relative_path": path,
         }
+        for path in case["required_paths"]
     )
     passed, failures = evaluate_result(result, case, "lsp")
     assert passed, failures

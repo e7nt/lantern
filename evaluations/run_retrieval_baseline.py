@@ -29,7 +29,7 @@ from run_live_trace import (
 
 
 ROOT = Path(__file__).parent
-DATASET_PATH = ROOT / "datasets" / "retrieval_baseline" / "v4.json"
+DATASET_PATH = ROOT / "datasets" / "retrieval_baseline" / "v5.json"
 
 
 def repository_status(repository: Path) -> str:
@@ -46,9 +46,13 @@ def repository_status(repository: Path) -> str:
 def require_repository(case: dict) -> Path:
     repository = (PROJECT_ROOT / case["repository"]).resolve()
     if not repository.is_dir():
+        preparation = "prepare the pinned reference repositories first"
+        if "remote" in case:
+            preparation = (
+                f"clone {case['remote']} to {case['repository']} and check out {case['revision']}"
+            )
         raise RuntimeError(
-            f"{case['id']} requires {case['repository']} at {case['revision']}; "
-            "prepare the pinned reference repositories first"
+            f"{case['id']} requires {case['repository']} at {case['revision']}; {preparation}"
         )
     revision = subprocess.run(
         ["git", "rev-parse", "HEAD"],
