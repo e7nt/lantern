@@ -75,11 +75,10 @@ opening line 1.
 
 Implement next:
 
-1. Expand the external baseline with sufficient, incomplete, and multi-step LSP
-   questions, repeated enough to compare reasoning levels without hiding
-   variance.
-2. Dynamically use lower reasoning only if it preserves grounding and coding
-   quality while bringing sufficient-evidence answers below three seconds.
+1. Expand the external baseline with incomplete and multi-step LSP questions,
+   repeated enough to expose provider variance and verify targeted escalation.
+2. Reduce the remaining first-text outliers for sufficient-evidence answers
+   without weakening the strict three-second gate.
 3. Spike semantic/vector retrieval only for a measured miss; do not add it to
    the current passing cases.
 
@@ -108,9 +107,11 @@ does not justify a semantic index yet.
 [The evidence-first LSP report](acceptance/2026-07-18-evidence-first-lsp.md)
 records zero-tool grounded answers on both repositories. Helix began text in
 2.37 seconds. Lazygit required no tools after call-site enrichment but began in
-3.46 and 4.53 seconds at medium reasoning. A low-reasoning diagnostic passed at
-2.46 seconds, but Lantern has not traded general coding quality for that result
-without broader evidence.
+3.46 and 4.53 seconds at medium reasoning. Symbol-grounded turns now begin with
+reasoning disabled and escalate to medium before the first requested tool;
+repository and multi-step turns remain at medium. Three repeated Lazygit runs
+began text in 3.32, 2.40, and 2.23 seconds (2.40-second median), remained
+grounded, and used no tools. The strict per-run gate remains unchanged.
 
 An incremental hybrid repository index remains conditional. Add
 semantic/vector retrieval or commit-synchronized summaries only when a curated
