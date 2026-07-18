@@ -127,11 +127,13 @@ def run_operation(
     operation_id: int,
     question: str,
     cancel_after: str | None = None,
+    request: dict | None = None,
 ) -> dict:
     started = time.monotonic()
     send(
         process,
-        {
+        request
+        or {
             "method": "ask_agent",
             "id": operation_id,
             "repository": str(repository),
@@ -141,6 +143,7 @@ def run_operation(
     deadline = started + TURN_TIMEOUT_SECONDS
     answer: list[str] = []
     tools: list[dict] = []
+    evidence: list[dict] = []
     first_tool_ms = None
     first_text_ms = None
     outcome = None
@@ -156,6 +159,13 @@ def run_operation(
         if event_type == "tool_started":
             first_tool_ms = first_tool_ms or elapsed_ms
             tools.append({"tool": event["tool"], "relative_path": event.get("relative_path")})
+        elif event_type == "evidence":
+            evidence.append(
+                {
+                    "source": event["evidence"]["source"],
+                    "relative_path": event["evidence"]["relative_path"],
+                }
+            )
         elif event_type == "text_delta":
             first_text_ms = first_text_ms or elapsed_ms
             answer.append(event["delta"])
@@ -172,6 +182,7 @@ def run_operation(
             return {
                 "answer": "".join(answer).strip(),
                 "tools": tools,
+                "evidence": evidence,
                 "first_tool_ms": first_tool_ms,
                 "first_text_ms": first_text_ms,
                 "settled_ms": elapsed_ms,

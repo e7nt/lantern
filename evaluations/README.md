@@ -19,6 +19,7 @@ Run the live, subscription-authenticated Pi driver against the versioned cases:
 cd evaluations
 DEEPEVAL_DISABLE_DOTENV=1 uv run python run_pi_quick_ask.py
 DEEPEVAL_DISABLE_DOTENV=1 uv run python run_live_trace.py
+DEEPEVAL_DISABLE_DOTENV=1 uv run python run_retrieval_baseline.py
 ```
 
 This requires Pi `0.80.6` and a private OpenAI Codex login completed through
@@ -30,6 +31,14 @@ repository-relative evidence use, tool efficiency, time to first tool and text,
 settling time, and cancellation while a tool-driven turn is active. Override
 the binaries explicitly with `LANTERN_DAEMON_BIN` or `LANTERN_PI_BIN`; the
 runner never chooses a fallback binary or provider.
+
+`run_retrieval_baseline.py` compares repository-only exact discovery with typed
+Helix/LSP selection, definition, and reference context on the pinned Helix and
+Lazygit checkouts under `.lantern/upstream`. It fails if a checkout or revision
+does not match, runs both modes through the same daemon and Pi adapter, verifies
+read-only repository state, and reports LSP-minus-exact latency and tool-count
+deltas. Prepare the pinned upstream repositories using the normal Lantern setup
+before running it.
 
 The versioned datasets cover missing-context selections, bounded LSP symbol
 context, and efficient coding-tool journeys. They check properties that do not require a judge:

@@ -1,0 +1,88 @@
+{
+  "dataset": "retrieval_baseline",
+  "version": 1,
+  "cases": [
+    {
+      "id": "helix-goto-definition",
+      "repository": ".lantern/upstream/helix",
+      "revision": "14d6bc0febed9c692048271a8ae2362ac969c6e0",
+      "question": "Which language-server capability guards this goto_definition call, and which LSP request type does the client send?",
+      "required_answer_terms": ["definition_provider", "GotoDefinition"],
+      "required_paths": [
+        "helix-term/src/commands/lsp.rs",
+        "helix-lsp/src/client.rs"
+      ],
+      "max_tool_calls": 8,
+      "max_settled_ms": 45000,
+      "context": {
+        "selection": {
+          "relative_path": "helix-term/src/commands/lsp.rs",
+          "language": "rust",
+          "start_line": 1024,
+          "start_column": 30,
+          "end_line": 1024,
+          "end_column": 45,
+          "text": "goto_definition",
+          "document_modified": false
+        },
+        "definition": {
+          "relative_path": "helix-lsp/src/client.rs",
+          "start_line": 1475,
+          "start_column": 5,
+          "end_line": 1495,
+          "end_column": 6
+        },
+        "references": [
+          {
+            "relative_path": "helix-term/src/commands/typed.rs",
+            "start_line": 357,
+            "start_column": 14,
+            "end_line": 357,
+            "end_column": 29
+          }
+        ]
+      }
+    },
+    {
+      "id": "lazygit-gui-construction",
+      "repository": ".lantern/upstream/lazygit",
+      "revision": "080da5cacfcff63a89ea23493bb91b11b0612876",
+      "question": "Where is this GUI constructed during application startup, and what does NewGui return?",
+      "required_answer_terms": ["pkg/app/app.go", "*Gui", "error"],
+      "required_paths": [
+        "pkg/app/app.go",
+        "pkg/gui/gui.go"
+      ],
+      "max_tool_calls": 8,
+      "max_settled_ms": 45000,
+      "context": {
+        "selection": {
+          "relative_path": "pkg/app/app.go",
+          "language": "go",
+          "start_line": 137,
+          "start_column": 21,
+          "end_line": 137,
+          "end_column": 27,
+          "text": "NewGui",
+          "document_modified": false
+        },
+        "definition": {
+          "relative_path": "pkg/gui/gui.go",
+          "start_line": 781,
+          "start_column": 1,
+          "end_line": 790,
+          "end_column": 17
+        },
+        "references": [
+          {
+            "relative_path": "pkg/gui/dummies.go",
+            "start_line": 20,
+            "start_column": 17,
+            "end_line": 20,
+            "end_column": 23
+          }
+        ]
+      }
+    }
+  ]
+}
