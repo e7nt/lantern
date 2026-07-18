@@ -42,3 +42,25 @@ rejects repeated discovery traces.
 
 No source, prompt, command output, credential, absolute repository path, or
 provider diagnostic is recorded here.
+
+## Protocol v7 revalidation
+
+The versioned external-edit runner repeated the full journey with typed
+`handleRequest → statusFor` call evidence:
+
+- tools: `read`, `find`, `grep`, `edit`, `edit`, `bash`;
+- first tool: 3,670 ms;
+- first response text: 10,730 ms;
+- settled: 11,656 ms;
+- exact implementation and focused test changes: passed;
+- focused Node verification: passed;
+- review state: two expected unstaged files and no staged files;
+- evidence: selection, call, definition, and reference;
+- cancellation acknowledgement: 13 ms;
+- post-cancellation settlement: 14 ms;
+- interrupted repository state: unchanged.
+
+The call evidence led directly to the implementation read. The model still used
+bounded discovery to locate the focused test before editing it. The journey
+remained within the eight-tool ceiling, and the deterministic protocol test
+proves reasoning is raised to medium before the first tool result.

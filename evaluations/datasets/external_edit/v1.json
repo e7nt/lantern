@@ -1,0 +1,64 @@
+{
+  "dataset": "external_edit",
+  "version": 1,
+  "fixture": {
+    "src/app.js": "import { handleRequest } from \"./router.js\";\nexport const responseFor = path => handleRequest(path);\n",
+    "src/router.js": "import { statusFor } from \"./status.js\";\nexport function handleRequest(path) {\n  return statusFor(path);\n}\n",
+    "src/status.js": "export function statusFor(path) {\n  return path === \"/health\" ? 200 : 404;\n}\n",
+    "status.test.mjs": "import assert from \"node:assert/strict\";\nimport { handleRequest } from \"./src/router.js\";\nassert.equal(handleRequest(\"/missing\"), 404);\nassert.equal(handleRequest(\"/health\"), 200);\n",
+    "README.md": "# Router fixture\n\nInterruption must leave repository state unchanged.\n"
+  },
+  "question": "Change unknown routes to return 410 instead of 404. Update the focused test expectation and run it with node status.test.mjs.",
+  "interruption_question": "Read README.md and explain its interruption requirement. Do not edit anything.",
+  "context": {
+    "selection": {
+      "relative_path": "src/router.js",
+      "language": "javascript",
+      "start_line": 2,
+      "start_column": 17,
+      "end_line": 2,
+      "end_column": 30,
+      "text": "handleRequest",
+      "document_modified": false
+    },
+    "definition": {
+      "relative_path": "src/router.js",
+      "start_line": 2,
+      "start_column": 17,
+      "end_line": 2,
+      "end_column": 30
+    },
+    "references": [
+      {
+        "relative_path": "src/app.js",
+        "start_line": 2,
+        "start_column": 36,
+        "end_line": 2,
+        "end_column": 49
+      }
+    ],
+    "calls": [
+      {
+        "name": "statusFor",
+        "depth": 1,
+        "location": {
+          "relative_path": "src/status.js",
+          "start_line": 1,
+          "start_column": 17,
+          "end_line": 1,
+          "end_column": 26
+        }
+      }
+    ]
+  },
+  "expected_files": {
+    "src/status.js": "export function statusFor(path) {\n  return path === \"/health\" ? 200 : 410;\n}\n",
+    "status.test.mjs": "import assert from \"node:assert/strict\";\nimport { handleRequest } from \"./src/router.js\";\nassert.equal(handleRequest(\"/missing\"), 410);\nassert.equal(handleRequest(\"/health\"), 200);\n"
+  },
+  "required_tool_order": ["read", "edit", "bash"],
+  "max_tool_calls": 8,
+  "max_first_tool_ms": 5000,
+  "max_settled_ms": 30000,
+  "max_cancellation_ms": 500,
+  "max_post_cancel_settled_ms": 1000
+}
