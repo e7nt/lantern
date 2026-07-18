@@ -238,7 +238,15 @@ struct Layout {
 struct TranscriptRow {
     text: String,
     evidence: Option<(usize, Evidence)>,
-    muted: bool,
+    style: RowStyle,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RowStyle {
+    Normal,
+    Muted,
+    Heading,
+    Code,
 }
 
 fn send_request(stdin: &Arc<Mutex<BufWriter<ChildStdin>>>, request: &Request) -> io::Result<()> {
@@ -292,6 +300,44 @@ fn evidence_source_text(source: EvidenceSource) -> (&'static str, &'static str) 
     }
 }
 
+fn answer_rows(text: &str, width: usize) -> Vec<TranscriptRow> {
+    let mut rows = Vec::new();
+    let mut in_code_block = false;
+    for line in text.split('\n') {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") {
+            in_code_block = !in_code_block;
+            continue;
+        }
+        let (display, style) = if in_code_block {
+            (format!("  {line}"), RowStyle::Code)
+        } else if let Some(heading) = trimmed.strip_prefix("### ") {
+            (heading.to_owned(), RowStyle::Heading)
+        } else if let Some(heading) = trimmed.strip_prefix("## ") {
+            (heading.to_owned(), RowStyle::Heading)
+        } else if let Some(heading) = trimmed.strip_prefix("# ") {
+            (heading.to_owned(), RowStyle::Heading)
+        } else if let Some(item) = trimmed
+            .strip_prefix("- ")
+            .or_else(|| trimmed.strip_prefix("* "))
+        {
+            (format!("• {item}"), RowStyle::Normal)
+        } else {
+            (line.to_owned(), RowStyle::Normal)
+        };
+        rows.extend(
+            wrap_text(&display, width)
+                .into_iter()
+                .map(|text| TranscriptRow {
+                    text,
+                    evidence: None,
+                    style,
+                }),
+        );
+    }
+    rows
+}
+
 fn flattened_transcript(state: &UiState, width: usize) -> Vec<TranscriptRow> {
     let mut rows = Vec::new();
     let mut evidence_index = 0;
@@ -304,20 +350,12 @@ fn flattened_transcript(state: &UiState, width: usize) -> Vec<TranscriptRow> {
                         .map(|text| TranscriptRow {
                             text,
                             evidence: None,
-                            muted: true,
+                            style: RowStyle::Muted,
                         }),
                 );
             }
             TranscriptItem::Answer { text, .. } => {
-                rows.extend(
-                    wrap_text(text, width)
-                        .into_iter()
-                        .map(|text| TranscriptRow {
-                            text,
-                            evidence: None,
-                            muted: false,
-                        }),
-                );
+                rows.extend(answer_rows(text, width));
             }
             TranscriptItem::Evidence(evidence) => {
                 let (source, reason) = evidence_source_text(evidence.source);
@@ -335,7 +373,7 @@ fn flattened_transcript(state: &UiState, width: usize) -> Vec<TranscriptRow> {
                         .map(|text| TranscriptRow {
                             text,
                             evidence: Some((evidence_index, evidence.clone())),
-                            muted: false,
+                            style: RowStyle::Normal,
                         }),
                 );
                 evidence_index += 1;
@@ -376,8 +414,17 @@ fn render(state: &UiState) -> io::Result<Layout> {
             if state.selected_evidence == Some(*index) {
                 queue!(stdout, SetAttribute(Attribute::Reverse))?;
             }
-        } else if transcript_row.muted {
-            queue!(stdout, SetForegroundColor(MUTED))?;
+        } else {
+            match transcript_row.style {
+                RowStyle::Normal => {}
+                RowStyle::Muted => queue!(stdout, SetForegroundColor(MUTED))?,
+                RowStyle::Heading => queue!(
+                    stdout,
+                    SetForegroundColor(ACCENT),
+                    SetAttribute(Attribute::Bold)
+                )?,
+                RowStyle::Code => queue!(stdout, SetForegroundColor(LINK))?,
+            }
         }
         queue!(
             stdout,
@@ -389,8 +436,13 @@ fn render(state: &UiState) -> io::Result<Layout> {
                 queue!(stdout, SetAttribute(Attribute::NoReverse))?;
             }
             queue!(stdout, SetForegroundColor(TEXT))?;
-        } else if transcript_row.muted {
-            queue!(stdout, SetForegroundColor(TEXT))?;
+        } else {
+            if transcript_row.style == RowStyle::Heading {
+                queue!(stdout, SetAttribute(Attribute::NoBold))?;
+            }
+            if transcript_row.style != RowStyle::Normal {
+                queue!(stdout, SetForegroundColor(TEXT))?;
+            }
         }
     }
 
@@ -1410,6 +1462,29 @@ mod tests {
     #[test]
     fn wrapping_preserves_explicit_blank_lines() {
         assert_eq!(wrap_text("abcd\n\nef", 2), ["ab", "cd", "", "ef"]);
+    }
+
+    #[test]
+    fn answers_render_structure_without_markdown_chrome() {
+        let rows = answer_rows(
+            "## Result\n\n- Changed the parser\n- Ran the focused test\n\n```rust\nfn answer() {}\n```",
+            80,
+        );
+        let rendered: Vec<_> = rows
+            .iter()
+            .map(|row| (row.text.as_str(), row.style))
+            .collect();
+        assert_eq!(
+            rendered,
+            [
+                ("Result", RowStyle::Heading),
+                ("", RowStyle::Normal),
+                ("• Changed the parser", RowStyle::Normal),
+                ("• Ran the focused test", RowStyle::Normal),
+                ("", RowStyle::Normal),
+                ("  fn answer() {}", RowStyle::Code),
+            ]
+        );
     }
 
     #[test]

@@ -295,10 +295,10 @@ restarting could conceal lost operation state. Durable crash reports,
 diagnostic redaction, and general supervision remain promotion work.
 
 The historical `P1-07` slice added locked workspace configuration and a
-dedicated policy crate. ADR 003 supersedes that product direction: the current
-code remains useful transition evidence, but the next protocol revision should
-replace it with trusted-workbench initialization and remove `/trust` rather
-than extend capability negotiation.
+dedicated policy crate. ADR 003 superseded that direction. Protocol v5 removed
+the policy crate, capability negotiation, and `/trust`; Protocol v6 retains the
+single trusted-workbench path and adds repository questions without requiring
+editor context. Protocol v4 and v5 fixtures remain historical evidence only.
 
 `P1-06` is deliberately deferred by
 [ADR 002](decisions/002-defer-sqlite-until-needed.md). The current session has
@@ -319,10 +319,15 @@ fallback. Provider rejection detail is treated as sensitive and replaced by a
 fixed error with an actionable Pi status and login recovery step. The boundary
 is defined in [the provider credential contract](CREDENTIALS.md).
 
-The first `P2-04` slice adds typed evidence provenance to Protocol v4. The
+The first `P2-04` slice added typed evidence provenance in Protocol v4. The
 terminal derives compact reasons locally and reuses the existing streamed
 evidence and exact-range navigation path; it performs no additional scan,
 index, or model request.
+
+The maintained Protocol v6 product now exposes Pi's pinned coding-tool set in
+the trusted repository and submits `Ctrl-a` composer questions through a
+bounded private Unix socket. Plain questions are the only conversational path;
+selection and LSP context enrich it without creating a fallback agent mode.
 
 A 2026-07-17 live probe found and removed two avoidable local-search costs:
 Python environment and tool-cache directories now share the existing explicit

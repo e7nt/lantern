@@ -57,7 +57,8 @@ session database or ad-hoc JSON replacement.
 
 ## Implement next
 
-Build the smallest end-to-end full-access Pi harness:
+Complete the external edit journey defined in
+[EXTERNAL_EDIT_JOURNEY.md](EXTERNAL_EDIT_JOURNEY.md):
 
 1. Prove one live journey: ask for a small change, inspect the relevant code, edit
    it, run its focused test, and show the resulting diff.
