@@ -29,7 +29,7 @@ from run_live_trace import (
 
 
 ROOT = Path(__file__).parent
-DATASET_PATH = ROOT / "datasets" / "retrieval_baseline" / "v2.json"
+DATASET_PATH = ROOT / "datasets" / "retrieval_baseline" / "v3.json"
 
 
 def repository_status(repository: Path) -> str:
@@ -95,8 +95,12 @@ def evaluate_result(result: dict, case: dict, mode: str) -> tuple[bool, list[str
     missing_paths = [path for path in case["required_paths"] if path not in observed_paths]
     if missing_paths:
         failures.append(f"required evidence paths were not observed: {missing_paths}")
-    if mode == "lsp" and not any(item["source"] == "definition" for item in result["evidence"]):
-        failures.append("LSP-assisted operation emitted no definition evidence")
+    if mode == "lsp":
+        observed_sources = {item["source"] for item in result["evidence"]}
+        required_sources = case.get("required_lsp_evidence_sources", ["definition"])
+        missing_sources = [source for source in required_sources if source not in observed_sources]
+        if missing_sources:
+            failures.append(f"LSP-assisted operation omitted evidence sources: {missing_sources}")
     if mode == "lsp":
         first_text_ms = result["first_text_ms"]
         if first_text_ms is None or first_text_ms > case["max_lsp_first_text_ms"]:
@@ -232,7 +236,7 @@ def main() -> int:
         "dataset_version": dataset["version"],
         "dataset_sha256": hashlib.sha256(dataset_bytes).hexdigest(),
         "lantern_revision": git_revision(),
-        "driver": "lantern-protocol-v6",
+        "driver": "lantern-protocol-v7",
         "pi_version": PI_VERSION,
         "provider": "openai-codex",
         "model": MODEL,

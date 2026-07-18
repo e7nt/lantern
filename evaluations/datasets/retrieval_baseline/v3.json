@@ -1,0 +1,64 @@
+{
+  "dataset": "retrieval_baseline",
+  "version": 3,
+  "cases": [
+    {
+      "id": "helix-multiple-definition-locations-with-calls",
+      "repository": ".lantern/upstream/helix",
+      "revision": "14d6bc0febed9c692048271a8ae2362ac969c6e0",
+      "question": "When goto_definition returns multiple locations, how does Helix present them and what function handles the selected location?",
+      "required_answer_terms": ["Picker", "jump_to_location"],
+      "required_paths": ["helix-term/src/commands/lsp.rs"],
+      "required_lsp_evidence_sources": ["definition", "call"],
+      "max_tool_calls": 8,
+      "min_lsp_tool_calls": 0,
+      "max_lsp_tool_calls": 0,
+      "max_lsp_first_text_ms": 3000,
+      "max_settled_ms": 45000,
+      "context": {
+        "selection": {
+          "relative_path": "helix-term/src/commands/lsp.rs",
+          "language": "rust",
+          "start_line": 1024,
+          "start_column": 30,
+          "end_line": 1024,
+          "end_column": 45,
+          "text": "goto_definition",
+          "document_modified": false
+        },
+        "definition": {
+          "relative_path": "helix-lsp/src/client.rs",
+          "start_line": 1475,
+          "start_column": 5,
+          "end_line": 1495,
+          "end_column": 6
+        },
+        "references": [],
+        "calls": [
+          {
+            "name": "goto_single_impl",
+            "depth": 1,
+            "location": {
+              "relative_path": "helix-term/src/commands/lsp.rs",
+              "start_line": 946,
+              "start_column": 1,
+              "end_line": 946,
+              "end_column": 20
+            }
+          },
+          {
+            "name": "goto_impl",
+            "depth": 2,
+            "location": {
+              "relative_path": "helix-term/src/commands/lsp.rs",
+              "start_line": 914,
+              "start_column": 1,
+              "end_line": 914,
+              "end_column": 13
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

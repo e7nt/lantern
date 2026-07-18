@@ -41,3 +41,20 @@ The preview selection is deliberately temporary. Changing the highlighted
 picker row or query clears it. Promotion opens the selected item through the
 picker's existing callback and then installs the exact range in the resulting
 editor document, keeping selection ownership in Helix.
+
+## `0003-add-bounded-call-hierarchy-export.patch`
+
+- **Upstream:** Helix `14d6bc0febed9c692048271a8ae2362ac969c6e0`
+- **Purpose:** Enrich Lantern's existing symbol export with repository-local
+  outgoing-call locations from the active language server.
+- **Boundary:** At most four direct calls and four second-hop calls. The second
+  hop follows only the first direct callee in the selected document. Existing
+  repository and 512 KiB file bounds still apply.
+- **Validation:** Clean sequential patch application, Helix formatting and
+  `cargo check -p helix-term`, followed by the pinned external retrieval case.
+- **Removal condition:** Upstream typed external call-hierarchy export, or
+  evaluation showing no material grounding, navigation, or latency gain.
+
+The patch adds no parser, model, index, storage, or network client. It retains
+the language server's symbol names only as untrusted bounded metadata and emits
+source locations through the existing private session bridge.

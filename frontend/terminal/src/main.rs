@@ -297,6 +297,7 @@ fn evidence_source_text(source: EvidenceSource) -> (&'static str, &'static str) 
         EvidenceSource::Selection => ("Selected code", "exact code highlighted in Helix"),
         EvidenceSource::Definition => ("Definition", "symbol definition resolved by Helix"),
         EvidenceSource::Reference => ("Reference", "bounded symbol usage resolved by Helix"),
+        EvidenceSource::Call => ("Call path", "bounded outgoing call resolved by Helix"),
         EvidenceSource::LiteralMatch => ("Exact match", "local repository text match"),
     }
 }
@@ -685,7 +686,7 @@ fn navigate(evidence: &Evidence) -> io::Result<()> {
 fn should_navigate_evidence(source: EvidenceSource) -> bool {
     matches!(
         source,
-        EvidenceSource::Definition | EvidenceSource::LiteralMatch
+        EvidenceSource::Definition | EvidenceSource::Call | EvidenceSource::LiteralMatch
     )
 }
 
@@ -1176,7 +1177,7 @@ fn handle_daemon_event(
         Event::Evidence { id, evidence } => {
             if matches!(
                 evidence.source,
-                EvidenceSource::Definition | EvidenceSource::LiteralMatch
+                EvidenceSource::Definition | EvidenceSource::Call | EvidenceSource::LiteralMatch
             ) {
                 state
                     .transcript
@@ -1563,6 +1564,7 @@ mod tests {
         let mut state = UiState::new(Path::new("."));
         state.transcript = vec![
             TranscriptItem::Evidence(evidence(EvidenceSource::Selection, "src/main.rs")),
+            TranscriptItem::Evidence(evidence(EvidenceSource::Call, "src/dispatch.rs")),
             TranscriptItem::Evidence(evidence(EvidenceSource::Definition, "src/lib.rs")),
         ];
 
@@ -1572,18 +1574,19 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert!(rendered.contains("Selected code · exact code highlighted in Helix"));
+        assert!(rendered.contains("Call path · bounded outgoing call resolved by Helix"));
         assert!(rendered.contains("Definition · symbol definition resolved by Helix"));
         assert!(!rendered.contains("private source body"));
     }
 
     #[test]
-    fn resolved_definitions_take_navigation_priority_over_the_current_selection() {
+    fn resolved_code_evidence_takes_navigation_priority_over_the_current_selection() {
         assert!(!should_navigate_evidence(EvidenceSource::Selection));
         assert!(should_navigate_evidence(EvidenceSource::Definition));
+        assert!(should_navigate_evidence(EvidenceSource::Call));
         assert!(should_navigate_evidence(EvidenceSource::LiteralMatch));
         assert!(!should_navigate_evidence(EvidenceSource::Reference));
     }
-
     #[test]
     fn evidence_selection_cycles_without_scanning_or_model_work() {
         let mut state = UiState::new(Path::new("."));

@@ -7,6 +7,7 @@ from run_retrieval_baseline import comparison, evaluate_result
 
 
 DATASET_PATH = Path(__file__).parents[1] / "datasets" / "retrieval_baseline" / "v2.json"
+CALL_DATASET_PATH = Path(__file__).parents[1] / "datasets" / "retrieval_baseline" / "v3.json"
 
 
 @pytest.fixture(scope="module")
@@ -58,6 +59,15 @@ def test_dataset_pins_external_repositories_and_explicit_lsp_budgets(
             assert case["max_lsp_first_activity_ms"] == 3000
 
 
+def test_call_hierarchy_dataset_requires_typed_call_evidence() -> None:
+    dataset = json.loads(CALL_DATASET_PATH.read_text(encoding="utf-8"))
+    assert dataset["version"] == 3
+    case = dataset["cases"][0]
+    assert case["required_lsp_evidence_sources"] == ["definition", "call"]
+    assert [call["depth"] for call in case["context"]["calls"]] == [1, 2]
+    assert case["max_lsp_tool_calls"] == 0
+
+
 @pytest.mark.parametrize("mode", ["exact", "lsp"])
 def test_retrieval_contract_accepts_grounded_read_only_runs(cases: list[dict], mode: str) -> None:
     for case in cases:
@@ -71,7 +81,37 @@ def test_retrieval_contract_rejects_missing_definition_evidence(cases: list[dict
     result["evidence"] = [result["evidence"][0]]
     passed, failures = evaluate_result(result, case, "lsp")
     assert not passed
-    assert any("definition evidence" in failure for failure in failures)
+    assert any("'definition'" in failure for failure in failures)
+
+
+def test_call_hierarchy_contract_rejects_missing_call_evidence() -> None:
+    case = json.loads(CALL_DATASET_PATH.read_text(encoding="utf-8"))["cases"][0]
+    result = {
+        "answer": "Picker jump_to_location",
+        "tools": [],
+        "evidence": [
+            {
+                "source": "definition",
+                "relative_path": "helix-term/src/commands/lsp.rs",
+            }
+        ],
+        "first_tool_ms": None,
+        "first_text_ms": 100,
+        "settled_ms": 150,
+        "outcome": "completed",
+        "repository_unchanged": True,
+    }
+    passed, failures = evaluate_result(result, case, "lsp")
+    assert not passed
+    assert any("'call'" in failure for failure in failures)
+    result["evidence"].append(
+        {
+            "source": "call",
+            "relative_path": "helix-term/src/commands/lsp.rs",
+        }
+    )
+    passed, failures = evaluate_result(result, case, "lsp")
+    assert passed, failures
 
 
 def test_retrieval_contract_rejects_repository_mutation(cases: list[dict]) -> None:

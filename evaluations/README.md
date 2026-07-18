@@ -26,7 +26,7 @@ This requires Pi `0.80.6` and a private OpenAI Codex login completed through
 Pi's interactive `/login` flow. It writes a local timestamped report under
 `reports/` and exits unsuccessfully when any deterministic contract fails.
 Build Lantern first with `cargo build`; `run_live_trace.py` then exercises the
-real daemon through Protocol v6. It measures a grounded repository explanation,
+real daemon through Protocol v7. It measures a grounded repository explanation,
 repository-relative evidence use, tool efficiency, time to first tool and text,
 an under-three-second warm grounded follow-up, settling time, and cancellation
 while a tool-driven turn is active. Override
@@ -34,14 +34,15 @@ the binaries explicitly with `LANTERN_DAEMON_BIN` or `LANTERN_PI_BIN`; the
 runner never chooses a fallback binary or provider.
 
 `run_retrieval_baseline.py` compares repository-only exact discovery with typed
-Helix/LSP selection, definition, and reference context on the pinned Helix and
-Lazygit checkouts under `.lantern/upstream`. It fails if a checkout or revision
+Helix/LSP selection, definition, reference, and bounded call context on pinned
+external checkouts under `.lantern/upstream`. It fails if a checkout or revision
 does not match, runs both modes through the same daemon and Pi adapter, verifies
 read-only repository state, and reports LSP-minus-exact latency and tool-count
 deltas. Dataset v2 also includes an intentionally incomplete symbol question:
 it requires bounded tool escalation and measures first useful activity instead
 of pretending a direct answer is possible. Prepare the pinned upstream
-repositories using the normal Lantern setup before running it.
+repositories using the normal Lantern setup before running it. Dataset v3 adds
+the measured two-hop call evidence and requires the same answer with zero tools.
 
 The versioned datasets cover missing-context selections, bounded LSP symbol
 context, and efficient coding-tool journeys. They check properties that do not require a judge:

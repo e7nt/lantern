@@ -1,7 +1,7 @@
 use lantern_diagnostics::{Code as DiagnosticCode, Record as DiagnosticRecord};
 use lantern_protocol::{
     Event, Evidence, EvidenceSource, MAX_FILES, MAX_FRAME_BYTES, PROTOCOL_VERSION, Request,
-    SelectionContext, SymbolContext, SymbolLocation,
+    SelectionContext, SymbolCall, SymbolContext, SymbolLocation,
 };
 use std::fs;
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
@@ -101,11 +101,11 @@ impl Daemon {
 }
 
 #[test]
-fn golden_wire_fixtures_match_the_v6_types() {
-    for line in include_str!("../../../protocol/v6/requests.jsonl").lines() {
+fn golden_wire_fixtures_match_the_v7_types() {
+    for line in include_str!("../../../protocol/v7/requests.jsonl").lines() {
         serde_json::from_str::<Request>(line).expect("golden request must deserialize");
     }
-    for line in include_str!("../../../protocol/v6/events.jsonl").lines() {
+    for line in include_str!("../../../protocol/v7/events.jsonl").lines() {
         serde_json::from_str::<Event>(line).expect("golden event must deserialize");
     }
 }
@@ -1394,6 +1394,19 @@ fn streams_definition_and_references_before_a_symbol_grounded_answer() {
         .collect::<Vec<String>>()
         .join("\n");
     fs::write(root.join("definition.rs"), format!("{definition}\n")).expect("write definition");
+    let call = (1..=32)
+        .map(|line| {
+            if line == 1 {
+                "fn dispatch() {}".into()
+            } else if line == 32 {
+                "// bounded-call-tail".into()
+            } else {
+                format!("// call context {line}")
+            }
+        })
+        .collect::<Vec<String>>()
+        .join("\n");
+    fs::write(root.join("call.rs"), format!("{call}\n")).expect("write call evidence");
     let model_workdir = fixture("symbol-workdir", "private\n");
     let pi_bin = fake_pi(&model_workdir);
     let mut daemon = Daemon::spawn_with_pi(&pi_bin, &model_workdir, "stream");
@@ -1428,6 +1441,17 @@ fn streams_definition_and_references_before_a_symbol_grounded_answer() {
                 end_line: 1,
                 end_column: 23,
             }],
+            calls: vec![SymbolCall {
+                name: "dispatch".into(),
+                depth: 2,
+                location: SymbolLocation {
+                    relative_path: "call.rs".into(),
+                    start_line: 1,
+                    start_column: 4,
+                    end_line: 1,
+                    end_column: 12,
+                },
+            }],
         },
     });
 
@@ -1441,7 +1465,7 @@ fn streams_definition_and_references_before_a_symbol_grounded_answer() {
                 id: 13,
                 evidence_count,
             } => {
-                assert_eq!(evidence_count, 3);
+                assert_eq!(evidence_count, 4);
                 break;
             }
             _ => {}
@@ -1451,6 +1475,7 @@ fn streams_definition_and_references_before_a_symbol_grounded_answer() {
         evidence_records,
         vec![
             (EvidenceSource::Selection, PathBuf::from("sample.rs")),
+            (EvidenceSource::Call, PathBuf::from("call.rs")),
             (EvidenceSource::Definition, PathBuf::from("definition.rs")),
             (EvidenceSource::Reference, PathBuf::from("sample.rs")),
         ]
@@ -1461,6 +1486,8 @@ fn streams_definition_and_references_before_a_symbol_grounded_answer() {
     assert!(prompt.contains("fn caller() { resolved(); }"));
     assert!(prompt.contains("fn resolved() {}"));
     assert!(prompt.contains("bounded-definition-tail"));
+    assert!(prompt.contains("Name (untrusted): \\\"dispatch\\\""));
+    assert!(prompt.contains("bounded-call-tail"));
     assert!(prompt.contains("Answer directly without tools"));
     assert_eq!(await_thinking_levels(&model_workdir, 2), ["off", "medium"]);
     fs::remove_dir_all(root).expect("remove repository fixture");
@@ -1503,6 +1530,7 @@ fn symbol_reasoning_starts_without_reasoning_and_escalates_before_tool_results()
                 end_column: 12,
             },
             references: vec![],
+            calls: vec![],
         },
     });
     while !matches!(daemon.next(), Event::Settled { id: 74 }) {}

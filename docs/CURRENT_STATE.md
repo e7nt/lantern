@@ -26,11 +26,14 @@ and tool vocabulary should not become user-facing ceremony.
   reading mode for the persistent agent pane.
 - Bounded, typed composer submission over a private session-local Unix socket;
   tmux owns presentation and focus but never transports questions.
-- Maintained Rust terminal, daemon, diagnostics, and Protocol v6 crates.
+- Maintained Rust terminal, daemon, diagnostics, and Protocol v7 crates.
 - Selection capture, exact navigation, bounded local literal search, and
   Helix-provided definition/reference context.
+- Bounded two-hop outgoing-call context from Helix's active language server,
+  with the deepest relevant call opened directly in Helix.
 - Evidence-first symbol questions with bounded saved call-site and definition
-  excerpts; the resolved definition opens in Helix before the model answers.
+  excerpts; the deepest resolved call or definition opens in Helix before the
+  model answers.
 - Trusted-workbench initialization with repository-bound requests and no
   capability ceremony.
 - Selection- and symbol-grounded Pi RPC questions using Pi-owned OpenAI Codex
@@ -49,7 +52,7 @@ and tool vocabulary should not become user-facing ceremony.
 
 ## Current boundary
 
-Protocol v6 and the terminal open one trusted repository directly. The old
+Protocol v7 and the terminal open one trusted repository directly. The old
 policy engine, capability fields, and `/trust` commands have been removed. Pi
 runs its explicit built-in coding-tool allowlist in that repository. Raw tool
 arguments, command output, and provider stderr are not copied into Lantern's
@@ -75,13 +78,13 @@ opening line 1.
 
 Implement next:
 
-1. Add a bounded Helix/LSP outgoing-call export with typed protocol provenance,
-   using the two-hop limit proven by the call-hierarchy spike.
-2. Rerun the incomplete-evidence Helix case and retain the signal only if it
-   removes redundant tools and improves first useful activity.
-3. Reduce remaining outliers without weakening the strict three-second gate,
-   then repeat the multi-step live journey at medium.
-3. Spike semantic/vector retrieval only for a measured miss; do not add it to
+1. Repeat the multi-step live edit journey under Protocol v7 and confirm that
+   repository work remains at medium reasoning.
+2. Add one non-Rust call-hierarchy case before expanding the signal beyond its
+   current bounded two-hop shape.
+3. Investigate remaining provider-latency outliers without weakening the strict
+   three-second gate.
+4. Spike semantic/vector retrieval only for a measured miss; do not add it to
    the current passing cases.
 
 [The persistent Pi acceptance report](acceptance/2026-07-18-persistent-pi.md)
@@ -91,7 +94,7 @@ slower, so the under-three-second contract applies to warm context-grounded
 follow-ups and first visible activity where tools are necessary.
 
 The explicit live trace runner now exercises a natural repository explanation
-and active interruption through the real Protocol v6 daemon. It records
+and active interruption through the real Protocol v7 daemon. It records
 grounding, bounded tool activity, time to first tool and response text, settling
 time, cancellation latency, the dataset hash, and the Lantern revision in an
 ignored local report. The initial repeated baseline is recorded in
@@ -125,6 +128,11 @@ goto_impl`, directly locating the missing behavior. A contextual-grep prompt
 experiment did not change the three-tool sequence and was reverted. The next
 retrieval component is therefore bounded typed call structure, not semantic
 vectors or more prompt text.
+Protocol v7 now carries that bounded call structure. Three repeated runs of the
+same Helix question used zero tools, began text in 2.34, 2.08, and 2.13 seconds
+(2.13-second median), and remained grounded and read-only. The previous
+incomplete-evidence baseline used three tools with a 3.22-second first-activity
+median.
 
 An incremental hybrid repository index remains conditional. Add
 semantic/vector retrieval or commit-synchronized summaries only when a curated
