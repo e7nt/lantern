@@ -24,7 +24,7 @@ PROJECT_ROOT = ROOT.parent
 DATASET_PATH = ROOT / "datasets" / "live_trace" / "v1.json"
 PI_VERSION = "0.80.6"
 MODEL = "gpt-5.4"
-PROTOCOL_VERSION = 8
+PROTOCOL_VERSION = 9
 TURN_TIMEOUT_SECONDS = 45
 
 
@@ -145,6 +145,7 @@ def run_operation(
     tools: list[dict] = []
     evidence: list[dict] = []
     first_evidence_ms = None
+    first_grounding_state_ms = None
     first_tool_ms = None
     first_text_ms = None
     outcome = None
@@ -161,6 +162,9 @@ def run_operation(
             if first_tool_ms is None:
                 first_tool_ms = elapsed_ms
             tools.append({"tool": event["tool"], "relative_path": event.get("relative_path")})
+        elif event_type == "grounding_state":
+            if first_grounding_state_ms is None:
+                first_grounding_state_ms = elapsed_ms
         elif event_type == "evidence":
             if first_evidence_ms is None:
                 first_evidence_ms = elapsed_ms
@@ -189,6 +193,7 @@ def run_operation(
                 "tools": tools,
                 "evidence": evidence,
                 "first_evidence_ms": first_evidence_ms,
+                "first_grounding_state_ms": first_grounding_state_ms,
                 "first_tool_ms": first_tool_ms,
                 "first_text_ms": first_text_ms,
                 "provider_wait_after_evidence_ms": (

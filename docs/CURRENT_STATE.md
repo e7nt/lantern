@@ -26,7 +26,7 @@ and tool vocabulary should not become user-facing ceremony.
   reading mode for the persistent agent pane.
 - Bounded, typed composer submission over a private session-local Unix socket;
   tmux owns presentation and focus but never transports questions.
-- Maintained Rust terminal, daemon, diagnostics, and Protocol v8 crates.
+- Maintained Rust terminal, daemon, diagnostics, and Protocol v9 crates.
 - Selection capture, exact navigation, bounded local literal search, and
   Helix-provided definition/reference context.
 - Bounded two-hop outgoing-call context from Helix's active language server,
@@ -52,7 +52,7 @@ and tool vocabulary should not become user-facing ceremony.
 
 ## Current boundary
 
-Protocol v8 and the terminal open one trusted repository directly. The old
+Protocol v9 and the terminal open one trusted repository directly. The old
 policy engine, capability fields, and `/trust` commands have been removed. Pi
 runs its explicit built-in coding-tool allowlist in that repository. Raw tool
 arguments, command output, and provider stderr are not copied into Lantern's
@@ -160,6 +160,13 @@ tools, and began model text in 2.27–2.41 seconds. The remaining 2.23–2.38 se
 was provider wait, so another local cache was rejected. The measurement is
 recorded in
 [the grounded-wait report](acceptance/2026-07-18-grounded-wait-status.md).
+
+Cold repository questions now expose `Preparing code understanding…` while the
+local index builds, or `Searching the repository…` when semantic grounding is
+unavailable. Protocol v9 carries only those two typed transient states. A real
+cold Requests clone exposed preparation in 1 ms without waiting for the index
+or provider. The result is recorded in
+[the cold-grounding report](acceptance/2026-07-18-cold-grounding-status.md).
 
 The incremental hybrid repository index is retained. Its model, virtual
 environment, and revision-keyed artifacts are disposable local state. Initial

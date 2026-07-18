@@ -15,7 +15,7 @@ use lantern_diagnostics::{
     DaemonState as DiagnosticDaemonState, bundle_from_stderr, summarize_stderr,
 };
 use lantern_protocol::{
-    BoundedTail, ChangeProposal, ControlRequest, Event, Evidence, EvidenceSource,
+    BoundedTail, ChangeProposal, ControlRequest, Event, Evidence, EvidenceSource, GroundingState,
     MAX_DIAGNOSTIC_BYTES, MAX_QUESTION_BYTES, MAX_SELECTION_BYTES, PROTOCOL_VERSION, Request,
     SelectionContext, SymbolContext, SymbolContextExport, read_frame, search_term,
 };
@@ -1168,6 +1168,17 @@ fn handle_daemon_event(
                 state.accepted_id = Some(id);
             }
         }
+        Event::GroundingState { id, state: phase } => {
+            if state.active_id == Some(id) {
+                state.activity = Some(
+                    match phase {
+                        GroundingState::PreparingIndex => "Preparing code understanding…",
+                        GroundingState::RepositorySearchOnly => "Searching the repository…",
+                    }
+                    .into(),
+                );
+            }
+        }
         Event::OperationStarted { search_term, .. } => {
             if search_term.starts_with("Pi ") {
                 state.activity = Some("Thinking…".into());
@@ -1632,6 +1643,41 @@ mod tests {
         assert!(!state.transcript.iter().any(|item| {
             matches!(item, TranscriptItem::Line(line) if line.contains("thinking"))
         }));
+    }
+
+    #[test]
+    fn grounding_state_distinguishes_background_indexing_from_tool_only_search() {
+        let mut state = UiState::new(Path::new("."));
+        state.daemon = DaemonState::Ready;
+        state.active_id = Some(9);
+
+        handle_daemon_event(
+            Event::GroundingState {
+                id: 9,
+                state: GroundingState::PreparingIndex,
+            },
+            &mut state,
+            Path::new("."),
+            Path::new("unused"),
+        )
+        .expect("handle preparing state");
+        assert_eq!(
+            state.activity.as_deref(),
+            Some("Preparing code understanding…")
+        );
+
+        handle_daemon_event(
+            Event::GroundingState {
+                id: 9,
+                state: GroundingState::RepositorySearchOnly,
+            },
+            &mut state,
+            Path::new("."),
+            Path::new("unused"),
+        )
+        .expect("handle search-only state");
+        assert_eq!(state.activity.as_deref(), Some("Searching the repository…"));
+        assert!(state.transcript.is_empty());
     }
 
     #[test]

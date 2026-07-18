@@ -14,7 +14,7 @@ Before planning or changing code, read:
    sequencing, and phase gates
 5. [Reference repositories](docs/REFERENCE_REPOSITORIES.md) before designing a
    protocol, agent-loop, terminal interaction, editor, or Git boundary
-6. [Protocol v8](protocol/v8/README.md) before changing the terminal
+6. [Protocol v9](protocol/v9/README.md) before changing the terminal
    client/daemon wire contract or operation lifecycle
 7. [Diagnostic privacy contract](docs/DIAGNOSTICS.md) before adding logs,
    crash output, or diagnostic export fields
@@ -40,7 +40,7 @@ explicitly amended the governing document.
   reference project's product scope.
 - Preserve the editor/daemon boundary and keep provider-specific behavior in
   adapters.
-- Preserve Protocol v8's single trusted-workbench path. Do not reintroduce a
+- Preserve Protocol v9's single trusted-workbench path. Do not reintroduce a
   capability ceremony or reduced-function fallback.
 - Use Pi as the initial harness and measure hybrid retrieval per ADR 004. Do not
   create a parallel native agent loop without a recorded revisit condition.
