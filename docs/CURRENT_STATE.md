@@ -168,6 +168,13 @@ cold Requests clone exposed preparation in 1 ms without waiting for the index
 or provider. The result is recorded in
 [the cold-grounding report](acceptance/2026-07-18-cold-grounding-status.md).
 
+Repeated semantic matches from the same file are now grouped per agent turn in
+the transcript. The primary exact range remains directly navigable; `Space` or
+mouse interaction expands and collapses every retained location. Definitions
+and call paths remain individual because their relationship is meaningful.
+The presentation change is recorded in
+[the semantic evidence grouping report](acceptance/2026-07-18-semantic-evidence-grouping.md).
+
 The incremental hybrid repository index is retained. Its model, virtual
 environment, and revision-keyed artifacts are disposable local state. Initial
 builds and changed-file refreshes run in the background; unchanged symbols
