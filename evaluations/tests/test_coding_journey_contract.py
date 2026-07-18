@@ -37,16 +37,27 @@ def test_metric_accepts_efficient_tool_journeys(
     cases: list[dict], case_id: str, trace: list[str]
 ) -> None:
     case = next(case for case in cases if case["id"] == case_id)
-    metric = ToolJourneyContractMetric(case["required_order"], case["forbidden"])
+    metric = ToolJourneyContractMetric(case["required_order"], case["forbidden"], case["max_calls"])
     score = metric.measure(LLMTestCase(input=case["request"], actual_output=json.dumps(trace)))
     assert score == 1.0, metric.reason
 
 
 def test_metric_rejects_editing_during_an_explanation(cases: list[dict]) -> None:
     case = next(case for case in cases if case["id"] == "explain-before-editing")
-    metric = ToolJourneyContractMetric(case["required_order"], case["forbidden"])
+    metric = ToolJourneyContractMetric(case["required_order"], case["forbidden"], case["max_calls"])
     score = metric.measure(
         LLMTestCase(input=case["request"], actual_output='["grep", "edit", "read"]')
     )
     assert score == 0.0
     assert "forbidden" in metric.reason
+
+
+def test_metric_rejects_repeated_discovery_calls(cases: list[dict]) -> None:
+    case = next(case for case in cases if case["id"] == "focused-change")
+    metric = ToolJourneyContractMetric(case["required_order"], case["forbidden"], case["max_calls"])
+    trace = (
+        '["find", "find", "find", "find", "find", "find", "find", "find", "read", "edit", "bash"]'
+    )
+    score = metric.measure(LLMTestCase(input=case["request"], actual_output=trace))
+    assert score == 0.0
+    assert "maximum" in metric.reason

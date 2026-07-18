@@ -59,9 +59,15 @@ class ToolJourneyContractMetric(BaseMetric):
     verbose_mode = False
     error = None
 
-    def __init__(self, required_order: Sequence[str], forbidden: Sequence[str]) -> None:
+    def __init__(
+        self,
+        required_order: Sequence[str],
+        forbidden: Sequence[str],
+        max_calls: int,
+    ) -> None:
         self.required_order = tuple(required_order)
         self.forbidden = frozenset(forbidden)
+        self.max_calls = max_calls
         self.score = 0.0
         self.reason = "not measured"
         self.success = False
@@ -83,13 +89,16 @@ class ToolJourneyContractMetric(BaseMetric):
             if category in self.required_order and category not in ordered:
                 ordered.append(category)
         forbidden = [tool for tool in trace if tool in self.forbidden]
-        self.success = ordered == list(self.required_order) and not forbidden
+        too_many_calls = len(trace) > self.max_calls
+        self.success = ordered == list(self.required_order) and not forbidden and not too_many_calls
         self.score = 1.0 if self.success else 0.0
         failures = []
         if ordered != list(self.required_order):
             failures.append(f"required order was {self.required_order}, observed {ordered}")
         if forbidden:
             failures.append(f"forbidden tools were used: {forbidden}")
+        if too_many_calls:
+            failures.append(f"tool trace used {len(trace)} calls; maximum is {self.max_calls}")
         self.reason = "; ".join(failures) if failures else "tool journey contract passed"
         return self.score
 

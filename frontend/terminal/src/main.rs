@@ -21,7 +21,7 @@ use lantern_protocol::{
 };
 use std::env;
 use std::fs;
-use std::io::{self, BufRead, BufReader, BufWriter, Write};
+use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, SyncSender};
@@ -61,6 +61,7 @@ const LINK: Color = Color::Rgb {
 };
 const HORIZONTAL_PADDING: u16 = 2;
 const DAEMON_STARTUP_TIMEOUT: Duration = Duration::from_secs(2);
+const MAX_DIFF_RANGE_BYTES: u64 = 64 * 1024;
 
 enum Input {
     Terminal(TerminalEvent),
@@ -672,12 +673,28 @@ fn spawn_control_listener(path: &Path, sender: SyncSender<Input>) -> io::Result<
 }
 
 fn navigate(evidence: &Evidence) -> io::Result<()> {
+    navigate_range(
+        &evidence.relative_path,
+        evidence.start_line,
+        evidence.start_column,
+        evidence.end_line,
+        evidence.end_column,
+    )
+}
+
+fn navigate_range(
+    relative_path: &Path,
+    start_line: usize,
+    start_column: usize,
+    end_line: usize,
+    end_column: usize,
+) -> io::Result<()> {
     let status = Command::new("lantern-open-range")
-        .arg(&evidence.relative_path)
-        .arg(evidence.start_line.to_string())
-        .arg(evidence.start_column.to_string())
-        .arg(evidence.end_line.to_string())
-        .arg(evidence.end_column.to_string())
+        .arg(relative_path)
+        .arg(start_line.to_string())
+        .arg(start_column.to_string())
+        .arg(end_line.to_string())
+        .arg(end_column.to_string())
         .status()?;
     if status.success() {
         Ok(())
@@ -686,6 +703,49 @@ fn navigate(evidence: &Evidence) -> io::Result<()> {
             "navigation bridge exited with {status}"
         )))
     }
+}
+
+fn parse_changed_line(diff: &str) -> Option<usize> {
+    let hunk = diff.lines().find(|line| line.starts_with("@@ "))?;
+    let added = hunk
+        .split_whitespace()
+        .find(|field| field.starts_with('+'))?;
+    added
+        .trim_start_matches('+')
+        .split(',')
+        .next()?
+        .parse::<usize>()
+        .ok()
+        .filter(|line| *line > 0)
+}
+
+fn changed_line(repository: &Path, relative_path: &Path) -> Option<usize> {
+    let mut child = Command::new("git")
+        .args([
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--unified=0",
+            "--",
+        ])
+        .arg(relative_path)
+        .current_dir(repository)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let mut bytes = Vec::new();
+    child
+        .stdout
+        .take()?
+        .take(MAX_DIFF_RANGE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    let status = child.wait().ok()?;
+    if !status.success() || bytes.len() as u64 > MAX_DIFF_RANGE_BYTES {
+        return None;
+    }
+    parse_changed_line(std::str::from_utf8(&bytes).ok()?)
 }
 
 fn prepare_selection(state: &mut UiState, selection_path: &Path) {
@@ -1072,7 +1132,12 @@ fn handle_mouse(mouse: MouseEvent, layout: &Layout, state: &mut UiState) -> io::
     Ok(false)
 }
 
-fn handle_daemon_event(event: Event, state: &mut UiState, selection_path: &Path) -> io::Result<()> {
+fn handle_daemon_event(
+    event: Event,
+    state: &mut UiState,
+    repository: &Path,
+    selection_path: &Path,
+) -> io::Result<()> {
     match event {
         Event::Initialized { .. } => {
             state.daemon = DaemonState::Ready;
@@ -1154,16 +1219,8 @@ fn handle_daemon_event(event: Event, state: &mut UiState, selection_path: &Path)
                 )
                 && let Some(relative_path) = relative_path
             {
-                let changed = Evidence {
-                    source: EvidenceSource::LiteralMatch,
-                    relative_path,
-                    start_line: 1,
-                    start_column: 1,
-                    end_line: 1,
-                    end_column: 1,
-                    excerpt: String::new(),
-                };
-                if let Err(cause) = navigate(&changed) {
+                let line = changed_line(repository, &relative_path).unwrap_or(1);
+                if let Err(cause) = navigate_range(&relative_path, line, 1, line, 1) {
                     state.line(format!("Could not show the changed file: {cause}"));
                 }
             }
@@ -1283,7 +1340,7 @@ fn run(
             Input::Terminal(TerminalEvent::Resize(_, _)) => false,
             Input::Terminal(_) => false,
             Input::Daemon(event) => {
-                handle_daemon_event(event, &mut state, &selection_path)?;
+                handle_daemon_event(event, &mut state, &repository, &selection_path)?;
                 if state.daemon == DaemonState::Unavailable {
                     let _ = daemon.kill();
                 }
@@ -1488,6 +1545,13 @@ mod tests {
     }
 
     #[test]
+    fn changed_navigation_uses_the_first_zero_context_git_hunk() {
+        let diff = "diff --git a/src/lib.rs b/src/lib.rs\n@@ -10 +10,2 @@\n-old\n+new\n+line\n";
+        assert_eq!(parse_changed_line(diff), Some(10));
+        assert_eq!(parse_changed_line("no diff"), None);
+    }
+
+    #[test]
     fn evidence_rows_explain_typed_provenance_without_rendering_source() {
         let mut state = UiState::new(Path::new("."));
         state.transcript = vec![
@@ -1573,6 +1637,7 @@ mod tests {
                 protocol_version: PROTOCOL_VERSION,
             },
             &mut state,
+            Path::new("."),
             Path::new("unused"),
         )
         .expect("handle initialization");
@@ -1588,6 +1653,7 @@ mod tests {
                 repository: PathBuf::from("/workspace/project"),
             },
             &mut state,
+            Path::new("."),
             Path::new("unused"),
         )
         .expect("handle workspace configuration");
