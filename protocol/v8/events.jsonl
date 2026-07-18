@@ -1,0 +1,10 @@
+{"type":"initialized","protocol_version":8}
+{"type":"workbench_opened","repository":"/workspace/project"}
+{"type":"accepted","id":1}
+{"type":"operation_started","id":1,"search_term":"Pi gpt-5"}
+{"type":"evidence","id":1,"evidence":{"source":"semantic","relative_path":"src/lib.rs","start_line":8,"start_column":1,"end_line":20,"end_column":1,"excerpt":"fn dispatch() {}"}}
+{"type":"text_delta","id":1,"delta":"The related implementation is here."}
+{"type":"completed","id":1,"evidence_count":1}
+{"type":"settled","id":1}
+{"type":"cancelled","id":5,"cancellation_latency_ms":12}
+{"type":"error","id":null,"message":"invalid protocol request","recovery":"send one valid JSON request per line"}

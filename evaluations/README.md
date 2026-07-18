@@ -28,7 +28,7 @@ This requires Pi `0.80.6` and a private OpenAI Codex login completed through
 Pi's interactive `/login` flow. It writes a local timestamped report under
 `reports/` and exits unsuccessfully when any deterministic contract fails.
 Build Lantern first with `cargo build`; `run_live_trace.py` then exercises the
-real daemon through Protocol v7. It measures a grounded repository explanation,
+real daemon through Protocol v8. It measures a grounded repository explanation,
 repository-relative evidence use, tool efficiency, time to first tool and text,
 an under-three-second warm grounded follow-up, settling time, and cancellation
 while a tool-driven turn is active. Override
@@ -59,7 +59,7 @@ read-only state. Set `LANTERN_EVAL_CASE` to an exact case id to isolate one
 expensive live turn; unknown ids fail explicitly.
 
 `run_external_edit_journey.py` creates disposable Git repositories outside the
-Lantern checkout. It submits a Protocol v7 symbol-grounded change, verifies the
+Lantern checkout. It submits a Protocol v8 symbol-grounded change, verifies the
 exact implementation and test files, runs the focused repository test, requires
 an unstaged reviewable diff, and separately interrupts a tool-driven read. Its
 report contains only bounded tool metadata and outcome measurements.

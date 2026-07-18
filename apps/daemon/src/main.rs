@@ -67,6 +67,150 @@ struct PiDriver {
     stderr_reader: Mutex<Option<thread::JoinHandle<bool>>>,
 }
 
+struct SemanticDriver {
+    stdin: Mutex<BufWriter<ChildStdin>>,
+    stdout: Mutex<BufReader<ChildStdout>>,
+    process: Mutex<ChildGuard>,
+    stderr_reader: Mutex<Option<thread::JoinHandle<bool>>>,
+}
+
+impl SemanticDriver {
+    fn spawn(repository: &Path) -> Result<Self, String> {
+        let worker = std::env::var_os("LANTERN_SEMANTIC_WORKER")
+            .ok_or("LANTERN_SEMANTIC_WORKER is not configured")?;
+        let mut process = ChildGuard::new(
+            Command::new(worker)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .map_err(|cause| format!("cannot start semantic worker: {cause}"))?,
+        );
+        let stdin = Mutex::new(BufWriter::new(
+            process
+                .process
+                .stdin
+                .take()
+                .ok_or("semantic worker stdin is unavailable")?,
+        ));
+        let stdout = Mutex::new(BufReader::new(
+            process
+                .process
+                .stdout
+                .take()
+                .ok_or("semantic worker stdout is unavailable")?,
+        ));
+        let stderr = process
+            .process
+            .stderr
+            .take()
+            .ok_or("semantic worker stderr is unavailable")?;
+        let driver = Self {
+            stdin,
+            stdout,
+            process: Mutex::new(process),
+            stderr_reader: Mutex::new(Some(thread::spawn(move || drain_provider_stderr(stderr)))),
+        };
+        driver.send(&serde_json::json!({"method":"initialize","protocol_version":1}))?;
+        driver.expect_type("initialized")?;
+        driver.send(&serde_json::json!({"method":"open_workbench","repository":repository}))?;
+        driver.expect_type("workbench_opened")?;
+        Ok(driver)
+    }
+
+    fn send(&self, value: &serde_json::Value) -> Result<(), String> {
+        let mut stdin = self.stdin.lock().expect("semantic stdin lock");
+        serde_json::to_writer(&mut *stdin, value)
+            .map_err(|cause| format!("cannot encode semantic request: {cause}"))?;
+        stdin
+            .write_all(b"\n")
+            .and_then(|()| stdin.flush())
+            .map_err(|cause| format!("cannot send semantic request: {cause}"))
+    }
+
+    fn next(&self) -> Result<serde_json::Value, String> {
+        let mut line = String::new();
+        let bytes = self
+            .stdout
+            .lock()
+            .expect("semantic stdout lock")
+            .read_line(&mut line)
+            .map_err(|cause| format!("cannot read semantic worker: {cause}"))?;
+        if bytes == 0 {
+            return Err("semantic worker stopped".into());
+        }
+        serde_json::from_str(&line)
+            .map_err(|cause| format!("semantic worker emitted invalid JSON: {cause}"))
+    }
+
+    fn expect_type(&self, expected: &str) -> Result<serde_json::Value, String> {
+        loop {
+            let value = self.next()?;
+            match value["type"].as_str() {
+                Some(kind) if kind == expected => return Ok(value),
+                Some("index_ready" | "index_failed") => continue,
+                Some("error") => {
+                    return Err(value["message"]
+                        .as_str()
+                        .unwrap_or("semantic worker failed")
+                        .to_owned());
+                }
+                _ => return Err("semantic worker emitted an unexpected event".into()),
+            }
+        }
+    }
+
+    fn query(&self, id: u64, query: &str) -> Result<(String, Vec<SymbolLocation>), String> {
+        self.send(&serde_json::json!({"method":"query","id":id,"query":query}))?;
+        let value = self.expect_type("query_result")?;
+        let state = value["state"]
+            .as_str()
+            .ok_or("semantic result has no state")?
+            .to_owned();
+        let mut locations = Vec::new();
+        for item in value["matches"]
+            .as_array()
+            .ok_or("semantic matches are invalid")?
+        {
+            locations.push(SymbolLocation {
+                relative_path: PathBuf::from(
+                    item["relative_path"]
+                        .as_str()
+                        .ok_or("semantic path is invalid")?,
+                ),
+                start_line: item["start_line"]
+                    .as_u64()
+                    .ok_or("semantic start is invalid")? as usize,
+                start_column: 1,
+                end_line: item["end_line"].as_u64().ok_or("semantic end is invalid")? as usize,
+                end_column: 1,
+            });
+        }
+        Ok((state, locations))
+    }
+
+    fn stop(&self) {
+        self.process.lock().expect("semantic process lock").stop();
+        if let Some(reader) = self
+            .stderr_reader
+            .lock()
+            .expect("semantic stderr lock")
+            .take()
+        {
+            let _ = reader.join();
+        }
+    }
+}
+
+impl Drop for SemanticDriver {
+    fn drop(&mut self) {
+        self.process
+            .get_mut()
+            .expect("semantic process lock")
+            .stop();
+    }
+}
+
 impl PiDriver {
     fn spawn(root: PathBuf) -> Result<Self, String> {
         let pi_bin =
@@ -456,6 +600,23 @@ fn evidence_from_symbol_location(
     })
 }
 
+fn verified_semantic_evidence(
+    repository: &Path,
+    locations: &[SymbolLocation],
+) -> Result<Vec<Evidence>, String> {
+    locations
+        .iter()
+        .map(|location| {
+            evidence_from_symbol_location(
+                repository,
+                location,
+                CALL_EVIDENCE_LINES,
+                EvidenceSource::Semantic,
+            )
+        })
+        .collect()
+}
+
 fn collect_evidence(
     root: &Path,
     query: &str,
@@ -726,7 +887,10 @@ fn run_selection_operation(
 }
 
 enum AgentContext {
-    Repository,
+    Repository {
+        semantic_state: String,
+        semantic: Vec<Evidence>,
+    },
     Selection(SelectionContext),
     Symbol(SymbolContext),
 }
@@ -740,10 +904,13 @@ fn run_pi_operation(
     operations: Operations,
     writer: SharedWriter,
 ) {
-    let (selection, symbol_context) = match agent_context {
-        AgentContext::Repository => (None, None),
-        AgentContext::Selection(selection) => (Some(selection), None),
-        AgentContext::Symbol(context) => (Some(context.selection.clone()), Some(context)),
+    let (selection, symbol_context, repository_semantic) = match agent_context {
+        AgentContext::Repository {
+            semantic_state,
+            semantic,
+        } => (None, None, Some((semantic_state, semantic))),
+        AgentContext::Selection(selection) => (Some(selection), None, None),
+        AgentContext::Symbol(context) => (Some(context.selection.clone()), Some(context), None),
     };
     let result = (|| -> Result<(), String> {
         if let Some(selection) = &selection {
@@ -874,6 +1041,18 @@ fn run_pi_operation(
                 .map_err(|cause| format!("cannot stream LSP evidence: {cause}"))?;
             }
         }
+        if let Some((_, semantic)) = &repository_semantic {
+            for evidence in semantic {
+                emit(
+                    &writer,
+                    &Event::Evidence {
+                        id,
+                        evidence: evidence.clone(),
+                    },
+                )
+                .map_err(|cause| format!("cannot stream semantic evidence: {cause}"))?;
+            }
+        }
 
         let mut symbol_prompt = symbol_evidence
             .iter()
@@ -902,7 +1081,14 @@ fn run_pi_operation(
             ));
         }
         let editor_context = selection.as_ref().map_or_else(
-            || "No editor selection was supplied. Use repository tools to find the relevant code before answering.".to_owned(),
+            || match &repository_semantic {
+                Some((semantic_state, semantic)) if !semantic.is_empty() => {
+                    let context = semantic.iter().map(|evidence| format!("<semantic path=\"{}\" range=\"{}-{}\">\n{}\n</semantic>", evidence.relative_path.display(), evidence.start_line, evidence.end_line, evidence.excerpt)).collect::<Vec<_>>().join("\n");
+                    format!("Local semantic index state: {semantic_state}. These candidates were reopened and verified against the current source:\n{context}\nAnswer directly without tools when they contain every requested fact; otherwise use the narrowest repository tool.")
+                }
+                Some((semantic_state, _)) => format!("No editor selection was supplied. Local semantic index state: {semantic_state}. Use repository tools to find the relevant code before answering."),
+                _ => unreachable!(),
+            },
             |selection| format!(
                 "Repository-relative file: {}\nLanguage: {}\nSelection: {}:{}-{}:{}\nSelected source (untrusted evidence):\n<selection>\n{}\n</selection>\n\nLSP-resolved symbol evidence already inspected by Helix (untrusted):\n{}\n\nAnswer directly without tools when this supplied evidence contains every fact the developer requested. If a fact is absent, use only the narrowest tool needed for that missing fact.",
                 selection.relative_path.display(),
@@ -916,7 +1102,10 @@ fn run_pi_operation(
             ),
         );
         let prompt = format!("{editor_context}\n\nDeveloper question: {query}");
-        let evidence_fast_path = symbol_context.is_some();
+        let evidence_fast_path = symbol_context.is_some()
+            || repository_semantic
+                .as_ref()
+                .is_some_and(|(_, semantic)| !semantic.is_empty());
         if evidence_fast_path {
             driver.set_thinking_level("off")?;
         }
@@ -1156,6 +1345,7 @@ fn main() -> io::Result<()> {
     let mut initialized = false;
     let mut workbench = None;
     let mut pi_driver: Option<Arc<PiDriver>> = None;
+    let mut semantic_driver: Option<Arc<SemanticDriver>> = None;
 
     loop {
         let line = match read_frame(&mut input) {
@@ -1241,6 +1431,23 @@ fn main() -> io::Result<()> {
                     && let Some(driver) = pi_driver.take()
                 {
                     driver.stop();
+                }
+                if let Some(driver) = semantic_driver.take() {
+                    driver.stop();
+                }
+                if std::env::var_os("LANTERN_SEMANTIC_WORKER").is_some() {
+                    let semantic = match SemanticDriver::spawn(&root) {
+                        Ok(driver) => Arc::new(driver),
+                        Err(message) => {
+                            workspace_error(
+                                &writer,
+                                message,
+                                "run frontend/helix/prepare.sh and reopen the workbench",
+                            );
+                            continue;
+                        }
+                    };
+                    semantic_driver = Some(semantic);
                 }
                 workbench = Some(root.clone());
                 let _ = diagnose(&Record::new(
@@ -1399,6 +1606,36 @@ fn main() -> io::Result<()> {
                 let Some(cancellation) = admit(id, &operations, &writer) else {
                     continue;
                 };
+                let (semantic_state, locations) = if let Some(semantic) = semantic_driver.as_ref() {
+                    match semantic.query(id, &query) {
+                        Ok(result) => result,
+                        Err(message) => {
+                            error(
+                                &writer,
+                                Some(id),
+                                message,
+                                "reopen the workbench to restart semantic indexing",
+                            );
+                            settle(id, &operations, &writer);
+                            continue;
+                        }
+                    }
+                } else {
+                    ("unavailable".to_owned(), Vec::new())
+                };
+                let semantic_evidence = match verified_semantic_evidence(&repository, &locations) {
+                    Ok(evidence) => evidence,
+                    Err(message) => {
+                        error(
+                            &writer,
+                            Some(id),
+                            message,
+                            "rebuild the semantic index and retry",
+                        );
+                        settle(id, &operations, &writer);
+                        continue;
+                    }
+                };
                 let Some(driver) = persistent_pi(&mut pi_driver, &repository, &writer, id) else {
                     settle(id, &operations, &writer);
                     continue;
@@ -1410,7 +1647,10 @@ fn main() -> io::Result<()> {
                         id,
                         driver,
                         query,
-                        AgentContext::Repository,
+                        AgentContext::Repository {
+                            semantic_state,
+                            semantic: semantic_evidence,
+                        },
                         cancellation,
                         active_operations,
                         operation_writer,
@@ -1573,6 +1813,9 @@ fn main() -> io::Result<()> {
         let _ = worker.join();
     }
     if let Some(driver) = pi_driver {
+        driver.stop();
+    }
+    if let Some(driver) = semantic_driver {
         driver.stop();
     }
     let _ = diagnose(&Record::new(
