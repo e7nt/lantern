@@ -1,0 +1,154 @@
+diff --git a/helix-view/src/document.rs b/helix-view/src/document.rs
+index 63ef6d03..b14f235d 100644
+--- a/helix-view/src/document.rs
++++ b/helix-view/src/document.rs
+@@ -1974,6 +1974,25 @@ impl Document {
+         })
+     }
+ 
++    pub fn language_server_handles_with_feature(
++        &self,
++        feature: LanguageServerFeature,
++    ) -> impl Iterator<Item = Arc<helix_lsp::Client>> + '_ {
++        self.language_config().into_iter().flat_map(move |config| {
++            config.language_servers.iter().filter_map(move |features| {
++                let language_server = self.language_servers.get(&features.name)?.clone();
++                if language_server.is_initialized()
++                    && language_server.supports_feature(feature)
++                    && features.has_feature(feature)
++                {
++                    Some(language_server)
++                } else {
++                    None
++                }
++            })
++        })
++    }
++
+     pub fn supports_language_server(&self, id: LanguageServerId) -> bool {
+         self.language_servers().any(|l| l.id() == id)
+     }
+diff --git a/helix-term/src/commands/typed.rs b/helix-term/src/commands/typed.rs
+index d003b01a..b93b0f67 100644
+--- a/helix-term/src/commands/typed.rs
++++ b/helix-term/src/commands/typed.rs
+@@ -215,6 +215,68 @@ fn lantern_export_symbol_context(
+         bail!("no configured language server supports symbol references");
+     }
+ 
++    let call_hierarchy = doc
++        .language_server_handles_with_feature(
++            helix_core::syntax::config::LanguageServerFeature::CallHierarchy,
++        )
++        .next()
++        .map(|language_server| {
++            let offset_encoding = language_server.offset_encoding();
++            let position =
++                helix_lsp::util::pos_to_lsp_pos(doc.text(), range.from(), offset_encoding);
++            let document = doc.identifier();
++            let document_uri = document.uri.clone();
++            let prepare = language_server
++                .prepare_call_hierarchy(document, position)
++                .expect("feature-filtered language server must support call hierarchy");
++            async move {
++                let Some(items) = prepare.await? else {
++                    return Ok::<
++                        Vec<(
++                            helix_lsp::lsp::CallHierarchyItem,
++                            u8,
++                            helix_lsp::OffsetEncoding,
++                        )>,
++                        helix_lsp::Error,
++                    >(Vec::new());
++                };
++                let Some(item) = items.into_iter().next() else {
++                    return Ok(Vec::new());
++                };
++                let Some(outgoing) = language_server
++                    .call_hierarchy_outgoing(item)
++                    .unwrap()
++                    .await?
++                else {
++                    return helix_lsp::Result::Ok(Vec::new());
++                };
++                let local_callee = outgoing
++                    .iter()
++                    .find(|call| call.to.uri == document_uri)
++                    .map(|call| call.to.clone());
++                let mut calls = outgoing
++                    .into_iter()
++                    .take(4)
++                    .map(|call| (call.to, 1, offset_encoding))
++                    .collect::<Vec<_>>();
++                if let Some(callee) = local_callee {
++                    if let Some(outgoing) = language_server
++                        .call_hierarchy_outgoing(callee)
++                        .unwrap()
++                        .await?
++                    {
++                        calls.extend(
++                            outgoing
++                                .into_iter()
++                                .take(4)
++                                .map(|call| (call.to, 2, offset_encoding)),
++                        );
++                    }
++                }
++                helix_lsp::Result::Ok(calls)
++            }
++        });
++
+     cx.editor
+         .set_status("Resolving bounded LSP symbol context for Lantern");
+     let callback = async move {
+@@ -276,6 +338,33 @@ fn lantern_export_symbol_context(
+                 Err(cause) => errors.push(format!("reference request failed: {cause}")),
+             }
+         }
++        let mut call_values = Vec::new();
++        if let Some(call_hierarchy) = call_hierarchy {
++            match call_hierarchy.await {
++                Ok(calls) => {
++                    for (item, depth, offset_encoding) in calls {
++                        if call_values.len() == 8 {
++                            break;
++                        }
++                        let location =
++                            helix_lsp::lsp::Location::new(item.uri, item.selection_range);
++                        if let Some(location) =
++                            lantern_symbol_location(&repository, location, offset_encoding)
++                        {
++                            let value = serde_json::json!({
++                                "name": item.name,
++                                "depth": depth,
++                                "location": location,
++                            });
++                            if !call_values.contains(&value) {
++                                call_values.push(value);
++                            }
++                        }
++                    }
++                }
++                Err(cause) => errors.push(format!("call hierarchy request failed: {cause}")),
++            }
++        }
+ 
+         let (payload, message, failed) = if !errors.is_empty() {
+             let detail = errors.join("; ");
+@@ -295,11 +384,14 @@ fn lantern_export_symbol_context(
+                     "selection": selection,
+                     "definition": definition,
+                     "references": reference_values,
++                    "calls": call_values,
+                 }),
+                 format!(
+-                    "Lantern captured one definition and {} reference{}",
++                    "Lantern captured one definition, {} reference{}, and {} call{}",
+                     reference_values.len(),
+-                    if reference_values.len() == 1 { "" } else { "s" }
++                    if reference_values.len() == 1 { "" } else { "s" },
++                    call_values.len(),
++                    if call_values.len() == 1 { "" } else { "s" }
+                 ),
+                 false,
+             )

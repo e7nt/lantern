@@ -3,7 +3,7 @@ use std::fmt;
 use std::io::{self, BufRead};
 use std::path::{Component, Path, PathBuf};
 
-pub const PROTOCOL_VERSION: u32 = 6;
+pub const PROTOCOL_VERSION: u32 = 7;
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const MAX_EVENT_BYTES: usize = 256 * 1024;
 pub const MAX_DIAGNOSTIC_BYTES: usize = 8 * 1024;
@@ -13,6 +13,8 @@ pub const MAX_EVIDENCE: usize = 5;
 pub const MAX_SELECTION_BYTES: usize = 64 * 1024;
 pub const MAX_QUESTION_BYTES: usize = 64 * 1024;
 pub const MAX_SYMBOL_REFERENCES: usize = 8;
+pub const MAX_SYMBOL_CALLS: usize = 8;
+pub const MAX_SYMBOL_NAME_BYTES: usize = 256;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -39,10 +41,19 @@ pub struct SymbolLocation {
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub struct SymbolCall {
+    pub name: String,
+    pub depth: u8,
+    pub location: SymbolLocation,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct SymbolContext {
     pub selection: SelectionContext,
     pub definition: SymbolLocation,
     pub references: Vec<SymbolLocation>,
+    pub calls: Vec<SymbolCall>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -52,6 +63,7 @@ pub enum SymbolContextExport {
         selection: SelectionContext,
         definition: SymbolLocation,
         references: Vec<SymbolLocation>,
+        calls: Vec<SymbolCall>,
     },
     Error {
         message: String,
@@ -65,10 +77,12 @@ impl SymbolContextExport {
                 selection,
                 definition,
                 references,
+                calls,
             } => Ok(SymbolContext {
                 selection,
                 definition,
                 references,
+                calls,
             }),
             Self::Error { message } => Err(format!("LSP symbol context failed: {message}")),
         }
@@ -148,6 +162,7 @@ pub enum EvidenceSource {
     Selection,
     Definition,
     Reference,
+    Call,
     LiteralMatch,
 }
 
@@ -440,6 +455,22 @@ pub fn validate_symbol_context(context: &SymbolContext) -> Result<(), String> {
     for reference in &context.references {
         validate_symbol_location(reference)?;
     }
+    if context.calls.len() > MAX_SYMBOL_CALLS {
+        return Err(format!(
+            "symbol context exceeds the {MAX_SYMBOL_CALLS}-call limit"
+        ));
+    }
+    for call in &context.calls {
+        if call.name.is_empty() || call.name.len() > MAX_SYMBOL_NAME_BYTES {
+            return Err(format!(
+                "call name must contain 1 to {MAX_SYMBOL_NAME_BYTES} bytes"
+            ));
+        }
+        if !(1..=2).contains(&call.depth) {
+            return Err("call depth must be one or two".into());
+        }
+        validate_symbol_location(&call.location)?;
+    }
     Ok(())
 }
 
@@ -517,10 +548,58 @@ mod tests {
             },
             definition: location.clone(),
             references: vec![location; MAX_SYMBOL_REFERENCES + 1],
+            calls: vec![],
         };
         assert_eq!(
             validate_symbol_context(&context).unwrap_err(),
             "symbol context exceeds the 8-reference limit"
+        );
+    }
+
+    #[test]
+    fn rejects_unbounded_or_invalid_symbol_calls() {
+        let location = SymbolLocation {
+            relative_path: "src/lib.rs".into(),
+            start_line: 1,
+            start_column: 1,
+            end_line: 1,
+            end_column: 2,
+        };
+        let call = SymbolCall {
+            name: "dispatch".into(),
+            depth: 1,
+            location: location.clone(),
+        };
+        let mut context = SymbolContext {
+            selection: SelectionContext {
+                relative_path: "src/lib.rs".into(),
+                language: Some("rust".into()),
+                start_line: 1,
+                start_column: 1,
+                end_line: 1,
+                end_column: 2,
+                text: "x".into(),
+                document_modified: false,
+            },
+            definition: location,
+            references: vec![],
+            calls: vec![call; MAX_SYMBOL_CALLS + 1],
+        };
+        assert_eq!(
+            validate_symbol_context(&context).unwrap_err(),
+            "symbol context exceeds the 8-call limit"
+        );
+        context.calls.truncate(1);
+        context.calls[0].depth = 3;
+        assert_eq!(
+            validate_symbol_context(&context).unwrap_err(),
+            "call depth must be one or two"
+        );
+        context.calls[0].depth = 1;
+        context.calls[0].name.clear();
+        assert_eq!(
+            validate_symbol_context(&context).unwrap_err(),
+            "call name must contain 1 to 256 bytes"
         );
     }
 

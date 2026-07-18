@@ -12,10 +12,17 @@ LAZYGIT_REVISION=080da5cacfcff63a89ea23493bb91b11b0612876
 HELIX_PATCHES=(
 	"$FRONTEND_DIR/patches/0001-add-lantern-range-navigation.patch"
 	"$FRONTEND_DIR/patches/0002-add-picker-mouse-interaction.patch"
+	"$FRONTEND_DIR/patches/0003-add-bounded-call-hierarchy-export.patch"
 )
 HELIX_PATCHED_FILES=(
 	helix-term/src/commands/typed.rs
 	helix-term/src/ui/picker.rs
+	helix-view/src/document.rs
+)
+HELIX_PATCHED_HASHES=(
+	f8358b0541aebe9491321bbf45b871d8cee26e43
+	3b64ad7b5c51817168bea9486ba67dba52e0ae5c
+	2e2ab18588b2b643eb3318971a215235993e6762
 )
 
 verify_revision() {
@@ -42,12 +49,19 @@ if git -C "$HELIX_DIR" diff --quiet; then
 		git -C "$HELIX_DIR" apply --check "$patch"
 		git -C "$HELIX_DIR" apply "$patch"
 	done
-elif ! cmp -s \
-	<(git -C "$HELIX_DIR" diff -- "${HELIX_PATCHED_FILES[@]}") \
-	<(cat "${HELIX_PATCHES[@]}"); then
-	echo "Helix contains changes other than the exact Lantern patch set." >&2
-	echo "Use a clean checkout at $HELIX_REVISION before preparing Lantern." >&2
-	exit 1
+else
+	mapfile -t changed_files < <(git -C "$HELIX_DIR" diff --name-only)
+	if [[ ${changed_files[*]} != "${HELIX_PATCHED_FILES[*]}" ]]; then
+		echo "Helix contains changes outside the Lantern patch set." >&2
+		exit 1
+	fi
+	for index in "${!HELIX_PATCHED_FILES[@]}"; do
+		actual_hash=$(git -C "$HELIX_DIR" hash-object "${HELIX_PATCHED_FILES[$index]}")
+		if [[ $actual_hash != "${HELIX_PATCHED_HASHES[$index]}" ]]; then
+			echo "Helix patch content differs at ${HELIX_PATCHED_FILES[$index]}." >&2
+			exit 1
+		fi
+	done
 fi
 
 cargo build --release --locked --manifest-path "$HELIX_DIR/Cargo.toml"

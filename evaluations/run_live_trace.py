@@ -24,7 +24,7 @@ PROJECT_ROOT = ROOT.parent
 DATASET_PATH = ROOT / "datasets" / "live_trace" / "v1.json"
 PI_VERSION = "0.80.6"
 MODEL = "gpt-5.4"
-PROTOCOL_VERSION = 6
+PROTOCOL_VERSION = 7
 TURN_TIMEOUT_SECONDS = 45
 
 
@@ -382,7 +382,7 @@ def main() -> int:
         "dataset_version": dataset["version"],
         "dataset_sha256": hashlib.sha256(dataset_bytes).hexdigest(),
         "lantern_revision": git_revision(),
-        "driver": "lantern-protocol-v6",
+        "driver": "lantern-protocol-v7",
         "pi_version": PI_VERSION,
         "provider": "openai-codex",
         "model": MODEL,

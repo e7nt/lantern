@@ -19,6 +19,7 @@ type SharedWriter = Arc<Mutex<BufWriter<io::Stdout>>>;
 type Operations = Arc<Mutex<HashMap<u64, Arc<Cancellation>>>>;
 type PiStdin = Arc<Mutex<BufWriter<ChildStdin>>>;
 const DEFINITION_EVIDENCE_LINES: usize = 16;
+const CALL_EVIDENCE_LINES: usize = 32;
 const SELECTION_EVIDENCE_LINES: usize = 3;
 
 #[derive(Default)]
@@ -823,6 +824,7 @@ fn run_pi_operation(
         };
 
         let mut symbol_evidence = Vec::new();
+        let mut call_evidence = Vec::new();
         if let Some(context) = &symbol_context {
             symbol_evidence.push((
                 "definition",
@@ -839,6 +841,28 @@ fn run_pi_operation(
                     evidence_from_symbol_location(&root, reference, 1, EvidenceSource::Reference)?,
                 ));
             }
+            for call in &context.calls {
+                call_evidence.push((
+                    call.name.as_str(),
+                    call.depth,
+                    evidence_from_symbol_location(
+                        &root,
+                        &call.location,
+                        CALL_EVIDENCE_LINES,
+                        EvidenceSource::Call,
+                    )?,
+                ));
+            }
+            for (_, _, evidence) in call_evidence.iter().rev() {
+                emit(
+                    &writer,
+                    &Event::Evidence {
+                        id,
+                        evidence: evidence.clone(),
+                    },
+                )
+                .map_err(|cause| format!("cannot stream LSP call evidence: {cause}"))?;
+            }
             for (_, evidence) in &symbol_evidence {
                 emit(
                     &writer,
@@ -851,7 +875,7 @@ fn run_pi_operation(
             }
         }
 
-        let symbol_prompt = symbol_evidence
+        let mut symbol_prompt = symbol_evidence
             .iter()
             .map(|(kind, evidence)| {
                 format!(
@@ -866,6 +890,17 @@ fn run_pi_operation(
             })
             .collect::<Vec<_>>()
             .join("\n");
+        for (name, depth, evidence) in &call_evidence {
+            symbol_prompt.push_str(&format!(
+                "\n<call path=\"{}\" range=\"{}:{}-{}:{}\">\nName (untrusted): {name:?}\nDepth: {depth}\n{}\n</call>",
+                evidence.relative_path.display(),
+                evidence.start_line,
+                evidence.start_column,
+                evidence.end_line,
+                evidence.end_column,
+                evidence.excerpt,
+            ));
+        }
         let editor_context = selection.as_ref().map_or_else(
             || "No editor selection was supplied. Use repository tools to find the relevant code before answering.".to_owned(),
             |selection| format!(
@@ -1026,9 +1061,9 @@ fn run_pi_operation(
             &writer,
             &Event::Completed {
                 id,
-                evidence_count: 1 + symbol_context
-                    .as_ref()
-                    .map_or(0, |context| 1 + context.references.len()),
+                evidence_count: 1 + symbol_context.as_ref().map_or(0, |context| {
+                    1 + context.references.len() + context.calls.len()
+                }),
             },
         );
     }
