@@ -298,6 +298,7 @@ fn evidence_source_text(source: EvidenceSource) -> (&'static str, &'static str) 
         EvidenceSource::Definition => ("Definition", "symbol definition resolved by Helix"),
         EvidenceSource::Reference => ("Reference", "bounded symbol usage resolved by Helix"),
         EvidenceSource::Call => ("Call path", "bounded outgoing call resolved by Helix"),
+        EvidenceSource::Semantic => ("Related code", "local semantic match verified from source"),
         EvidenceSource::LiteralMatch => ("Exact match", "local repository text match"),
     }
 }
@@ -686,7 +687,10 @@ fn navigate(evidence: &Evidence) -> io::Result<()> {
 fn should_navigate_evidence(source: EvidenceSource) -> bool {
     matches!(
         source,
-        EvidenceSource::Definition | EvidenceSource::Call | EvidenceSource::LiteralMatch
+        EvidenceSource::Definition
+            | EvidenceSource::Call
+            | EvidenceSource::Semantic
+            | EvidenceSource::LiteralMatch
     )
 }
 
@@ -1177,7 +1181,10 @@ fn handle_daemon_event(
         Event::Evidence { id, evidence } => {
             if matches!(
                 evidence.source,
-                EvidenceSource::Definition | EvidenceSource::Call | EvidenceSource::LiteralMatch
+                EvidenceSource::Definition
+                    | EvidenceSource::Call
+                    | EvidenceSource::Semantic
+                    | EvidenceSource::LiteralMatch
             ) {
                 state
                     .transcript
@@ -1584,6 +1591,7 @@ mod tests {
         assert!(!should_navigate_evidence(EvidenceSource::Selection));
         assert!(should_navigate_evidence(EvidenceSource::Definition));
         assert!(should_navigate_evidence(EvidenceSource::Call));
+        assert!(should_navigate_evidence(EvidenceSource::Semantic));
         assert!(should_navigate_evidence(EvidenceSource::LiteralMatch));
         assert!(!should_navigate_evidence(EvidenceSource::Reference));
     }

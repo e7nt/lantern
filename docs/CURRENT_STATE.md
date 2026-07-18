@@ -26,7 +26,7 @@ and tool vocabulary should not become user-facing ceremony.
   reading mode for the persistent agent pane.
 - Bounded, typed composer submission over a private session-local Unix socket;
   tmux owns presentation and focus but never transports questions.
-- Maintained Rust terminal, daemon, diagnostics, and Protocol v7 crates.
+- Maintained Rust terminal, daemon, diagnostics, and Protocol v8 crates.
 - Selection capture, exact navigation, bounded local literal search, and
   Helix-provided definition/reference context.
 - Bounded two-hop outgoing-call context from Helix's active language server,
@@ -52,7 +52,7 @@ and tool vocabulary should not become user-facing ceremony.
 
 ## Current boundary
 
-Protocol v7 and the terminal open one trusted repository directly. The old
+Protocol v8 and the terminal open one trusted repository directly. The old
 policy engine, capability fields, and `/trust` commands have been removed. Pi
 runs its explicit built-in coding-tool allowlist in that repository. Raw tool
 arguments, command output, and provider stderr are not copied into Lantern's
@@ -80,9 +80,8 @@ Implement next:
 
 1. Investigate remaining provider-latency outliers without weakening the strict
    three-second gate.
-2. Design a symbol-sized incremental semantic index against the version 1
-   vocabulary-mismatch dataset. Indexing must remain outside the question path
-   and earn its storage, startup, update, and retrieval costs before retention.
+2. Measure changed-file semantic-index refresh in a real edit journey and keep
+   it outside the question path.
 
 [The persistent Pi acceptance report](acceptance/2026-07-18-persistent-pi.md)
 records a grounded warm follow-up beginning text in 1.52 seconds and settling
@@ -150,11 +149,17 @@ the implementation, Pi edits the implementation and focused test, Node
 verification passes, two expected files remain unstaged for review, and active
 inspection cancels and settles in 14 ms without changing repository state.
 
-An incremental hybrid repository index is now justified by measured misses,
-but no implementation has yet earned retention. The next candidate must index
-symbol-sized source incrementally, persist only disposable revision-keyed
-artifacts, and improve the same vocabulary-mismatch baseline without entering
-the question latency path. Commit-synchronized summaries remain conditional.
+[The retained incremental semantic index](acceptance/2026-07-18-incremental-semantic-index.md)
+adds Protocol v8 `semantic` provenance. Ready-index vocabulary-mismatch turns
+across Requests, p-limit, and Pi used zero tools and began text in 2.21–2.27
+seconds. The daemon reopens every candidate against current source before use;
+stale indexes are rejected and changed symbols reuse content-hashed vectors.
+
+The incremental hybrid repository index is retained. Its model, virtual
+environment, and revision-keyed artifacts are disposable local state. Initial
+builds run in the background; unchanged symbols reuse vectors. The next gate is
+a real changed-file refresh measurement. Commit-synchronized summaries remain
+conditional.
 
 ## Not next
 

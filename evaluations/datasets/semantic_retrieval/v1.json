@@ -32,7 +32,7 @@
       "remote": "https://github.com/earendil-works/pi.git",
       "revision": "c6d8371521fc8357958bb21fd43552c15f46c7f4",
       "question": "How does the agent recover unfinished tool invocations when generation reaches its output limit?",
-      "required_answer_terms": ["failToolCallsFromTruncatedMessage", "stopReason"],
+      "required_answer_terms": ["failToolCallsFromTruncatedMessage", "truncated"],
       "required_paths": ["packages/agent/src/agent-loop.ts"],
       "max_exact_tool_calls": 8,
       "max_first_activity_ms": 3000,

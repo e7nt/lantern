@@ -296,9 +296,10 @@ diagnostic redaction, and general supervision remain promotion work.
 
 The historical `P1-07` slice added locked workspace configuration and a
 dedicated policy crate. ADR 003 superseded that direction. Protocol v5 removed
-the policy crate, capability negotiation, and `/trust`; Protocol v7 retains the
-single trusted-workbench path and adds repository questions without requiring
-editor context. Protocol v4 and v5 fixtures remain historical evidence only.
+the policy crate, capability negotiation, and `/trust`; Protocol v8 retains the
+single trusted-workbench path, adds repository questions without requiring
+editor context, and carries verified local-semantic evidence. Protocol v4 and
+v5 fixtures remain historical evidence only.
 
 `P1-06` is deliberately deferred by
 [ADR 002](decisions/002-defer-sqlite-until-needed.md). The current session has
@@ -324,7 +325,7 @@ terminal derives compact reasons locally and reuses the existing streamed
 evidence and exact-range navigation path; it performs no additional scan,
 index, or model request.
 
-The maintained Protocol v7 product now exposes Pi's pinned coding-tool set in
+The maintained Protocol v8 product now exposes Pi's pinned coding-tool set in
 the trusted repository and submits `Ctrl-a` composer questions through a
 bounded private Unix socket. Plain questions are the only conversational path;
 selection and LSP context enrich it without creating a fallback agent mode.
