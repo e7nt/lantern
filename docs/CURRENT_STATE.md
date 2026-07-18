@@ -80,8 +80,6 @@ Implement next:
 
 1. Investigate remaining provider-latency outliers without weakening the strict
    three-second gate.
-2. Measure changed-file semantic-index refresh in a real edit journey and keep
-   it outside the question path.
 
 [The persistent Pi acceptance report](acceptance/2026-07-18-persistent-pi.md)
 records a grounded warm follow-up beginning text in 1.52 seconds and settling
@@ -157,9 +155,12 @@ stale indexes are rejected and changed symbols reuse content-hashed vectors.
 
 The incremental hybrid repository index is retained. Its model, virtual
 environment, and revision-keyed artifacts are disposable local state. Initial
-builds run in the background; unchanged symbols reuse vectors. The next gate is
-a real changed-file refresh measurement. Commit-synchronized summaries remain
-conditional.
+builds and changed-file refreshes run in the background; unchanged symbols
+reuse vectors. A real uncommitted p-limit edit refreshed in 549 ms, embedded one
+changed symbol, reused 16 vectors, and returned ready query results. Details are
+recorded in
+[the changed-file refresh report](acceptance/2026-07-18-semantic-refresh.md).
+Commit-synchronized summaries remain conditional.
 
 ## Not next
 

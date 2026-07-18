@@ -84,6 +84,27 @@ def test_build_reuses_unchanged_vectors_and_query_requires_current_revision(tmp_
     assert updated.reused == 1
 
 
+def test_uncommitted_tracked_edit_changes_revision_and_reuses_other_vectors(
+    tmp_path: Path,
+) -> None:
+    repo = repository(tmp_path / "repo")
+    embedder = FakeEmbedder()
+    index = SemanticIndex(tmp_path / "index", embedder)
+    index.build(repo)
+
+    (repo / "queue.ts").write_text(
+        "function resumeNext() {\n  queue.clear();\n}\n", encoding="utf-8"
+    )
+
+    assert index.status(repo) == "stale"
+    with pytest.raises(RuntimeError, match="stale"):
+        index.query(repo, "queue capacity")
+    refreshed = index.build(repo)
+    assert refreshed.embedded == 1
+    assert refreshed.reused == 1
+    assert index.status(repo) == "ready"
+
+
 def test_rejects_corrupt_vector_manifest_pair(tmp_path: Path) -> None:
     repo = repository(tmp_path / "repo")
     index = SemanticIndex(tmp_path / "index", FakeEmbedder())

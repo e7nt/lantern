@@ -33,6 +33,14 @@ class Embedder(Protocol):
     def query(self, text: str) -> np.ndarray: ...
 
 
+class StaleIndexError(RuntimeError):
+    pass
+
+
+class RepositoryChangedError(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True)
 class Symbol:
     relative_path: str
@@ -83,7 +91,23 @@ def git(repository: Path, *arguments: str) -> bytes:
 
 
 def repository_revision(repository: Path) -> str:
-    return git(repository, "rev-parse", "HEAD").decode().strip()
+    head = git(repository, "rev-parse", "HEAD").strip()
+    changed = git(repository, "diff", "--name-only", "-z", "HEAD", "--").split(b"\0")
+    digest = hashlib.sha256(head + b"\0")
+    for raw_path in changed:
+        if not raw_path:
+            continue
+        relative_path = Path(raw_path.decode(errors="surrogateescape"))
+        if relative_path.suffix not in SOURCE_LANGUAGES:
+            continue
+        digest.update(raw_path)
+        digest.update(b"\0")
+        path = repository / relative_path
+        if path.is_file() and not path.is_symlink():
+            digest.update(hashlib.sha256(path.read_bytes()).digest())
+        else:
+            digest.update(b"deleted-or-unsupported")
+    return digest.hexdigest()
 
 
 def tracked_paths(repository: Path) -> list[Path]:
@@ -174,6 +198,10 @@ class SemanticIndex:
         repository = repository.resolve(strict=True)
         revision = repository_revision(repository)
         symbols = extract_repository_symbols(repository)
+        if repository_revision(repository) != revision:
+            raise RepositoryChangedError(
+                "repository changed while semantic index was building; retry"
+            )
         if not symbols:
             raise RuntimeError("repository contains no supported source symbols")
         prior = self._load()
@@ -239,7 +267,7 @@ class SemanticIndex:
         manifest, vectors = loaded
         revision = repository_revision(repository.resolve(strict=True))
         if manifest["revision"] != revision:
-            raise RuntimeError("semantic index is stale; update it before querying")
+            raise StaleIndexError("semantic index is stale; update it before querying")
         query = np.asarray(self.embedder.query(question), dtype=np.float32)
         scores = vectors @ query
         indices = np.argsort(scores)[-limit:][::-1]

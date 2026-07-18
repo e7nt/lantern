@@ -148,7 +148,9 @@ impl SemanticDriver {
             let value = self.next()?;
             match value["type"].as_str() {
                 Some(kind) if kind == expected => return Ok(value),
-                Some("index_ready" | "index_failed") => continue,
+                Some(
+                    "index_refreshing" | "index_refresh_deferred" | "index_ready" | "index_failed",
+                ) => continue,
                 Some("error") => {
                     return Err(value["message"]
                         .as_str()
