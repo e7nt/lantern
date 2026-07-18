@@ -21,6 +21,7 @@ DEEPEVAL_DISABLE_DOTENV=1 uv run python run_pi_quick_ask.py
 DEEPEVAL_DISABLE_DOTENV=1 uv run python run_live_trace.py
 DEEPEVAL_DISABLE_DOTENV=1 uv run python run_retrieval_baseline.py
 DEEPEVAL_DISABLE_DOTENV=1 uv run python run_semantic_retrieval_spike.py
+DEEPEVAL_DISABLE_DOTENV=1 uv run python run_semantic_refresh.py
 DEEPEVAL_DISABLE_DOTENV=1 uv run python run_external_edit_journey.py
 ```
 
@@ -57,6 +58,13 @@ natural wording deliberately differs from the implementation identifiers. It
 records grounding, observed paths, tool count, first activity, timeout, and
 read-only state. Set `LANTERN_EVAL_CASE` to an exact case id to isolate one
 expensive live turn; unknown ids fail explicitly.
+
+`run_semantic_refresh.py` needs no provider credential. It clones the pinned
+p-limit fixture into a disposable directory, runs the real local embedding
+worker, changes indexed source without committing it, and requires the
+automatically refreshed index within three seconds. It also verifies that only
+the changed symbol is embedded, unchanged vectors are reused, and a query sees
+the new ready revision.
 
 `run_external_edit_journey.py` creates disposable Git repositories outside the
 Lantern checkout. It submits a Protocol v8 symbol-grounded change, verifies the

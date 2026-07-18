@@ -5,15 +5,17 @@ import hashlib
 import json
 import sys
 import threading
+import time
 from pathlib import Path
 
 import numpy as np
 
-from .index import MODEL_NAME, SemanticIndex
+from .index import MODEL_NAME, RepositoryChangedError, SemanticIndex, StaleIndexError
 
 PROTOCOL_VERSION = 1
 MAX_REQUEST_BYTES = 64 * 1024
 MAX_QUERY_CHARS = 4_096
+REFRESH_INTERVAL_SECONDS = 0.5
 
 
 class FastEmbedder:
@@ -39,6 +41,7 @@ class Worker:
         self.index: SemanticIndex | None = None
         self.state = "closed"
         self.failure: str | None = None
+        self.monitor_generation = 0
 
     def emit(self, value: dict) -> None:
         encoded = json.dumps(value, separators=(",", ":"))
@@ -52,14 +55,24 @@ class Worker:
     def _build(self, repository: Path, index: SemanticIndex) -> None:
         try:
             result = index.build(repository)
+        except RepositoryChangedError as cause:
+            with self.state_lock:
+                if self.repository != repository or self.index is not index:
+                    return
+                self.state = "stale"
+                self.failure = str(cause)
+            self.emit({"type": "index_refresh_deferred", "message": str(cause)})
+            return
         except Exception as cause:  # worker boundary converts failures to typed JSON
             with self.state_lock:
+                if self.repository != repository or self.index is not index:
+                    return
                 self.state = "failed"
                 self.failure = str(cause)
             self.emit({"type": "index_failed", "message": str(cause)})
             return
         with self.state_lock:
-            if self.repository != repository:
+            if self.repository != repository or self.index is not index:
                 return
             self.state = "ready"
             self.failure = None
@@ -73,12 +86,49 @@ class Worker:
             }
         )
 
+    def refresh_once(self, repository: Path, index: SemanticIndex) -> bool:
+        with self.state_lock:
+            if self.repository != repository or self.index is not index:
+                return False
+            if self.state == "building":
+                return False
+        if index.status(repository) == "ready":
+            return False
+        with self.state_lock:
+            if self.repository != repository or self.index is not index or self.state == "building":
+                return False
+            self.state = "building"
+            self.failure = None
+        self.emit({"type": "index_refreshing"})
+        self._build(repository, index)
+        return True
+
+    def _monitor(self, repository: Path, index: SemanticIndex, generation: int) -> None:
+        while True:
+            time.sleep(REFRESH_INTERVAL_SECONDS)
+            with self.state_lock:
+                if self.monitor_generation != generation or self.repository != repository:
+                    return
+                state = self.state
+            if state in {"ready", "stale"}:
+                try:
+                    self.refresh_once(repository, index)
+                except Exception as cause:  # monitor boundary reports refresh failures
+                    with self.state_lock:
+                        if self.monitor_generation != generation:
+                            return
+                        self.state = "failed"
+                        self.failure = str(cause)
+                    self.emit({"type": "index_failed", "message": str(cause)})
+
     def open_workbench(self, repository_value: str) -> None:
         repository = Path(repository_value).resolve(strict=True)
         embedder = FastEmbedder(self.model_cache)
         index = SemanticIndex(self._repository_storage(repository), embedder)
         status = index.status(repository)
         with self.state_lock:
+            self.monitor_generation += 1
+            generation = self.monitor_generation
             self.repository = repository
             self.index = index
             self.failure = None
@@ -88,6 +138,11 @@ class Worker:
         self.emit({"type": "workbench_opened", "state": self.state})
         if status != "ready":
             threading.Thread(target=self._build, args=(repository, index), daemon=True).start()
+        threading.Thread(
+            target=self._monitor,
+            args=(repository, index, generation),
+            daemon=True,
+        ).start()
 
     def query(self, request_id: int, question: str) -> None:
         if not question.strip() or len(question) > MAX_QUERY_CHARS:
@@ -108,7 +163,32 @@ class Worker:
                 }
             )
             return
-        matches = index.query(repository, question)
+        if index.status(repository) != "ready":
+            with self.state_lock:
+                self.state = "stale"
+            self.emit(
+                {
+                    "type": "query_result",
+                    "id": request_id,
+                    "state": "stale",
+                    "matches": [],
+                }
+            )
+            return
+        try:
+            matches = index.query(repository, question)
+        except StaleIndexError:
+            with self.state_lock:
+                self.state = "stale"
+            self.emit(
+                {
+                    "type": "query_result",
+                    "id": request_id,
+                    "state": "stale",
+                    "matches": [],
+                }
+            )
+            return
         self.emit(
             {
                 "type": "query_result",
@@ -141,6 +221,8 @@ class Worker:
                 elif method == "query":
                     self.query(request["id"], request["query"])
                 elif method == "shutdown":
+                    with self.state_lock:
+                        self.monitor_generation += 1
                     self.emit({"type": "shutdown"})
                     return 0
                 else:
