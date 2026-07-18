@@ -57,15 +57,20 @@ session database or ad-hoc JSON replacement.
 
 ## Implement next
 
-Complete the external edit journey defined in
-[EXTERNAL_EDIT_JOURNEY.md](EXTERNAL_EDIT_JOURNEY.md):
+The external edit journey defined in
+[EXTERNAL_EDIT_JOURNEY.md](EXTERNAL_EDIT_JOURNEY.md) now passes deterministically
+and in a subscription-backed run. The sanitized result is recorded in
+[the 2026-07-18 acceptance report](acceptance/2026-07-18-external-edit-journey.md).
+Changed-file navigation derives the first bounded Git hunk instead of always
+opening line 1.
 
-1. Prove one live journey: ask for a small change, inspect the relevant code, edit
-   it, run its focused test, and show the resulting diff.
-2. Extend the DeepEval dataset from deterministic tool-order contracts to
-   recorded live traces for natural explanation, grounding, and interruption.
-3. Tighten changed-file navigation from file start to Pi's exact edit range
-   when the pinned harness exposes that range reliably.
+Implement next:
+
+1. Extend DeepEval from deterministic trace contracts to an explicit live
+   trace runner for natural explanation, grounding, efficiency, and interruption.
+2. Establish measured LSP and exact-search baselines on representative external
+   repositories.
+3. Spike semantic/vector retrieval only for questions those baselines miss.
 
 After that journey works, spike the incremental hybrid repository index. Start
 with measured LSP/exact baselines, then add semantic/vector retrieval and

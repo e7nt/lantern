@@ -6,18 +6,21 @@
       "id": "explain-before-editing",
       "request": "Show me where request admission happens and explain it.",
       "required_order": ["search", "read"],
+      "max_calls": 4,
       "forbidden": ["edit", "write"]
     },
     {
       "id": "focused-change",
       "request": "Rename the helper, update its callers, and verify the focused behavior.",
       "required_order": ["search", "read", "edit", "bash"],
+      "max_calls": 10,
       "forbidden": []
     },
     {
       "id": "inspect-git-state",
       "request": "Show me what changed and explain the diff.",
       "required_order": ["bash"],
+      "max_calls": 3,
       "forbidden": ["edit", "write"]
     }
   ]
