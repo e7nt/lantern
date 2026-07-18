@@ -1,0 +1,194 @@
+{
+  "dataset": "retrieval_baseline",
+  "version": 5,
+  "cases": [
+    {
+      "id": "requests-prepared-request-cookie-assembly",
+      "repository": ".lantern/upstream/requests",
+      "remote": "https://github.com/psf/requests.git",
+      "revision": "f361ead047be5cb873174218582f7d8b9fcd9f49",
+      "question": "How does Session.prepare_request turn request cookies into the cookie jar used by the prepared request?",
+      "required_answer_terms": ["cookiejar_from_dict", "merge_cookies"],
+      "required_paths": ["src/requests/sessions.py", "src/requests/cookies.py"],
+      "required_lsp_evidence_sources": ["definition", "call"],
+      "max_tool_calls": 8,
+      "min_lsp_tool_calls": 0,
+      "max_lsp_tool_calls": 0,
+      "max_lsp_first_text_ms": 3000,
+      "max_settled_ms": 45000,
+      "context": {
+        "selection": {
+          "relative_path": "src/requests/sessions.py",
+          "language": "python",
+          "start_line": 511,
+          "start_column": 9,
+          "end_line": 511,
+          "end_column": 24,
+          "text": "prepare_request",
+          "document_modified": false
+        },
+        "definition": {
+          "relative_path": "src/requests/sessions.py",
+          "start_line": 511,
+          "start_column": 5,
+          "end_line": 554,
+          "end_column": 10
+        },
+        "references": [],
+        "calls": [
+          {
+            "name": "cookiejar_from_dict",
+            "depth": 1,
+            "location": {
+              "relative_path": "src/requests/cookies.py",
+              "start_line": 579,
+              "start_column": 5,
+              "end_line": 579,
+              "end_column": 24
+            }
+          },
+          {
+            "name": "merge_cookies",
+            "depth": 1,
+            "location": {
+              "relative_path": "src/requests/cookies.py",
+              "start_line": 604,
+              "start_column": 5,
+              "end_line": 604,
+              "end_column": 18
+            }
+          },
+          {
+            "name": "to_key_val_list",
+            "depth": 2,
+            "location": {
+              "relative_path": "src/requests/utils.py",
+              "start_line": 376,
+              "start_column": 5,
+              "end_line": 376,
+              "end_column": 20
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "p-limit-concurrency-validation",
+      "repository": ".lantern/upstream/p-limit",
+      "remote": "https://github.com/sindresorhus/p-limit.git",
+      "revision": "42599ebbbb1228a5bdab381fcf8f4ac20eb8d551",
+      "question": "How does pLimit reject an invalid concurrency value before creating its queue?",
+      "required_answer_terms": ["validateConcurrency", "Number.isInteger"],
+      "required_paths": ["index.js"],
+      "required_lsp_evidence_sources": ["definition", "call"],
+      "max_tool_calls": 8,
+      "min_lsp_tool_calls": 0,
+      "max_lsp_tool_calls": 0,
+      "max_lsp_first_text_ms": 3000,
+      "max_settled_ms": 45000,
+      "context": {
+        "selection": {
+          "relative_path": "index.js",
+          "language": "javascript",
+          "start_line": 3,
+          "start_column": 25,
+          "end_line": 3,
+          "end_column": 31,
+          "text": "pLimit",
+          "document_modified": false
+        },
+        "definition": {
+          "relative_path": "index.js",
+          "start_line": 3,
+          "start_column": 1,
+          "end_line": 115,
+          "end_column": 2
+        },
+        "references": [],
+        "calls": [
+          {
+            "name": "validateConcurrency",
+            "depth": 1,
+            "location": {
+              "relative_path": "index.js",
+              "start_line": 123,
+              "start_column": 10,
+              "end_line": 123,
+              "end_column": 29
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "pi-agent-loop-response-and-truncation-handoffs",
+      "repository": ".lantern/upstream/pi",
+      "remote": "https://github.com/earendil-works/pi.git",
+      "revision": "c6d8371521fc8357958bb21fd43552c15f46c7f4",
+      "question": "Which functions let runLoop stream an assistant response and then handle tool calls truncated by a stop condition?",
+      "required_answer_terms": ["streamAssistantResponse", "failToolCallsFromTruncatedMessage"],
+      "required_paths": ["packages/agent/src/agent-loop.ts"],
+      "required_lsp_evidence_sources": ["definition", "call"],
+      "max_tool_calls": 8,
+      "min_lsp_tool_calls": 0,
+      "max_lsp_tool_calls": 0,
+      "max_lsp_first_text_ms": 3000,
+      "max_settled_ms": 45000,
+      "context": {
+        "selection": {
+          "relative_path": "packages/agent/src/agent-loop.ts",
+          "language": "typescript",
+          "start_line": 155,
+          "start_column": 16,
+          "end_line": 155,
+          "end_column": 23,
+          "text": "runLoop",
+          "document_modified": false
+        },
+        "definition": {
+          "relative_path": "packages/agent/src/agent-loop.ts",
+          "start_line": 155,
+          "start_column": 1,
+          "end_line": 275,
+          "end_column": 2
+        },
+        "references": [],
+        "calls": [
+          {
+            "name": "streamAssistantResponse",
+            "depth": 1,
+            "location": {
+              "relative_path": "packages/agent/src/agent-loop.ts",
+              "start_line": 281,
+              "start_column": 16,
+              "end_line": 281,
+              "end_column": 39
+            }
+          },
+          {
+            "name": "failToolCallsFromTruncatedMessage",
+            "depth": 1,
+            "location": {
+              "relative_path": "packages/agent/src/agent-loop.ts",
+              "start_line": 383,
+              "start_column": 16,
+              "end_line": 383,
+              "end_column": 49
+            }
+          },
+          {
+            "name": "result",
+            "depth": 2,
+            "location": {
+              "relative_path": "packages/ai/src/utils/event-stream.ts",
+              "start_line": 64,
+              "start_column": 2,
+              "end_line": 64,
+              "end_column": 8
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

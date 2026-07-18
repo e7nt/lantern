@@ -134,6 +134,10 @@ probed the pinned Lazygit revision with `gopls v0.23.0`. The unchanged generic
 Protocol v7 path answered a startup-flow question with zero tools and began
 text in 2.34 seconds; exact discovery used three tools and began in 8.84
 seconds. Dataset v4 retains both the Rust and Go regressions.
+[The Python, JavaScript, and TypeScript validation](acceptance/2026-07-18-script-language-call-hierarchy.md)
+uses real Pyright and TypeScript-language-server evidence. All three Protocol
+v7 turns used zero tools and began text in 2.27–2.34 seconds. Dataset v5 pins
+the external repositories and retains the language-specific call shapes.
 The Protocol v7 external edit journey also passes: typed call evidence leads to
 the implementation, Pi edits the implementation and focused test, Node
 verification passes, two expected files remain unstaged for review, and active
