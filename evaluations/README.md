@@ -22,6 +22,7 @@ DEEPEVAL_DISABLE_DOTENV=1 uv run python run_live_trace.py
 DEEPEVAL_DISABLE_DOTENV=1 uv run python run_retrieval_baseline.py
 DEEPEVAL_DISABLE_DOTENV=1 uv run python run_semantic_retrieval_spike.py
 DEEPEVAL_DISABLE_DOTENV=1 uv run python run_semantic_refresh.py
+DEEPEVAL_DISABLE_DOTENV=1 uv run python run_cold_grounding_status.py
 DEEPEVAL_DISABLE_DOTENV=1 uv run python run_external_edit_journey.py
 ```
 
@@ -29,7 +30,7 @@ This requires Pi `0.80.6` and a private OpenAI Codex login completed through
 Pi's interactive `/login` flow. It writes a local timestamped report under
 `reports/` and exits unsuccessfully when any deterministic contract fails.
 Build Lantern first with `cargo build`; `run_live_trace.py` then exercises the
-real daemon through Protocol v8. It measures a grounded repository explanation,
+real daemon through Protocol v9. It measures a grounded repository explanation,
 repository-relative evidence use, tool efficiency, time to first tool and text,
 an under-three-second warm grounded follow-up, settling time, and cancellation
 while a tool-driven turn is active. Override
@@ -67,8 +68,13 @@ automatically refreshed index within three seconds. It also verifies that only
 the changed symbol is embedded, unchanged vectors are reused, and a query sees
 the new ready revision.
 
+`run_cold_grounding_status.py` needs no provider credential. It opens a
+disposable pinned Requests clone with a fresh real local index and requires the
+typed `preparing_index` state within one second. It does not wait for an answer;
+the gate protects truthful cold-start feedback before provider latency.
+
 `run_external_edit_journey.py` creates disposable Git repositories outside the
-Lantern checkout. It submits a Protocol v8 symbol-grounded change, verifies the
+Lantern checkout. It submits a Protocol v9 symbol-grounded change, verifies the
 exact implementation and test files, runs the focused repository test, requires
 an unstaged reviewable diff, and separately interrupts a tool-driven read. Its
 report contains only bounded tool metadata and outcome measurements.

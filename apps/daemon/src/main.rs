@@ -1,9 +1,9 @@
 use lantern_diagnostics::{Code as DiagnosticCode, Component, Level, Record, emit as diagnose};
 use lantern_protocol::{
-    ChangeProposal, Event, Evidence, EvidenceSource, FrameError, MAX_EVENT_BYTES, MAX_EVIDENCE,
-    MAX_FILE_BYTES, MAX_FILES, MAX_SELECTION_BYTES, PROTOCOL_VERSION, Request, SelectionContext,
-    SymbolContext, SymbolLocation, WorkbenchTool, read_frame, validate_relative_path,
-    validate_selection, validate_symbol_context,
+    ChangeProposal, Event, Evidence, EvidenceSource, FrameError, GroundingState, MAX_EVENT_BYTES,
+    MAX_EVIDENCE, MAX_FILE_BYTES, MAX_FILES, MAX_SELECTION_BYTES, PROTOCOL_VERSION, Request,
+    SelectionContext, SymbolContext, SymbolLocation, WorkbenchTool, read_frame,
+    validate_relative_path, validate_selection, validate_symbol_context,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -1638,6 +1638,14 @@ fn main() -> io::Result<()> {
                         continue;
                     }
                 };
+                let grounding_state = match semantic_state.as_str() {
+                    "building" | "stale" => Some(GroundingState::PreparingIndex),
+                    "failed" | "unavailable" => Some(GroundingState::RepositorySearchOnly),
+                    _ => None,
+                };
+                if let Some(state) = grounding_state {
+                    emit(&writer, &Event::GroundingState { id, state })?;
+                }
                 let Some(driver) = persistent_pi(&mut pi_driver, &repository, &writer, id) else {
                     settle(id, &operations, &writer);
                     continue;

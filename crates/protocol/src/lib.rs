@@ -3,7 +3,7 @@ use std::fmt;
 use std::io::{self, BufRead};
 use std::path::{Component, Path, PathBuf};
 
-pub const PROTOCOL_VERSION: u32 = 8;
+pub const PROTOCOL_VERSION: u32 = 9;
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const MAX_EVENT_BYTES: usize = 256 * 1024;
 pub const MAX_DIAGNOSTIC_BYTES: usize = 8 * 1024;
@@ -169,6 +169,13 @@ pub enum EvidenceSource {
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum GroundingState {
+    PreparingIndex,
+    RepositorySearchOnly,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum WorkbenchTool {
     Read,
     Grep,
@@ -215,6 +222,10 @@ pub enum Event {
     },
     Accepted {
         id: u64,
+    },
+    GroundingState {
+        id: u64,
+        state: GroundingState,
     },
     OperationStarted {
         id: u64,
@@ -607,6 +618,12 @@ mod tests {
     #[test]
     fn rejects_unknown_evidence_provenance() {
         let event = r#"{"type":"evidence","id":1,"evidence":{"source":"model_guess","relative_path":"src/lib.rs","start_line":1,"start_column":1,"end_line":1,"end_column":2,"excerpt":"x"}}"#;
+        assert!(serde_json::from_str::<Event>(event).is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_grounding_state() {
+        let event = r#"{"type":"grounding_state","id":1,"state":"estimating_progress"}"#;
         assert!(serde_json::from_str::<Event>(event).is_err());
     }
 
