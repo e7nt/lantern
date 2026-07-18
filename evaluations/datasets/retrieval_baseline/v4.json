@@ -1,0 +1,196 @@
+{
+  "dataset": "retrieval_baseline",
+  "version": 4,
+  "cases": [
+    {
+      "id": "helix-multiple-definition-locations-with-calls",
+      "repository": ".lantern/upstream/helix",
+      "revision": "14d6bc0febed9c692048271a8ae2362ac969c6e0",
+      "question": "When goto_definition returns multiple locations, how does Helix present them and what function handles the selected location?",
+      "required_answer_terms": ["Picker", "jump_to_location"],
+      "required_paths": ["helix-term/src/commands/lsp.rs"],
+      "required_lsp_evidence_sources": ["definition", "call"],
+      "max_tool_calls": 8,
+      "min_lsp_tool_calls": 0,
+      "max_lsp_tool_calls": 0,
+      "max_lsp_first_text_ms": 3000,
+      "max_settled_ms": 45000,
+      "context": {
+        "selection": {
+          "relative_path": "helix-term/src/commands/lsp.rs",
+          "language": "rust",
+          "start_line": 1024,
+          "start_column": 30,
+          "end_line": 1024,
+          "end_column": 45,
+          "text": "goto_definition",
+          "document_modified": false
+        },
+        "definition": {
+          "relative_path": "helix-lsp/src/client.rs",
+          "start_line": 1475,
+          "start_column": 5,
+          "end_line": 1495,
+          "end_column": 6
+        },
+        "references": [],
+        "calls": [
+          {
+            "name": "goto_single_impl",
+            "depth": 1,
+            "location": {
+              "relative_path": "helix-term/src/commands/lsp.rs",
+              "start_line": 946,
+              "start_column": 1,
+              "end_line": 946,
+              "end_column": 20
+            }
+          },
+          {
+            "name": "goto_impl",
+            "depth": 2,
+            "location": {
+              "relative_path": "helix-term/src/commands/lsp.rs",
+              "start_line": 914,
+              "start_column": 1,
+              "end_line": 914,
+              "end_column": 13
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "lazygit-startup-validation-and-repository-setup",
+      "repository": ".lantern/upstream/lazygit",
+      "revision": "080da5cacfcff63a89ea23493bb91b11b0612876",
+      "question": "Before Lazygit constructs its GUI, how does NewApp validate Git and prepare the repository?",
+      "required_answer_terms": ["validateGitVersion", "setupRepo"],
+      "required_paths": ["pkg/app/app.go"],
+      "required_lsp_evidence_sources": ["definition", "call"],
+      "max_tool_calls": 8,
+      "min_lsp_tool_calls": 0,
+      "max_lsp_tool_calls": 0,
+      "max_lsp_first_text_ms": 3000,
+      "max_settled_ms": 45000,
+      "context": {
+        "selection": {
+          "relative_path": "pkg/app/app.go",
+          "language": "go",
+          "start_line": 96,
+          "start_column": 6,
+          "end_line": 96,
+          "end_column": 12,
+          "text": "NewApp",
+          "document_modified": false
+        },
+        "definition": {
+          "relative_path": "pkg/app/app.go",
+          "start_line": 96,
+          "start_column": 1,
+          "end_line": 143,
+          "end_column": 2
+        },
+        "references": [
+          {
+            "relative_path": "pkg/app/app.go",
+            "start_line": 46,
+            "start_column": 15,
+            "end_line": 46,
+            "end_column": 21
+          }
+        ],
+        "calls": [
+          {
+            "name": "validateGitVersion",
+            "depth": 1,
+            "location": {
+              "relative_path": "pkg/app/app.go",
+              "start_line": 150,
+              "start_column": 18,
+              "end_line": 150,
+              "end_column": 36
+            }
+          },
+          {
+            "name": "setupRepo",
+            "depth": 1,
+            "location": {
+              "relative_path": "pkg/app/app.go",
+              "start_line": 194,
+              "start_column": 18,
+              "end_line": 194,
+              "end_column": 27
+            }
+          },
+          {
+            "name": "GetRepoPaths",
+            "depth": 1,
+            "location": {
+              "relative_path": "pkg/commands/git_commands/repo_paths.go",
+              "start_line": 72,
+              "start_column": 7,
+              "end_line": 72,
+              "end_column": 19
+            }
+          },
+          {
+            "name": "NewNullGuiIO",
+            "depth": 1,
+            "location": {
+              "relative_path": "pkg/commands/oscommands/gui_io.go",
+              "start_line": 48,
+              "start_column": 7,
+              "end_line": 48,
+              "end_column": 19
+            }
+          },
+          {
+            "name": "minGitVersionErrorMessage",
+            "depth": 2,
+            "location": {
+              "relative_path": "pkg/app/app.go",
+              "start_line": 146,
+              "start_column": 6,
+              "end_line": 146,
+              "end_column": 31
+            }
+          },
+          {
+            "name": "GetGitVersion",
+            "depth": 2,
+            "location": {
+              "relative_path": "pkg/commands/git_commands/version.go",
+              "start_line": 17,
+              "start_column": 7,
+              "end_line": 17,
+              "end_column": 20
+            }
+          },
+          {
+            "name": "ParseGitVersion",
+            "depth": 2,
+            "location": {
+              "relative_path": "pkg/commands/git_commands/version.go",
+              "start_line": 31,
+              "start_column": 7,
+              "end_line": 31,
+              "end_column": 22
+            }
+          },
+          {
+            "name": "IsOlderThanVersion",
+            "depth": 2,
+            "location": {
+              "relative_path": "pkg/commands/git_commands/version.go",
+              "start_line": 69,
+              "start_column": 23,
+              "end_line": 69,
+              "end_column": 41
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

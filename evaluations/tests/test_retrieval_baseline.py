@@ -7,7 +7,7 @@ from run_retrieval_baseline import comparison, evaluate_result
 
 
 DATASET_PATH = Path(__file__).parents[1] / "datasets" / "retrieval_baseline" / "v2.json"
-CALL_DATASET_PATH = Path(__file__).parents[1] / "datasets" / "retrieval_baseline" / "v3.json"
+CALL_DATASET_PATH = Path(__file__).parents[1] / "datasets" / "retrieval_baseline" / "v4.json"
 
 
 @pytest.fixture(scope="module")
@@ -61,11 +61,15 @@ def test_dataset_pins_external_repositories_and_explicit_lsp_budgets(
 
 def test_call_hierarchy_dataset_requires_typed_call_evidence() -> None:
     dataset = json.loads(CALL_DATASET_PATH.read_text(encoding="utf-8"))
-    assert dataset["version"] == 3
-    case = dataset["cases"][0]
-    assert case["required_lsp_evidence_sources"] == ["definition", "call"]
-    assert [call["depth"] for call in case["context"]["calls"]] == [1, 2]
-    assert case["max_lsp_tool_calls"] == 0
+    assert dataset["version"] == 4
+    assert {case["context"]["selection"]["language"] for case in dataset["cases"]} == {
+        "go",
+        "rust",
+    }
+    for case in dataset["cases"]:
+        assert case["required_lsp_evidence_sources"] == ["definition", "call"]
+        assert {call["depth"] for call in case["context"]["calls"]} == {1, 2}
+        assert case["max_lsp_tool_calls"] == 0
 
 
 @pytest.mark.parametrize("mode", ["exact", "lsp"])

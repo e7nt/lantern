@@ -78,11 +78,9 @@ opening line 1.
 
 Implement next:
 
-1. Add one non-Rust call-hierarchy case before expanding the signal beyond its
-   current bounded two-hop shape.
-2. Investigate remaining provider-latency outliers without weakening the strict
+1. Investigate remaining provider-latency outliers without weakening the strict
    three-second gate.
-3. Spike semantic/vector retrieval only for a measured miss; do not add it to
+2. Spike semantic/vector retrieval only for a measured miss; do not add it to
    the current passing cases.
 
 [The persistent Pi acceptance report](acceptance/2026-07-18-persistent-pi.md)
@@ -131,6 +129,11 @@ same Helix question used zero tools, began text in 2.34, 2.08, and 2.13 seconds
 (2.13-second median), and remained grounded and read-only. The previous
 incomplete-evidence baseline used three tools with a 3.22-second first-activity
 median.
+[The Go call-hierarchy validation](acceptance/2026-07-18-go-call-hierarchy.md)
+probed the pinned Lazygit revision with `gopls v0.23.0`. The unchanged generic
+Protocol v7 path answered a startup-flow question with zero tools and began
+text in 2.34 seconds; exact discovery used three tools and began in 8.84
+seconds. Dataset v4 retains both the Rust and Go regressions.
 The Protocol v7 external edit journey also passes: typed call evidence leads to
 the implementation, Pi edits the implementation and focused test, Node
 verification passes, two expected files remain unstaged for review, and active
