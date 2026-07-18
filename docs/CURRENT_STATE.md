@@ -75,10 +75,12 @@ opening line 1.
 
 Implement next:
 
-1. Reduce the incomplete-evidence Helix case from a repeated three-tool
-   grep/read/read sequence to the narrowest grounded lookup.
-2. Reduce remaining first-activity outliers without weakening the strict
-   three-second gate, then repeat the multi-step live journey at medium.
+1. Add a bounded Helix/LSP outgoing-call export with typed protocol provenance,
+   using the two-hop limit proven by the call-hierarchy spike.
+2. Rerun the incomplete-evidence Helix case and retain the signal only if it
+   removes redundant tools and improves first useful activity.
+3. Reduce remaining outliers without weakening the strict three-second gate,
+   then repeat the multi-step live journey at medium.
 3. Spike semantic/vector retrieval only for a measured miss; do not add it to
    the current passing cases.
 
@@ -117,6 +119,12 @@ Across three live runs it correctly escalated, remained grounded and read-only,
 and used three bounded tools, but first activity arrived in 3.59, 3.22, and
 2.93 seconds. Its 3.22-second median is a recorded failure and the next measured
 optimization target.
+[The call-hierarchy spike](acceptance/2026-07-18-call-hierarchy-spike.md)
+confirmed that rust-analyzer returns `goto_definition → goto_single_impl →
+goto_impl`, directly locating the missing behavior. A contextual-grep prompt
+experiment did not change the three-tool sequence and was reverted. The next
+retrieval component is therefore bounded typed call structure, not semantic
+vectors or more prompt text.
 
 An incremental hybrid repository index remains conditional. Add
 semantic/vector retrieval or commit-synchronized summaries only when a curated
