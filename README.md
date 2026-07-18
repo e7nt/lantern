@@ -111,6 +111,15 @@ uv run ruff format --check .
 uv run ruff check .
 ```
 
+Run the local semantic worker contracts independently:
+
+```bash
+cd services/semantic-index
+uv run pytest
+uv run ruff format --check .
+uv run ruff check .
+```
+
 Live provider evaluation is explicit and credential-dependent; it is not part
 of ordinary contributor CI. See
 [evaluations/README.md](evaluations/README.md) for the separate command.
