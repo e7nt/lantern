@@ -682,6 +682,13 @@ fn navigate(evidence: &Evidence) -> io::Result<()> {
     )
 }
 
+fn should_navigate_evidence(source: EvidenceSource) -> bool {
+    matches!(
+        source,
+        EvidenceSource::Definition | EvidenceSource::LiteralMatch
+    )
+}
+
 fn navigate_range(
     relative_path: &Path,
     start_line: usize,
@@ -1176,7 +1183,7 @@ fn handle_daemon_event(
                     .push(TranscriptItem::Evidence(evidence.clone()));
                 state.scroll_from_bottom = 0;
             }
-            if state.navigated_for != Some(id) {
+            if state.navigated_for != Some(id) && should_navigate_evidence(evidence.source) {
                 if let Err(cause) = navigate(&evidence) {
                     state.line(format!("Navigation failed: {cause}"));
                 }
@@ -1567,6 +1574,14 @@ mod tests {
         assert!(rendered.contains("Selected code · exact code highlighted in Helix"));
         assert!(rendered.contains("Definition · symbol definition resolved by Helix"));
         assert!(!rendered.contains("private source body"));
+    }
+
+    #[test]
+    fn resolved_definitions_take_navigation_priority_over_the_current_selection() {
+        assert!(!should_navigate_evidence(EvidenceSource::Selection));
+        assert!(should_navigate_evidence(EvidenceSource::Definition));
+        assert!(should_navigate_evidence(EvidenceSource::LiteralMatch));
+        assert!(!should_navigate_evidence(EvidenceSource::Reference));
     }
 
     #[test]

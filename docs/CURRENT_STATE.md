@@ -29,6 +29,8 @@ and tool vocabulary should not become user-facing ceremony.
 - Maintained Rust terminal, daemon, diagnostics, and Protocol v6 crates.
 - Selection capture, exact navigation, bounded local literal search, and
   Helix-provided definition/reference context.
+- Evidence-first symbol questions with bounded saved call-site and definition
+  excerpts; the resolved definition opens in Helix before the model answers.
 - Trusted-workbench initialization with repository-bound requests and no
   capability ceremony.
 - Selection- and symbol-grounded Pi RPC questions using Pi-owned OpenAI Codex
@@ -73,10 +75,11 @@ opening line 1.
 
 Implement next:
 
-1. Reduce redundant discovery when typed selection, definition, and reference
-   evidence already answers the developer's question.
-2. Expand the external baseline with questions that exact and LSP evidence may
-   genuinely miss.
+1. Expand the external baseline with sufficient, incomplete, and multi-step LSP
+   questions, repeated enough to compare reasoning levels without hiding
+   variance.
+2. Dynamically use lower reasoning only if it preserves grounding and coding
+   quality while bringing sufficient-evidence answers below three seconds.
 3. Spike semantic/vector retrieval only for a measured miss; do not add it to
    the current passing cases.
 
@@ -101,6 +104,13 @@ found that typed LSP context produced useful text 4.9 seconds sooner on Helix
 and 16.2 seconds sooner on Lazygit while removing two and eight tool calls. All
 answers were grounded; exact-only Lazygit failed the efficiency ceiling. This
 does not justify a semantic index yet.
+
+[The evidence-first LSP report](acceptance/2026-07-18-evidence-first-lsp.md)
+records zero-tool grounded answers on both repositories. Helix began text in
+2.37 seconds. Lazygit required no tools after call-site enrichment but began in
+3.46 and 4.53 seconds at medium reasoning. A low-reasoning diagnostic passed at
+2.46 seconds, but Lantern has not traded general coding quality for that result
+without broader evidence.
 
 An incremental hybrid repository index remains conditional. Add
 semantic/vector retrieval or commit-synchronized summaries only when a curated

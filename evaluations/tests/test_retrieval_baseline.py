@@ -45,6 +45,8 @@ def test_dataset_pins_distinct_external_repositories(cases: list[dict]) -> None:
         assert len(case["revision"]) == 40
         assert not case["repository"].startswith("/")
         assert case["required_paths"]
+        assert case["max_lsp_tool_calls"] == 0
+        assert case["max_lsp_first_text_ms"] == 3000
 
 
 @pytest.mark.parametrize("mode", ["exact", "lsp"])
@@ -70,6 +72,17 @@ def test_retrieval_contract_rejects_repository_mutation(cases: list[dict]) -> No
     passed, failures = evaluate_result(result, case, "exact")
     assert not passed
     assert any("changed repository state" in failure for failure in failures)
+
+
+def test_lsp_contract_rejects_redundant_discovery_and_slow_text(cases: list[dict]) -> None:
+    case = cases[0]
+    result = result_for(case, mode="lsp")
+    result["tools"] = [{"tool": "grep", "relative_path": None}]
+    result["first_text_ms"] = 3100
+    passed, failures = evaluate_result(result, case, "lsp")
+    assert not passed
+    assert any("maximum is 0" in failure for failure in failures)
+    assert any("LSP first text" in failure for failure in failures)
 
 
 def test_comparison_reports_lsp_minus_exact() -> None:
