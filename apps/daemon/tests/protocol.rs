@@ -604,6 +604,19 @@ elif [[ ${LANTERN_FAKE_PI_MODE:?} == tools ]]; then
     printf '%s\n' '{"type":"tool_execution_end","toolCallId":"call-read","toolName":"read","result":{"content":[]},"isError":false}'
     printf '%s\n' '{"type":"tool_execution_start","toolCallId":"call-edit","toolName":"edit","args":{"path":"sample.rs"}}'
     printf '%s\n' '{"type":"tool_execution_end","toolCallId":"call-edit","toolName":"edit","result":{"content":[]},"isError":false}'
+elif [[ ${LANTERN_FAKE_PI_MODE:?} == journey ]]; then
+    printf '%s\n' '{"type":"tool_execution_start","toolCallId":"call-read","toolName":"read","args":{"path":"sample.rs"}}'
+    printf '%s\n' '{"type":"tool_execution_end","toolCallId":"call-read","toolName":"read","result":{"content":[]},"isError":false}'
+    printf '%s\n' '{"type":"tool_execution_start","toolCallId":"call-edit","toolName":"edit","args":{"path":"sample.rs"}}'
+    printf '%s\n' 'pub fn greeting() -> &str { "new" }' > sample.rs
+    printf '%s\n' '{"type":"tool_execution_end","toolCallId":"call-edit","toolName":"edit","result":{"content":[]},"isError":false}'
+    printf '%s\n' '{"type":"tool_execution_start","toolCallId":"call-test","toolName":"bash","args":{"command":"./focused-test.sh"}}'
+    if ./focused-test.sh; then
+        printf '%s\n' '{"type":"tool_execution_end","toolCallId":"call-test","toolName":"bash","result":{"content":[]},"isError":false}'
+    else
+        printf '%s\n' '{"type":"tool_execution_end","toolCallId":"call-test","toolName":"bash","result":{"content":[]},"isError":true}'
+    fi
+    printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Updated the greeting and verified it with the focused test."}}'
 else
     printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Evidence-grounded "}}'
     printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"answer."}}'
@@ -885,6 +898,108 @@ fn repository_question_reaches_pi_without_editor_context() {
     assert!(prompt.contains("No editor selection was supplied"));
     assert!(prompt.contains("What does this project do?"));
     assert!(!prompt.contains("Selected source"));
+    fs::remove_dir_all(root).expect("remove repository fixture");
+    fs::remove_dir_all(driver).expect("remove driver fixture");
+}
+
+#[cfg(unix)]
+#[test]
+fn external_repository_journey_edits_tests_and_leaves_a_reviewable_diff() {
+    use lantern_protocol::WorkbenchTool;
+
+    let root = fixture(
+        "external-edit-journey",
+        "pub fn greeting() -> &'static str { \"old\" }\n",
+    );
+    let test_path = root.join("focused-test.sh");
+    fs::write(
+        &test_path,
+        "#!/usr/bin/env bash\nset -euo pipefail\ngrep -q '\"new\"' sample.rs\n",
+    )
+    .expect("write focused test");
+    let mut permissions = fs::metadata(&test_path)
+        .expect("test metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&test_path, permissions).expect("make focused test executable");
+    for arguments in [
+        vec!["init", "-q"],
+        vec!["add", "sample.rs", "focused-test.sh"],
+        vec![
+            "-c",
+            "user.name=Lantern Test",
+            "-c",
+            "user.email=lantern@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-qm",
+            "baseline",
+        ],
+    ] {
+        assert!(
+            Command::new("git")
+                .args(arguments)
+                .current_dir(&root)
+                .status()
+                .expect("run Git fixture command")
+                .success()
+        );
+    }
+
+    let driver = fixture("external-edit-journey-driver", "private\n");
+    let pi_bin = fake_pi(&driver);
+    let mut daemon = Daemon::spawn_with_pi(&pi_bin, &driver, "journey");
+    daemon.initialize();
+    daemon.open(&root);
+    daemon.send(&Request::AskAgent {
+        id: 36,
+        repository: root.clone(),
+        query: "Change the greeting from old to new and run the focused test.".into(),
+    });
+
+    let mut tools = Vec::new();
+    let mut answer = String::new();
+    let mut completed = false;
+    loop {
+        match daemon.next() {
+            Event::ToolStarted { id: 36, tool, .. } => tools.push(tool),
+            Event::ToolFinished {
+                id: 36,
+                success: false,
+                ..
+            } => panic!("journey tool failed"),
+            Event::TextDelta { id: 36, delta } => answer.push_str(&delta),
+            Event::Completed { id: 36, .. } => completed = true,
+            Event::Settled { id: 36 } => break,
+            _ => {}
+        }
+    }
+
+    assert_eq!(
+        tools,
+        [
+            WorkbenchTool::Read,
+            WorkbenchTool::Edit,
+            WorkbenchTool::Bash
+        ]
+    );
+    assert!(completed, "journey must complete before settlement");
+    assert!(answer.contains("verified"));
+    assert_eq!(
+        fs::read_to_string(root.join("sample.rs")).expect("read changed file"),
+        "pub fn greeting() -> &str { \"new\" }\n"
+    );
+    let diff = Command::new("git")
+        .args(["diff", "--", "sample.rs"])
+        .current_dir(&root)
+        .output()
+        .expect("read journey diff");
+    assert!(diff.status.success());
+    let diff = String::from_utf8(diff.stdout).expect("UTF-8 diff");
+    assert!(diff.contains("-pub fn greeting() -> &'static str { \"old\" }"));
+    assert!(diff.contains("+pub fn greeting() -> &str { \"new\" }"));
+
     fs::remove_dir_all(root).expect("remove repository fixture");
     fs::remove_dir_all(driver).expect("remove driver fixture");
 }
