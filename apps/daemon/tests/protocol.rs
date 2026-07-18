@@ -576,6 +576,35 @@ set -euo pipefail
 capture_dir=$(cd "$(dirname "$0")" && pwd)
 printf '%s\n' "$*" > "$capture_dir/invocation.args"
 printf '%s\n' "$$" > "$capture_dir/pi.pid"
+if [[ ${LANTERN_FAKE_PI_MODE:?} == persistent-cancel ]]; then
+    IFS= read -r prompt
+    printf '%s\n' "$prompt" >> "$capture_dir/prompts.jsonl"
+    printf '%s\n' '{"type":"response","command":"prompt","success":true}'
+    printf '%s\n' '{"type":"tool_execution_start","toolCallId":"call-read","toolName":"read","args":{"path":"sample.rs"}}'
+    IFS= read -r abort
+    printf '%s\n' "$abort" > "$capture_dir/abort.json"
+    printf '%s\n' '{"type":"response","command":"abort","success":true}'
+    printf '%s\n' '{"type":"agent_settled"}'
+    IFS= read -r prompt
+    printf '%s\n' "$prompt" >> "$capture_dir/prompts.jsonl"
+    printf '%s\n' '{"type":"response","command":"prompt","success":true}'
+    printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"continued after cancellation"}}'
+    printf '%s\n' '{"type":"agent_settled"}'
+    while IFS= read -r _; do :; done
+    exit 0
+fi
+if [[ ${LANTERN_FAKE_PI_MODE:?} == persistent ]]; then
+    turn=0
+    while IFS= read -r prompt; do
+        turn=$((turn + 1))
+        printf '%s\n' "$prompt" >> "$capture_dir/prompts.jsonl"
+        printf '%s\n' '{"type":"response","command":"prompt","success":true}'
+        printf '%s\n' "{\"type\":\"message_update\",\"assistantMessageEvent\":{\"type\":\"text_delta\",\"delta\":\"warm turn $turn\"}}"
+        printf '%s\n' '{"type":"agent_end","willRetry":false}'
+        printf '%s\n' '{"type":"agent_settled"}'
+    done
+    exit 0
+fi
 IFS= read -r prompt
 printf '%s\n' "$prompt" > "$capture_dir/prompt.json"
 printf '%s\n' '{"type":"response","command":"prompt","success":true}'
@@ -630,6 +659,101 @@ printf '%s\n' '{"type":"agent_settled"}'
     permissions.set_mode(0o755);
     fs::set_permissions(&path, permissions).expect("make fake Pi executable");
     path
+}
+
+#[test]
+fn reuses_one_pi_process_for_sequential_agent_turns() {
+    let root = fixture("persistent-pi", "fn context() {}\n");
+    let pi = fake_pi(&root);
+    let mut daemon = Daemon::spawn_with_pi(&pi, &root, "persistent");
+    daemon.initialize();
+    daemon.trust_model(&root);
+
+    let mut answers = Vec::new();
+    for (id, query) in [
+        (70, "inspect the context"),
+        (71, "continue from that context"),
+    ] {
+        daemon.send(&Request::AskAgent {
+            id,
+            repository: root.clone(),
+            query: query.into(),
+        });
+        let mut answer = String::new();
+        loop {
+            match daemon.next() {
+                Event::TextDelta {
+                    id: event_id,
+                    delta,
+                } if event_id == id => answer.push_str(&delta),
+                Event::Settled { id: event_id } if event_id == id => break,
+                _ => {}
+            }
+        }
+        answers.push(answer);
+    }
+
+    assert_eq!(answers, ["warm turn 1", "warm turn 2"]);
+    assert_eq!(
+        fs::read_to_string(root.join("prompts.jsonl"))
+            .expect("read captured prompts")
+            .lines()
+            .count(),
+        2
+    );
+    let pid = fs::read_to_string(root.join("pi.pid")).expect("read Pi pid");
+    daemon.send(&Request::Shutdown);
+    drop(daemon);
+    let status = Command::new("kill")
+        .args(["-0", pid.trim()])
+        .output()
+        .expect("probe Pi process")
+        .status;
+    assert!(
+        !status.success(),
+        "Pi process {pid} survived daemon shutdown"
+    );
+    fs::remove_dir_all(root).expect("remove fixture");
+}
+
+#[test]
+fn reuses_the_pi_process_after_cancelling_a_turn() {
+    let root = fixture("persistent-pi-cancel", "fn context() {}\n");
+    let pi = fake_pi(&root);
+    let mut daemon = Daemon::spawn_with_pi(&pi, &root, "persistent-cancel");
+    daemon.initialize();
+    daemon.trust_model(&root);
+    daemon.send(&Request::AskAgent {
+        id: 72,
+        repository: root.clone(),
+        query: "start inspection".into(),
+    });
+    while !matches!(daemon.next(), Event::ToolStarted { id: 72, .. }) {}
+    daemon.send(&Request::Cancel { id: 72 });
+    while !matches!(daemon.next(), Event::Settled { id: 72 }) {}
+
+    daemon.send(&Request::AskAgent {
+        id: 73,
+        repository: root.clone(),
+        query: "continue safely".into(),
+    });
+    let mut answer = String::new();
+    loop {
+        match daemon.next() {
+            Event::TextDelta { id: 73, delta } => answer.push_str(&delta),
+            Event::Settled { id: 73 } => break,
+            _ => {}
+        }
+    }
+    assert_eq!(answer, "continued after cancellation");
+    assert_eq!(
+        fs::read_to_string(root.join("prompts.jsonl"))
+            .expect("read captured prompts")
+            .lines()
+            .count(),
+        2
+    );
+    fs::remove_dir_all(root).expect("remove fixture");
 }
 
 #[test]
@@ -1172,6 +1296,31 @@ fn reaps_pi_after_a_malformed_stream_event() {
         let _ = Command::new("kill").args(["-9", pid.trim()]).status();
     }
     assert!(!alive, "Pi process {pid} survived malformed stream cleanup");
+    daemon.send(&Request::AskAgent {
+        id: 29,
+        repository: root.clone(),
+        query: "Do not restart silently".into(),
+    });
+    let mut failed_visibly = false;
+    loop {
+        match daemon.next() {
+            Event::Error {
+                id: Some(29),
+                message,
+                ..
+            } if message.contains("cannot send Pi command") => failed_visibly = true,
+            Event::Settled { id: 29 } => break,
+            _ => {}
+        }
+    }
+    assert!(
+        failed_visibly,
+        "dead persistent Pi driver was silently replaced"
+    );
+    assert_eq!(
+        fs::read_to_string(model_workdir.join("pi.pid")).expect("read retained Pi pid"),
+        pid
+    );
     fs::remove_dir_all(root).expect("remove repository fixture");
     fs::remove_dir_all(model_workdir).expect("remove model fixture");
 }

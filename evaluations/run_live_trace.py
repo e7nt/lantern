@@ -252,6 +252,41 @@ def evaluate_interruption(result: dict, contract: dict) -> tuple[bool, list[str]
     return not failures, failures
 
 
+def evaluate_warm_follow_up(result: dict, contract: dict) -> tuple[bool, list[str]]:
+    failures = []
+    answer = result["answer"].casefold()
+    missing_terms = [
+        term for term in contract["required_answer_terms"] if term.casefold() not in answer
+    ]
+    if missing_terms:
+        failures.append(f"answer omitted required grounded terms: {missing_terms}")
+    trace = [tool["tool"] for tool in result["tools"]]
+    metric = ToolJourneyContractMetric(
+        required_order=[],
+        forbidden=contract["forbidden_tools"],
+        max_calls=contract["max_tool_calls"],
+    )
+    metric.measure(LLMTestCase(input=contract["question"], actual_output=json.dumps(trace)))
+    if not metric.is_successful():
+        failures.append(metric.reason)
+    if result["outcome"] != "completed":
+        failures.append(f"operation outcome was {result['outcome']!r}, expected 'completed'")
+    first_text_ms = result["first_text_ms"]
+    if first_text_ms is None or first_text_ms > contract["max_first_text_ms"]:
+        failures.append(
+            f"first text arrived in {first_text_ms!r} ms; maximum is "
+            f"{contract['max_first_text_ms']} ms"
+        )
+    if result["settled_ms"] > contract["max_settled_ms"]:
+        failures.append(
+            f"operation settled in {result['settled_ms']} ms; maximum is "
+            f"{contract['max_settled_ms']} ms"
+        )
+    if not result["fixture_unchanged"]:
+        failures.append("warm follow-up modified the repository fixture")
+    return not failures, failures
+
+
 def git_revision() -> str:
     return subprocess.run(
         ["git", "rev-parse", "HEAD"],
@@ -303,11 +338,21 @@ def main() -> int:
                 dataset["explanation"]["question"],
             )
             explanation["fixture_unchanged"] = snapshot_repository(repository) == fixture_snapshot
-            interruption = run_operation(
+            warm_follow_up = run_operation(
                 process,
                 reader,
                 repository,
                 2,
+                dataset["warm_follow_up"]["question"],
+            )
+            warm_follow_up["fixture_unchanged"] = (
+                snapshot_repository(repository) == fixture_snapshot
+            )
+            interruption = run_operation(
+                process,
+                reader,
+                repository,
+                3,
                 dataset["interruption"]["question"],
                 dataset["interruption"]["cancel_after"],
             )
@@ -324,10 +369,13 @@ def main() -> int:
     explanation_passed, explanation_failures = evaluate_explanation(
         explanation, dataset["explanation"]
     )
+    warm_follow_up_passed, warm_follow_up_failures = evaluate_warm_follow_up(
+        warm_follow_up, dataset["warm_follow_up"]
+    )
     interruption_passed, interruption_failures = evaluate_interruption(
         interruption, dataset["interruption"]
     )
-    passed = explanation_passed and interruption_passed
+    passed = explanation_passed and warm_follow_up_passed and interruption_passed
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     report = {
         "dataset": dataset["dataset"],
@@ -346,6 +394,12 @@ def main() -> int:
                 "passed": explanation_passed,
                 "failures": explanation_failures,
                 **explanation,
+            },
+            {
+                "case_id": dataset["warm_follow_up"]["id"],
+                "passed": warm_follow_up_passed,
+                "failures": warm_follow_up_failures,
+                **warm_follow_up,
             },
             {
                 "case_id": dataset["interruption"]["id"],

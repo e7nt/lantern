@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -17,12 +17,13 @@ use std::time::Instant;
 
 type SharedWriter = Arc<Mutex<BufWriter<io::Stdout>>>;
 type Operations = Arc<Mutex<HashMap<u64, Arc<Cancellation>>>>;
+type PiStdin = Arc<Mutex<BufWriter<ChildStdin>>>;
 
 #[derive(Default)]
 struct Cancellation {
     requested: AtomicBool,
     requested_at: Mutex<Option<Instant>>,
-    abort_stdin: Mutex<Option<ChildStdin>>,
+    abort_stdin: Mutex<Option<PiStdin>>,
 }
 
 struct ChildGuard {
@@ -54,22 +55,123 @@ impl Drop for ChildGuard {
     }
 }
 
+struct PiDriver {
+    root: PathBuf,
+    model: String,
+    stdin: PiStdin,
+    stdout: Mutex<BufReader<ChildStdout>>,
+    process: Mutex<ChildGuard>,
+    stderr_reader: Mutex<Option<thread::JoinHandle<bool>>>,
+}
+
+impl PiDriver {
+    fn spawn(root: PathBuf) -> Result<Self, String> {
+        let pi_bin =
+            std::env::var_os("LANTERN_PI_BIN").ok_or("LANTERN_PI_BIN is not configured")?;
+        let model =
+            std::env::var("LANTERN_PI_MODEL").map_err(|_| "LANTERN_PI_MODEL is not configured")?;
+        let mut process = ChildGuard::new(
+            Command::new(pi_bin)
+                .args([
+                "--mode",
+                "rpc",
+                "--provider",
+                "openai-codex",
+                "--model",
+                &model,
+                "--no-session",
+                "--tools",
+                "read,grep,find,ls,edit,write,bash",
+                "--no-extensions",
+                "--no-skills",
+                "--no-prompt-templates",
+                "--no-context-files",
+                "--no-approve",
+                "--system-prompt",
+                "You are Lantern's coding agent inside a trusted repository. Help the developer understand and write code. Inspect before making claims and use the fewest useful tool calls: do not repeat equivalent discovery, and prefer a targeted read or search over broad exploration. Make focused edits, run the narrowest useful verification, and use Git deliberately. Lantern already shows tool activity, so do not narrate routine tool steps. After the work, give one concise result with verification and any real caveat. Never expose credentials or unrelated private data.",
+                ])
+                .current_dir(&root)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .map_err(|cause| format!("cannot start Pi RPC driver: {cause}"))?,
+        );
+        let stdin = Arc::new(Mutex::new(BufWriter::new(
+            process
+                .process
+                .stdin
+                .take()
+                .ok_or("Pi stdin is unavailable")?,
+        )));
+        let stdout = Mutex::new(BufReader::new(
+            process
+                .process
+                .stdout
+                .take()
+                .ok_or("Pi stdout is unavailable")?,
+        ));
+        let stderr = process
+            .process
+            .stderr
+            .take()
+            .ok_or("Pi stderr is unavailable")?;
+        let stderr_reader = thread::spawn(move || drain_provider_stderr(stderr));
+        Ok(Self {
+            root,
+            model,
+            stdin,
+            stdout,
+            process: Mutex::new(process),
+            stderr_reader: Mutex::new(Some(stderr_reader)),
+        })
+    }
+
+    fn send(&self, value: &serde_json::Value) -> Result<(), String> {
+        let mut stdin = self.stdin.lock().expect("Pi stdin lock");
+        serde_json::to_writer(&mut *stdin, value)
+            .map_err(|cause| format!("cannot encode Pi command: {cause}"))?;
+        stdin
+            .write_all(b"\n")
+            .and_then(|()| stdin.flush())
+            .map_err(|cause| format!("cannot send Pi command: {cause}"))
+    }
+
+    fn stop(&self) {
+        self.process.lock().expect("Pi process lock").stop();
+        if let Some(reader) = self.stderr_reader.lock().expect("Pi stderr lock").take() {
+            let _ = reader.join();
+        }
+    }
+}
+
+impl Drop for PiDriver {
+    fn drop(&mut self) {
+        self.process.get_mut().expect("Pi process lock").stop();
+        if let Some(reader) = self.stderr_reader.get_mut().expect("Pi stderr lock").take() {
+            let _ = reader.join();
+        }
+    }
+}
+
 impl Cancellation {
     fn request(&self) {
         *self.requested_at.lock().expect("cancellation time lock") = Some(Instant::now());
         self.requested.store(true, Ordering::Release);
         if let Some(stdin) = self.abort_stdin.lock().expect("abort stdin lock").as_mut() {
+            let mut stdin = stdin.lock().expect("Pi stdin lock");
             let _ = stdin.write_all(b"{\"type\":\"abort\"}\n");
             let _ = stdin.flush();
         }
     }
 
-    fn attach_abort(&self, stdin: ChildStdin) {
+    fn attach_abort(&self, stdin: PiStdin) {
         let mut abort_stdin = self.abort_stdin.lock().expect("abort stdin lock");
         *abort_stdin = Some(stdin);
         if self.requested.load(Ordering::Acquire)
             && let Some(stdin) = abort_stdin.as_mut()
         {
+            let mut stdin = stdin.lock().expect("Pi stdin lock");
             let _ = stdin.write_all(b"{\"type\":\"abort\"}\n");
             let _ = stdin.flush();
         }
@@ -620,7 +722,7 @@ enum AgentContext {
 
 fn run_pi_operation(
     id: u64,
-    repository: PathBuf,
+    driver: Arc<PiDriver>,
     query: String,
     agent_context: AgentContext,
     cancellation: Arc<Cancellation>,
@@ -642,7 +744,7 @@ fn run_pi_operation(
                 return Err("symbol context selection does not match the agent selection".into());
             }
         }
-        let root = canonical_repository(&repository)?;
+        let root = driver.root.clone();
         if let Some(selection) = &selection {
             let selected_path = root.join(&selection.relative_path);
             let canonical_path = selected_path.canonicalize().map_err(|cause| {
@@ -656,15 +758,11 @@ fn run_pi_operation(
             }
         }
 
-        let pi_bin =
-            std::env::var_os("LANTERN_PI_BIN").ok_or("LANTERN_PI_BIN is not configured")?;
-        let model =
-            std::env::var("LANTERN_PI_MODEL").map_err(|_| "LANTERN_PI_MODEL is not configured")?;
         emit(
             &writer,
             &Event::OperationStarted {
                 id,
-                search_term: format!("Pi {model}"),
+                search_term: format!("Pi {}", driver.model),
             },
         )
         .map_err(|cause| format!("cannot stream operation start: {cause}"))?;
@@ -725,38 +823,6 @@ fn run_pi_operation(
             }
         }
 
-        let mut child = ChildGuard::new(
-            Command::new(pi_bin)
-            .args([
-                "--mode",
-                "rpc",
-                "--provider",
-                "openai-codex",
-                "--model",
-                &model,
-                "--no-session",
-                "--tools",
-                "read,grep,find,ls,edit,write,bash",
-                "--no-extensions",
-                "--no-skills",
-                "--no-prompt-templates",
-                "--no-context-files",
-                "--no-approve",
-                "--system-prompt",
-                "You are Lantern's coding agent inside a trusted repository. Help the developer understand and write code. Inspect before making claims and use the fewest useful tool calls: do not repeat equivalent discovery, and prefer a targeted read or search over broad exploration. Make focused edits, run the narrowest useful verification, and use Git deliberately. Lantern already shows tool activity, so do not narrate routine tool steps. After the work, give one concise result with verification and any real caveat. Never expose credentials or unrelated private data.",
-            ])
-            .current_dir(&root)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|cause| format!("cannot start Pi RPC driver: {cause}"))?,
-        );
-        let mut stdin = child
-            .process
-            .stdin
-            .take()
-            .ok_or("Pi stdin is unavailable")?;
         let symbol_prompt = symbol_evidence
             .iter()
             .map(|(kind, evidence)| {
@@ -787,32 +853,22 @@ fn run_pi_operation(
             ),
         );
         let prompt = format!("{editor_context}\n\nDeveloper question: {query}");
-        serde_json::to_writer(
-            &mut stdin,
-            &serde_json::json!({"id":"lantern-turn","type":"prompt","message":prompt}),
-        )
-        .map_err(|cause| format!("cannot encode Pi prompt: {cause}"))?;
-        stdin
-            .write_all(b"\n")
-            .and_then(|()| stdin.flush())
-            .map_err(|cause| format!("cannot send Pi prompt: {cause}"))?;
-        cancellation.attach_abort(stdin);
+        driver.send(
+            &serde_json::json!({"id":format!("lantern-turn-{id}"),"type":"prompt","message":prompt}),
+        )?;
+        cancellation.attach_abort(driver.stdin.clone());
 
-        let stderr = child
-            .process
-            .stderr
-            .take()
-            .ok_or("Pi stderr is unavailable")?;
-        let stderr_reader = thread::spawn(move || drain_provider_stderr(stderr));
-        let stdout = child
-            .process
-            .stdout
-            .take()
-            .ok_or("Pi stdout is unavailable")?;
         let stream_result = (|| -> Result<bool, String> {
             let mut active_tools = HashMap::new();
-            for line in BufReader::new(stdout).lines() {
-                let line = line.map_err(|cause| format!("cannot read Pi event: {cause}"))?;
+            let mut stdout = driver.stdout.lock().expect("Pi stdout lock");
+            loop {
+                let mut line = String::new();
+                let bytes = stdout
+                    .read_line(&mut line)
+                    .map_err(|cause| format!("cannot read Pi event: {cause}"))?;
+                if bytes == 0 {
+                    return Ok(false);
+                }
                 let event: serde_json::Value = serde_json::from_str(&line)
                     .map_err(|cause| format!("Pi emitted invalid JSON: {cause}"))?;
                 match event.get("type").and_then(|value| value.as_str()) {
@@ -883,17 +939,12 @@ fn run_pi_operation(
                     _ => {}
                 }
             }
-            Ok(false)
         })();
-        child.stop();
-        let had_stderr = stderr_reader.join().unwrap_or(false);
         let saw_agent_settled = stream_result?;
         if !saw_agent_settled && !cancellation.is_requested() {
-            return Err(if had_stderr {
-                "Pi closed before the agent turn settled; provider stderr was excluded".into()
-            } else {
-                "Pi closed before the agent turn settled".into()
-            });
+            return Err(
+                "Pi closed before the agent turn settled; provider stderr was excluded".into(),
+            );
         }
         Ok(())
     })();
@@ -907,6 +958,7 @@ fn run_pi_operation(
             },
         );
     } else if let Err(message) = result {
+        driver.stop();
         let _ = diagnose(
             &Record::new(
                 Level::Error,
@@ -972,6 +1024,42 @@ fn pi_tool_path(event: &serde_json::Value, root: &Path) -> Option<PathBuf> {
         .then_some(relative)
 }
 
+fn persistent_pi(
+    current: &mut Option<Arc<PiDriver>>,
+    repository: &Path,
+    writer: &SharedWriter,
+    id: u64,
+) -> Option<Arc<PiDriver>> {
+    if let Some(driver) = current {
+        if driver.root == repository {
+            return Some(driver.clone());
+        }
+        error(
+            writer,
+            Some(id),
+            "Pi driver belongs to a different workbench",
+            "close and reopen Lantern in the intended repository",
+        );
+        return None;
+    }
+    match PiDriver::spawn(repository.to_owned()) {
+        Ok(driver) => {
+            let driver = Arc::new(driver);
+            *current = Some(driver.clone());
+            Some(driver)
+        }
+        Err(message) => {
+            error(
+                writer,
+                Some(id),
+                message,
+                "run Pi interactively to inspect provider status, use `/login` for OpenAI Codex if required, then restart Lantern",
+            );
+            None
+        }
+    }
+}
+
 fn main() -> io::Result<()> {
     let _ = diagnose(&Record::new(
         Level::Info,
@@ -984,6 +1072,7 @@ fn main() -> io::Result<()> {
     let mut input = BufReader::new(io::stdin());
     let mut initialized = false;
     let mut workbench = None;
+    let mut pi_driver: Option<Arc<PiDriver>> = None;
 
     loop {
         let line = match read_frame(&mut input) {
@@ -1065,6 +1154,11 @@ fn main() -> io::Result<()> {
                         continue;
                     }
                 };
+                if workbench.as_ref().is_some_and(|current| current != &root)
+                    && let Some(driver) = pi_driver.take()
+                {
+                    driver.stop();
+                }
                 workbench = Some(root.clone());
                 let _ = diagnose(&Record::new(
                     Level::Info,
@@ -1183,12 +1277,16 @@ fn main() -> io::Result<()> {
                 let Some(cancellation) = admit(id, &operations, &writer) else {
                     continue;
                 };
+                let Some(driver) = persistent_pi(&mut pi_driver, &repository, &writer, id) else {
+                    settle(id, &operations, &writer);
+                    continue;
+                };
                 let operation_writer = writer.clone();
                 let active_operations = operations.clone();
                 workers.push(thread::spawn(move || {
                     run_pi_operation(
                         id,
-                        repository,
+                        driver,
                         query,
                         AgentContext::Selection(selection),
                         cancellation,
@@ -1218,12 +1316,16 @@ fn main() -> io::Result<()> {
                 let Some(cancellation) = admit(id, &operations, &writer) else {
                     continue;
                 };
+                let Some(driver) = persistent_pi(&mut pi_driver, &repository, &writer, id) else {
+                    settle(id, &operations, &writer);
+                    continue;
+                };
                 let operation_writer = writer.clone();
                 let active_operations = operations.clone();
                 workers.push(thread::spawn(move || {
                     run_pi_operation(
                         id,
-                        repository,
+                        driver,
                         query,
                         AgentContext::Repository,
                         cancellation,
@@ -1263,12 +1365,16 @@ fn main() -> io::Result<()> {
                 let Some(cancellation) = admit(id, &operations, &writer) else {
                     continue;
                 };
+                let Some(driver) = persistent_pi(&mut pi_driver, &repository, &writer, id) else {
+                    settle(id, &operations, &writer);
+                    continue;
+                };
                 let operation_writer = writer.clone();
                 let active_operations = operations.clone();
                 workers.push(thread::spawn(move || {
                     run_pi_operation(
                         id,
-                        repository,
+                        driver,
                         query,
                         AgentContext::Symbol(context),
                         cancellation,
@@ -1382,6 +1488,9 @@ fn main() -> io::Result<()> {
     }
     for worker in workers {
         let _ = worker.join();
+    }
+    if let Some(driver) = pi_driver {
+        driver.stop();
     }
     let _ = diagnose(&Record::new(
         Level::Info,

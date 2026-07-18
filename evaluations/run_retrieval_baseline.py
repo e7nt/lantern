@@ -118,16 +118,13 @@ def comparison(exact: dict, lsp: dict) -> dict:
     }
 
 
-def main() -> int:
-    pi = require_pi()
-    daemon = require_executable(
-        "LANTERN_DAEMON_BIN", PROJECT_ROOT / "target" / "debug" / "lantern-daemon"
-    )
-    dataset_bytes = DATASET_PATH.read_bytes()
-    dataset = json.loads(dataset_bytes)
-    environment = os.environ.copy()
-    environment["LANTERN_PI_BIN"] = pi
-    environment["LANTERN_PI_MODEL"] = MODEL
+def run_isolated_mode(
+    daemon: str,
+    environment: dict[str, str],
+    repository: Path,
+    case: dict,
+    mode: str,
+) -> dict:
     process = subprocess.Popen(
         [daemon],
         cwd=PROJECT_ROOT,
@@ -140,52 +137,29 @@ def main() -> int:
     )
     assert process.stdout is not None
     reader = EventReader(process.stdout)
-    results = []
-    passed = True
     try:
-        deadline = time.monotonic() + 10
         send(process, {"method": "initialize", "protocol_version": PROTOCOL_VERSION})
-        wait_for(reader, "initialized", deadline)
-        operation_id = 1
-        for case in dataset["cases"]:
-            repository = require_repository(case)
-            initial_status = repository_status(repository)
-            send(process, {"method": "open_workbench", "repository": str(repository)})
-            wait_for(reader, "workbench_opened", time.monotonic() + 10)
-            modes = []
-            for mode in ("exact", "lsp"):
-                request = {
-                    "method": "ask_agent" if mode == "exact" else "ask_agent_symbol",
-                    "id": operation_id,
-                    "repository": str(repository),
-                    "query": case["question"],
-                }
-                if mode == "lsp":
-                    request["context"] = case["context"]
-                result = run_operation(
-                    process,
-                    reader,
-                    repository,
-                    operation_id,
-                    case["question"],
-                    request=request,
-                )
-                result["repository_unchanged"] = repository_status(repository) == initial_status
-                mode_passed, failures = evaluate_result(result, case, mode)
-                result.update({"mode": mode, "passed": mode_passed, "failures": failures})
-                modes.append(result)
-                passed = passed and mode_passed
-                operation_id += 1
-            results.append(
-                {
-                    "case_id": case["id"],
-                    "repository": case["repository"],
-                    "revision": case["revision"],
-                    "runs": modes,
-                    "comparison": comparison(modes[0], modes[1]),
-                }
-            )
+        wait_for(reader, "initialized", time.monotonic() + 10)
+        send(process, {"method": "open_workbench", "repository": str(repository)})
+        wait_for(reader, "workbench_opened", time.monotonic() + 10)
+        request = {
+            "method": "ask_agent" if mode == "exact" else "ask_agent_symbol",
+            "id": 1,
+            "repository": str(repository),
+            "query": case["question"],
+        }
+        if mode == "lsp":
+            request["context"] = case["context"]
+        result = run_operation(
+            process,
+            reader,
+            repository,
+            1,
+            case["question"],
+            request=request,
+        )
         send(process, {"method": "shutdown"})
+        return result
     finally:
         process.terminate()
         try:
@@ -193,6 +167,40 @@ def main() -> int:
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait(timeout=5)
+
+
+def main() -> int:
+    pi = require_pi()
+    daemon = require_executable(
+        "LANTERN_DAEMON_BIN", PROJECT_ROOT / "target" / "debug" / "lantern-daemon"
+    )
+    dataset_bytes = DATASET_PATH.read_bytes()
+    dataset = json.loads(dataset_bytes)
+    environment = os.environ.copy()
+    environment["LANTERN_PI_BIN"] = pi
+    environment["LANTERN_PI_MODEL"] = MODEL
+    results = []
+    passed = True
+    for case in dataset["cases"]:
+        repository = require_repository(case)
+        initial_status = repository_status(repository)
+        modes = []
+        for mode in ("exact", "lsp"):
+            result = run_isolated_mode(daemon, environment, repository, case, mode)
+            result["repository_unchanged"] = repository_status(repository) == initial_status
+            mode_passed, failures = evaluate_result(result, case, mode)
+            result.update({"mode": mode, "passed": mode_passed, "failures": failures})
+            modes.append(result)
+            passed = passed and mode_passed
+        results.append(
+            {
+                "case_id": case["id"],
+                "repository": case["repository"],
+                "revision": case["revision"],
+                "runs": modes,
+                "comparison": comparison(modes[0], modes[1]),
+            }
+        )
 
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     report = {
