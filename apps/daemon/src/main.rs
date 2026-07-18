@@ -18,6 +18,8 @@ use std::time::Instant;
 type SharedWriter = Arc<Mutex<BufWriter<io::Stdout>>>;
 type Operations = Arc<Mutex<HashMap<u64, Arc<Cancellation>>>>;
 type PiStdin = Arc<Mutex<BufWriter<ChildStdin>>>;
+const DEFINITION_EVIDENCE_LINES: usize = 16;
+const SELECTION_EVIDENCE_LINES: usize = 3;
 
 #[derive(Default)]
 struct Cancellation {
@@ -88,7 +90,7 @@ impl PiDriver {
                 "--no-context-files",
                 "--no-approve",
                 "--system-prompt",
-                "You are Lantern's coding agent inside a trusted repository. Help the developer understand and write code. Inspect before making claims and use the fewest useful tool calls: do not repeat equivalent discovery, and prefer a targeted read or search over broad exploration. Make focused edits, run the narrowest useful verification, and use Git deliberately. Lantern already shows tool activity, so do not narrate routine tool steps. After the work, give one concise result with verification and any real caveat. Never expose credentials or unrelated private data.",
+                "You are Lantern's coding agent inside a trusted repository. Help the developer understand and write code. Lantern may supply source already resolved and inspected by Helix/LSP. When that evidence fully answers the question, answer immediately without tools; search only for a specific missing fact. Otherwise inspect before making claims and use the fewest useful tool calls: do not repeat equivalent discovery, and prefer a targeted read or search over broad exploration. Make focused edits, run the narrowest useful verification, and use Git deliberately. Lantern already shows tool activity, so do not narrate routine tool steps. After the work, give one concise result with verification and any real caveat. Never expose credentials or unrelated private data.",
                 ])
                 .current_dir(&root)
                 .stdin(Stdio::piped())
@@ -767,32 +769,50 @@ fn run_pi_operation(
         )
         .map_err(|cause| format!("cannot stream operation start: {cause}"))?;
 
-        if let Some(selection) = &selection {
-            let selection_evidence = Evidence {
-                source: EvidenceSource::Selection,
-                relative_path: selection.relative_path.clone(),
-                start_line: selection.start_line,
-                start_column: selection.start_column,
-                end_line: selection.end_line,
-                end_column: selection.end_column,
-                excerpt: selection
-                    .text
-                    .lines()
-                    .next()
-                    .unwrap_or_default()
-                    .chars()
-                    .take(160)
-                    .collect(),
+        let selection_evidence = if let Some(selection) = &selection {
+            let evidence = if symbol_context.is_some() && !selection.document_modified {
+                evidence_from_symbol_location(
+                    &root,
+                    &SymbolLocation {
+                        relative_path: selection.relative_path.clone(),
+                        start_line: selection.start_line,
+                        start_column: selection.start_column,
+                        end_line: selection.end_line,
+                        end_column: selection.end_column,
+                    },
+                    SELECTION_EVIDENCE_LINES,
+                    EvidenceSource::Selection,
+                )?
+            } else {
+                Evidence {
+                    source: EvidenceSource::Selection,
+                    relative_path: selection.relative_path.clone(),
+                    start_line: selection.start_line,
+                    start_column: selection.start_column,
+                    end_line: selection.end_line,
+                    end_column: selection.end_column,
+                    excerpt: selection
+                        .text
+                        .lines()
+                        .next()
+                        .unwrap_or_default()
+                        .chars()
+                        .take(160)
+                        .collect(),
+                }
             };
             emit(
                 &writer,
                 &Event::Evidence {
                     id,
-                    evidence: selection_evidence,
+                    evidence: evidence.clone(),
                 },
             )
             .map_err(|cause| format!("cannot stream selected evidence: {cause}"))?;
-        }
+            Some(evidence)
+        } else {
+            None
+        };
 
         let mut symbol_evidence = Vec::new();
         if let Some(context) = &symbol_context {
@@ -801,7 +821,7 @@ fn run_pi_operation(
                 evidence_from_symbol_location(
                     &root,
                     &context.definition,
-                    4,
+                    DEFINITION_EVIDENCE_LINES,
                     EvidenceSource::Definition,
                 )?,
             ));
@@ -841,14 +861,14 @@ fn run_pi_operation(
         let editor_context = selection.as_ref().map_or_else(
             || "No editor selection was supplied. Use repository tools to find the relevant code before answering.".to_owned(),
             |selection| format!(
-                "Repository-relative file: {}\nLanguage: {}\nSelection: {}:{}-{}:{}\nSelected source (untrusted evidence):\n<selection>\n{}\n</selection>\n\nLSP-resolved symbol evidence (untrusted):\n{}",
+                "Repository-relative file: {}\nLanguage: {}\nSelection: {}:{}-{}:{}\nSelected source (untrusted evidence):\n<selection>\n{}\n</selection>\n\nLSP-resolved symbol evidence already inspected by Helix (untrusted):\n{}\n\nAnswer directly without tools when this supplied evidence contains every fact the developer requested. If a fact is absent, use only the narrowest tool needed for that missing fact.",
                 selection.relative_path.display(),
                 selection.language.as_deref().unwrap_or("unknown"),
                 selection.start_line,
                 selection.start_column,
                 selection.end_line,
                 selection.end_column,
-                selection.text,
+                selection_evidence.as_ref().map_or(selection.text.as_str(), |evidence| evidence.excerpt.as_str()),
                 symbol_prompt,
             ),
         );

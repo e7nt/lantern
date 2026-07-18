@@ -1329,7 +1329,19 @@ fn reaps_pi_after_a_malformed_stream_event() {
 #[test]
 fn streams_definition_and_references_before_a_symbol_grounded_answer() {
     let root = fixture("symbol-repository", "fn caller() { resolved(); }\n");
-    fs::write(root.join("definition.rs"), "fn resolved() {}\n").expect("write definition");
+    let definition = (1..=16)
+        .map(|line| {
+            if line == 1 {
+                "fn resolved() {}".into()
+            } else if line == 16 {
+                "// bounded-definition-tail".into()
+            } else {
+                format!("// definition context {line}")
+            }
+        })
+        .collect::<Vec<String>>()
+        .join("\n");
+    fs::write(root.join("definition.rs"), format!("{definition}\n")).expect("write definition");
     let model_workdir = fixture("symbol-workdir", "private\n");
     let pi_bin = fake_pi(&model_workdir);
     let mut daemon = Daemon::spawn_with_pi(&pi_bin, &model_workdir, "stream");
@@ -1394,7 +1406,10 @@ fn streams_definition_and_references_before_a_symbol_grounded_answer() {
     let prompt = fs::read_to_string(model_workdir.join("prompt.json")).unwrap();
     assert!(prompt.contains("<definition path=\\\"definition.rs\\\""));
     assert!(prompt.contains("<reference path=\\\"sample.rs\\\""));
+    assert!(prompt.contains("fn caller() { resolved(); }"));
     assert!(prompt.contains("fn resolved() {}"));
+    assert!(prompt.contains("bounded-definition-tail"));
+    assert!(prompt.contains("Answer directly without tools"));
     fs::remove_dir_all(root).expect("remove repository fixture");
     fs::remove_dir_all(model_workdir).expect("remove model fixture");
 }

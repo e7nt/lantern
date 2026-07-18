@@ -76,7 +76,7 @@ def evaluate_result(result: dict, case: dict, mode: str) -> tuple[bool, list[str
     metric = ToolJourneyContractMetric(
         required_order=[],
         forbidden=["edit", "write"],
-        max_calls=case["max_tool_calls"],
+        max_calls=(case["max_lsp_tool_calls"] if mode == "lsp" else case["max_tool_calls"]),
     )
     metric.measure(LLMTestCase(input=case["question"], actual_output=json.dumps(trace)))
     if not metric.is_successful():
@@ -92,6 +92,13 @@ def evaluate_result(result: dict, case: dict, mode: str) -> tuple[bool, list[str
         failures.append(f"required evidence paths were not observed: {missing_paths}")
     if mode == "lsp" and not any(item["source"] == "definition" for item in result["evidence"]):
         failures.append("LSP-assisted operation emitted no definition evidence")
+    if mode == "lsp":
+        first_text_ms = result["first_text_ms"]
+        if first_text_ms is None or first_text_ms > case["max_lsp_first_text_ms"]:
+            failures.append(
+                f"LSP first text arrived in {first_text_ms!r} ms; maximum is "
+                f"{case['max_lsp_first_text_ms']} ms"
+            )
     if result["outcome"] != "completed":
         failures.append(f"operation outcome was {result['outcome']!r}, expected 'completed'")
     if result["settled_ms"] > case["max_settled_ms"]:
