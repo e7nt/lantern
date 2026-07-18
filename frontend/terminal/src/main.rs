@@ -19,6 +19,7 @@ use lantern_protocol::{
     MAX_DIAGNOSTIC_BYTES, MAX_QUESTION_BYTES, MAX_SELECTION_BYTES, PROTOCOL_VERSION, Request,
     SelectionContext, SymbolContext, SymbolContextExport, read_frame, search_term,
 };
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
@@ -83,7 +84,7 @@ enum DaemonState {
 enum TranscriptItem {
     Line(String),
     Answer { id: u64, text: String },
-    Evidence(Evidence),
+    Evidence { id: u64, evidence: Evidence },
 }
 
 struct UiState {
@@ -99,6 +100,7 @@ struct UiState {
     pending_symbol_context: Option<SymbolContext>,
     navigated_for: Option<u64>,
     selected_evidence: Option<usize>,
+    expanded_semantic_groups: HashSet<(u64, PathBuf)>,
 }
 
 impl UiState {
@@ -116,6 +118,7 @@ impl UiState {
             pending_symbol_context: None,
             navigated_for: None,
             selected_evidence: None,
+            expanded_semantic_groups: HashSet::new(),
         }
     }
 
@@ -156,37 +159,101 @@ impl UiState {
         Some(id)
     }
 
-    fn evidence_count(&self) -> usize {
-        self.transcript
-            .iter()
-            .filter(|item| matches!(item, TranscriptItem::Evidence(_)))
-            .count()
+    fn evidence(&self, index: usize) -> Option<&Evidence> {
+        self.evidence_item(index).map(|(_, evidence)| evidence)
     }
 
-    fn evidence(&self, index: usize) -> Option<&Evidence> {
+    fn evidence_item(&self, index: usize) -> Option<(u64, &Evidence)> {
         self.transcript
             .iter()
             .filter_map(|item| match item {
-                TranscriptItem::Evidence(evidence) => Some(evidence),
+                TranscriptItem::Evidence { id, evidence } => Some((*id, evidence)),
                 _ => None,
             })
             .nth(index)
     }
 
     fn select_evidence(&mut self, direction: i8) {
-        let count = self.evidence_count();
-        if count == 0 {
+        let visible = self.visible_evidence_indices();
+        if visible.is_empty() {
             self.selected_evidence = None;
             return;
         }
-        self.selected_evidence = Some(match (self.selected_evidence, direction) {
-            (Some(0), direction) if direction < 0 => count - 1,
-            (Some(index), direction) if direction < 0 => index - 1,
-            (Some(index), _) => (index + 1) % count,
-            (None, direction) if direction < 0 => count - 1,
+        let current = self
+            .selected_evidence
+            .and_then(|selected| visible.iter().position(|index| *index == selected));
+        let position = match (current, direction) {
+            (Some(0), direction) if direction < 0 => visible.len() - 1,
+            (Some(position), direction) if direction < 0 => position - 1,
+            (Some(position), _) => (position + 1) % visible.len(),
+            (None, direction) if direction < 0 => visible.len() - 1,
             (None, _) => 0,
-        });
+        };
+        self.selected_evidence = Some(visible[position]);
         self.scroll_from_bottom = 0;
+    }
+
+    fn visible_evidence_indices(&self) -> Vec<usize> {
+        let mut visible = Vec::new();
+        let mut seen_semantic_groups = HashSet::new();
+        for (index, (id, evidence)) in self
+            .transcript
+            .iter()
+            .filter_map(|item| match item {
+                TranscriptItem::Evidence { id, evidence } => Some((*id, evidence)),
+                _ => None,
+            })
+            .enumerate()
+        {
+            if evidence.source != EvidenceSource::Semantic
+                || self
+                    .expanded_semantic_groups
+                    .contains(&(id, evidence.relative_path.clone()))
+                || seen_semantic_groups.insert((id, evidence.relative_path.clone()))
+            {
+                visible.push(index);
+            }
+        }
+        visible
+    }
+
+    fn toggle_selected_semantic_group(&mut self) -> bool {
+        let Some(index) = self.selected_evidence else {
+            return false;
+        };
+        let Some((id, evidence)) = self.evidence_item(index) else {
+            return false;
+        };
+        if evidence.source != EvidenceSource::Semantic {
+            return false;
+        }
+        let path = evidence.relative_path.clone();
+        let indices = self
+            .transcript
+            .iter()
+            .filter_map(|item| match item {
+                TranscriptItem::Evidence { id, evidence } => Some((*id, evidence)),
+                _ => None,
+            })
+            .enumerate()
+            .filter_map(|(index, (candidate_id, candidate))| {
+                (candidate_id == id
+                    && candidate.source == EvidenceSource::Semantic
+                    && candidate.relative_path == path)
+                    .then_some(index)
+            })
+            .collect::<Vec<_>>();
+        if indices.len() < 2 {
+            return false;
+        }
+        let group = (id, path);
+        if self.expanded_semantic_groups.remove(&group) {
+            self.selected_evidence = indices.first().copied();
+        } else {
+            self.expanded_semantic_groups.insert(group);
+        }
+        self.scroll_from_bottom = 0;
+        true
     }
 
     fn daemon_failed(&mut self, reason: &str, diagnostics: &str) {
@@ -233,12 +300,12 @@ impl Drop for TerminalGuard {
 
 struct Layout {
     input_row: u16,
-    evidence_rows: Vec<(u16, usize, Evidence)>,
+    evidence_rows: Vec<(u16, usize, Evidence, bool)>,
 }
 
 struct TranscriptRow {
     text: String,
-    evidence: Option<(usize, Evidence)>,
+    evidence: Option<(usize, Evidence, bool)>,
     style: RowStyle,
 }
 
@@ -343,6 +410,23 @@ fn answer_rows(text: &str, width: usize) -> Vec<TranscriptRow> {
 
 fn flattened_transcript(state: &UiState, width: usize) -> Vec<TranscriptRow> {
     let mut rows = Vec::new();
+    let mut semantic_groups: HashMap<(u64, PathBuf), Vec<(usize, Evidence)>> = HashMap::new();
+    for (index, (id, evidence)) in state
+        .transcript
+        .iter()
+        .filter_map(|item| match item {
+            TranscriptItem::Evidence { id, evidence } => Some((*id, evidence)),
+            _ => None,
+        })
+        .enumerate()
+    {
+        if evidence.source == EvidenceSource::Semantic {
+            semantic_groups
+                .entry((id, evidence.relative_path.clone()))
+                .or_default()
+                .push((index, evidence.clone()));
+        }
+    }
     let mut evidence_index = 0;
     for item in &state.transcript {
         match item {
@@ -360,9 +444,40 @@ fn flattened_transcript(state: &UiState, width: usize) -> Vec<TranscriptRow> {
             TranscriptItem::Answer { text, .. } => {
                 rows.extend(answer_rows(text, width));
             }
-            TranscriptItem::Evidence(evidence) => {
+            TranscriptItem::Evidence { id, evidence } => {
+                let mut group_toggle = false;
+                if evidence.source == EvidenceSource::Semantic {
+                    let group = semantic_groups
+                        .get(&(*id, evidence.relative_path.clone()))
+                        .expect("semantic evidence group");
+                    let collapsed = group.len() > 1
+                        && !state
+                            .expanded_semantic_groups
+                            .contains(&(*id, evidence.relative_path.clone()));
+                    if group[0].0 != evidence_index && collapsed {
+                        evidence_index += 1;
+                        continue;
+                    }
+                    if collapsed {
+                        let label = format!(
+                            "↗ {}  Related code · {} verified locations · Space expands",
+                            evidence.relative_path.display(),
+                            group.len()
+                        );
+                        rows.extend(wrap_text(&label, width).into_iter().map(|text| {
+                            TranscriptRow {
+                                text,
+                                evidence: Some((evidence_index, evidence.clone(), true)),
+                                style: RowStyle::Normal,
+                            }
+                        }));
+                        evidence_index += 1;
+                        continue;
+                    }
+                    group_toggle = group.len() > 1 && group[0].0 == evidence_index;
+                }
                 let (source, reason) = evidence_source_text(evidence.source);
-                let label = format!(
+                let mut label = format!(
                     "↗ {}:{}:{}-{}:{}  {source} · {reason}",
                     evidence.relative_path.display(),
                     evidence.start_line,
@@ -370,12 +485,15 @@ fn flattened_transcript(state: &UiState, width: usize) -> Vec<TranscriptRow> {
                     evidence.end_line,
                     evidence.end_column
                 );
+                if group_toggle {
+                    label.push_str(" · Space collapses");
+                }
                 rows.extend(
                     wrap_text(&label, width)
                         .into_iter()
                         .map(|text| TranscriptRow {
                             text,
-                            evidence: Some((evidence_index, evidence.clone())),
+                            evidence: Some((evidence_index, evidence.clone(), group_toggle)),
                             style: RowStyle::Normal,
                         }),
                 );
@@ -411,8 +529,8 @@ fn render(state: &UiState) -> io::Result<Layout> {
     let mut evidence_rows = Vec::new();
     for (offset, transcript_row) in rows[start..end].iter().enumerate() {
         let row = transcript_start + offset as u16;
-        if let Some((index, evidence)) = &transcript_row.evidence {
-            evidence_rows.push((row, *index, evidence.clone()));
+        if let Some((index, evidence, grouped)) = &transcript_row.evidence {
+            evidence_rows.push((row, *index, evidence.clone(), *grouped));
             queue!(stdout, SetForegroundColor(LINK))?;
             if state.selected_evidence == Some(*index) {
                 queue!(stdout, SetAttribute(Attribute::Reverse))?;
@@ -434,7 +552,7 @@ fn render(state: &UiState) -> io::Result<Layout> {
             MoveTo(HORIZONTAL_PADDING, row),
             Print(truncate(&transcript_row.text, width_usize))
         )?;
-        if let Some((index, _)) = &transcript_row.evidence {
+        if let Some((index, _, _)) = &transcript_row.evidence {
             if state.selected_evidence == Some(*index) {
                 queue!(stdout, SetAttribute(Attribute::NoReverse))?;
             }
@@ -460,7 +578,7 @@ fn render(state: &UiState) -> io::Result<Layout> {
             state.activity.as_deref().unwrap_or("Thinking…")
         ),
         (DaemonState::Ready, None) if state.selected_evidence.is_some() => {
-            "›  ↑↓ choose evidence · Enter opens in Helix · Esc returns to prompt".to_owned()
+            "›  ↑↓ choose evidence · Enter opens · Space toggles groups · Esc returns".to_owned()
         }
         (DaemonState::Ready, None) => format!("› {}", state.input.iter().collect::<String>()),
     };
@@ -1045,6 +1163,9 @@ fn handle_key(
         state.select_evidence(if key.code == KeyCode::Up { -1 } else { 1 });
         return Ok(false);
     }
+    if handle_evidence_group_key(key, state) {
+        return Ok(false);
+    }
     if key.code == KeyCode::Enter
         && let Some(index) = state.selected_evidence
     {
@@ -1104,6 +1225,14 @@ fn handle_key(
     }
 }
 
+fn handle_evidence_group_key(key: KeyEvent, state: &mut UiState) -> bool {
+    if key.code != KeyCode::Char(' ') || state.selected_evidence.is_none() {
+        return false;
+    }
+    state.toggle_selected_semantic_group();
+    true
+}
+
 fn is_quit_shortcut(key: KeyEvent, agent_active: bool, input_empty: bool) -> bool {
     key.modifiers.contains(KeyModifiers::CONTROL)
         && key.code == KeyCode::Char('d')
@@ -1120,13 +1249,15 @@ fn handle_mouse(mouse: MouseEvent, layout: &Layout, state: &mut UiState) -> io::
             state.scroll_from_bottom = state.scroll_from_bottom.saturating_sub(3);
         }
         MouseEventKind::Down(MouseButton::Left) => {
-            if let Some((_, index, evidence)) = layout
+            if let Some((_, index, evidence, grouped)) = layout
                 .evidence_rows
                 .iter()
-                .find(|(row, _, _)| *row == mouse.row)
+                .find(|(row, _, _, _)| *row == mouse.row)
             {
                 state.selected_evidence = Some(*index);
-                if let Err(cause) = navigate(evidence) {
+                if *grouped {
+                    state.toggle_selected_semantic_group();
+                } else if let Err(cause) = navigate(evidence) {
                     state.line(format!("Navigation failed: {cause}"));
                 }
             } else if mouse.row == layout.input_row
@@ -1208,9 +1339,10 @@ fn handle_daemon_event(
                     | EvidenceSource::Semantic
                     | EvidenceSource::LiteralMatch
             ) {
-                state
-                    .transcript
-                    .push(TranscriptItem::Evidence(evidence.clone()));
+                state.transcript.push(TranscriptItem::Evidence {
+                    id,
+                    evidence: evidence.clone(),
+                });
                 state.scroll_from_bottom = 0;
             }
             if state.navigated_for != Some(id) && should_navigate_evidence(evidence.source) {
@@ -1453,6 +1585,13 @@ mod tests {
         }
     }
 
+    fn transcript_evidence(id: u64, source: EvidenceSource, path: &str) -> TranscriptItem {
+        TranscriptItem::Evidence {
+            id,
+            evidence: evidence(source, path),
+        }
+    }
+
     #[test]
     fn resting_state_has_no_persistent_status_messages() {
         let state = UiState::new(Path::new("."));
@@ -1592,9 +1731,9 @@ mod tests {
     fn evidence_rows_explain_typed_provenance_without_rendering_source() {
         let mut state = UiState::new(Path::new("."));
         state.transcript = vec![
-            TranscriptItem::Evidence(evidence(EvidenceSource::Selection, "src/main.rs")),
-            TranscriptItem::Evidence(evidence(EvidenceSource::Call, "src/dispatch.rs")),
-            TranscriptItem::Evidence(evidence(EvidenceSource::Definition, "src/lib.rs")),
+            transcript_evidence(1, EvidenceSource::Selection, "src/main.rs"),
+            transcript_evidence(1, EvidenceSource::Call, "src/dispatch.rs"),
+            transcript_evidence(1, EvidenceSource::Definition, "src/lib.rs"),
         ];
 
         let rendered = flattened_transcript(&state, 200)
@@ -1606,6 +1745,115 @@ mod tests {
         assert!(rendered.contains("Call path · bounded outgoing call resolved by Helix"));
         assert!(rendered.contains("Definition · symbol definition resolved by Helix"));
         assert!(!rendered.contains("private source body"));
+    }
+
+    #[test]
+    fn semantic_evidence_groups_by_turn_and_file_without_losing_ranges() {
+        let mut state = UiState::new(Path::new("."));
+        state.transcript = vec![
+            transcript_evidence(1, EvidenceSource::Semantic, "src/lib.rs"),
+            transcript_evidence(1, EvidenceSource::Semantic, "src/lib.rs"),
+            transcript_evidence(1, EvidenceSource::Semantic, "src/main.rs"),
+            transcript_evidence(2, EvidenceSource::Semantic, "src/lib.rs"),
+        ];
+
+        let collapsed = flattened_transcript(&state, 200)
+            .into_iter()
+            .map(|row| row.text)
+            .collect::<Vec<_>>();
+        assert_eq!(state.visible_evidence_indices(), vec![0, 2, 3]);
+        assert_eq!(
+            collapsed
+                .iter()
+                .filter(|row| row.contains("src/lib.rs"))
+                .count(),
+            2
+        );
+        assert!(collapsed[0].contains("2 verified locations"));
+
+        state.selected_evidence = Some(0);
+        assert!(state.toggle_selected_semantic_group());
+        assert_eq!(state.visible_evidence_indices(), vec![0, 1, 2, 3]);
+        let expanded = flattened_transcript(&state, 200)
+            .into_iter()
+            .map(|row| row.text)
+            .collect::<Vec<_>>();
+        assert!(!expanded.iter().any(|row| row.contains("Space expands")));
+        assert_eq!(
+            expanded
+                .iter()
+                .filter(|row| row.contains("src/lib.rs"))
+                .count(),
+            3
+        );
+    }
+
+    #[test]
+    fn clicking_a_collapsed_semantic_group_expands_it_without_navigation() {
+        let mut state = UiState::new(Path::new("."));
+        state.transcript = vec![
+            transcript_evidence(4, EvidenceSource::Semantic, "src/lib.rs"),
+            transcript_evidence(4, EvidenceSource::Semantic, "src/lib.rs"),
+        ];
+        let primary = state.evidence(0).expect("primary evidence").clone();
+        let layout = Layout {
+            input_row: 20,
+            evidence_rows: vec![(3, 0, primary, true)],
+        };
+
+        handle_mouse(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 2,
+                row: 3,
+                modifiers: KeyModifiers::NONE,
+            },
+            &layout,
+            &mut state,
+        )
+        .expect("handle grouped evidence click");
+
+        assert_eq!(state.selected_evidence, Some(0));
+        assert!(
+            state
+                .expanded_semantic_groups
+                .contains(&(4, PathBuf::from("src/lib.rs")))
+        );
+
+        handle_mouse(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 2,
+                row: 3,
+                modifiers: KeyModifiers::NONE,
+            },
+            &layout,
+            &mut state,
+        )
+        .expect("handle expanded group click");
+        assert!(
+            !state
+                .expanded_semantic_groups
+                .contains(&(4, PathBuf::from("src/lib.rs")))
+        );
+    }
+
+    #[test]
+    fn space_toggles_a_semantic_group_and_restores_primary_selection() {
+        let mut state = UiState::new(Path::new("."));
+        state.transcript = vec![
+            transcript_evidence(5, EvidenceSource::Semantic, "src/lib.rs"),
+            transcript_evidence(5, EvidenceSource::Semantic, "src/lib.rs"),
+        ];
+        state.selected_evidence = Some(0);
+        let space = KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE);
+
+        assert!(handle_evidence_group_key(space, &mut state));
+        assert_eq!(state.visible_evidence_indices(), vec![0, 1]);
+        state.selected_evidence = Some(1);
+        assert!(handle_evidence_group_key(space, &mut state));
+        assert_eq!(state.visible_evidence_indices(), vec![0]);
+        assert_eq!(state.selected_evidence, Some(0));
     }
 
     #[test]
@@ -1684,8 +1932,8 @@ mod tests {
     fn evidence_selection_cycles_without_scanning_or_model_work() {
         let mut state = UiState::new(Path::new("."));
         state.transcript = vec![
-            TranscriptItem::Evidence(evidence(EvidenceSource::Selection, "src/main.rs")),
-            TranscriptItem::Evidence(evidence(EvidenceSource::Definition, "src/lib.rs")),
+            transcript_evidence(1, EvidenceSource::Selection, "src/main.rs"),
+            transcript_evidence(1, EvidenceSource::Definition, "src/lib.rs"),
         ];
 
         state.select_evidence(1);

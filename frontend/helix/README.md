@@ -120,9 +120,12 @@ typing `/quit`. `Esc` remains the interruption shortcut while an agent turn is
 active; quitting never silently abandons active work.
 
 With an empty idle prompt, `Up` and `Down` cycle through prior evidence and
-`Enter` opens the highlighted exact range in Helix. `Esc` returns to the input
-prompt. This navigation operates only on evidence already in the pane; it does
-not start a repository search or model request.
+`Enter` opens the highlighted exact range in Helix. Repeated semantic matches
+from one file and turn appear as one row; `Space` expands or collapses every
+verified range. Clicking a collapsed group expands it, clicking its expanded
+primary row collapses it, and clicking an individual expanded range opens it.
+`Esc` returns to the input prompt. This navigation operates only on evidence
+already in the pane; it does not start a repository search or model request.
 
 The launch command fails with an actionable error when a required binary is
 missing. It does not silently substitute another editor or Git interface.
