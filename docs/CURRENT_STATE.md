@@ -184,6 +184,17 @@ recorded in
 [the changed-file refresh report](acceptance/2026-07-18-semantic-refresh.md).
 Commit-synchronized summaries remain conditional.
 
+ADR 005 now proposes replacing the Pi CLI RPC adapter and broad Lazygit surface
+only if bounded replacement spikes pass. The first real Pi SDK spike blocked an
+edit before execution, preserved byte-identical source, then allowed exactly
+one approved edit in the same subscription-backed session. Production promotion
+still requires streaming, interruption, latency, and DeepEval parity. The Git
+rail scope is deliberately limited to status, diffs, stage/unstage, commits,
+local branches, fetch/fast-forward pull, recent history, conflicts, and opening
+the selected range in Helix. Details are in
+[ADR 005](decisions/005-lantern-owned-runtime-and-git-surface.md) and the
+[Pi SDK spike report](acceptance/2026-07-18-pi-sdk-tool-control-spike.md).
+
 ## Not next
 
 - SQLite or durable chat history.
