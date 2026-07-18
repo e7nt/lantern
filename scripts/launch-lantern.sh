@@ -12,6 +12,7 @@ RUNTIME_DIR="$ROOT/target/release"
 DAEMON_BIN=${LANTERN_DAEMON_BIN:-"$RUNTIME_DIR/lantern-daemon"}
 PANE_BIN=${LANTERN_PANE_BIN:-"$RUNTIME_DIR/lantern-terminal"}
 SUBMIT_BIN=${LANTERN_SUBMIT_BIN:-"$RUNTIME_DIR/lantern-submit"}
+SEMANTIC_WORKER=${LANTERN_SEMANTIC_WORKER:-"$ROOT/scripts/run-semantic-worker.sh"}
 PI_VERSION=0.80.6
 detached=false
 session=
@@ -90,6 +91,12 @@ if [[ ! -x $DAEMON_BIN || ! -x $PANE_BIN || ! -x $SUBMIT_BIN ]]; then
 	exit 1
 fi
 
+if [[ ! -x $SEMANTIC_WORKER ]]; then
+	echo "Lantern semantic worker is missing: $SEMANTIC_WORKER" >&2
+	echo "Run: $ROOT/frontend/helix/prepare.sh" >&2
+	exit 1
+fi
+
 session="lantern-$$"
 runtime_dir=$(mktemp -d "${TMPDIR:-/tmp}/lantern.XXXXXXXX")
 selection_path="$runtime_dir/selection.json"
@@ -128,6 +135,7 @@ agent_command=(env
 	"LANTERN_DAEMON_BIN=$DAEMON_BIN"
 	"LANTERN_PI_BIN=$PI_BIN"
 	"LANTERN_PI_MODEL=${LANTERN_PI_MODEL:-gpt-5.4}"
+	"LANTERN_SEMANTIC_WORKER=$SEMANTIC_WORKER"
 	"$PANE_BIN")
 printf -v agent_shell '%q ' "${agent_command[@]}"
 

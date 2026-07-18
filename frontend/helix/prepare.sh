@@ -7,6 +7,9 @@ FRONTEND_DIR="$ROOT/frontend/helix"
 HELIX_DIR="$ROOT/.lantern/upstream/helix"
 LAZYGIT_DIR="$ROOT/.lantern/upstream/lazygit"
 LAZYGIT_BIN="$ROOT/.lantern/toolchains/lazygit/lazygit"
+SEMANTIC_SERVICE="$ROOT/services/semantic-index"
+SEMANTIC_ENV="$ROOT/.lantern/toolchains/semantic-index"
+SEMANTIC_MODEL_CACHE="$ROOT/.lantern/toolchains/semantic-models"
 HELIX_REVISION=14d6bc0febed9c692048271a8ae2362ac969c6e0
 LAZYGIT_REVISION=080da5cacfcff63a89ea23493bb91b11b0612876
 HELIX_PATCHES=(
@@ -74,5 +77,13 @@ fi
 mkdir -p "$(dirname "$LAZYGIT_BIN")"
 (cd "$LAZYGIT_DIR" && go build -trimpath -o "$LAZYGIT_BIN" ./)
 
-printf 'Prepared Helix %s, Lazygit %s, and the maintained Lantern runtime.\n' \
+if ! command -v uv >/dev/null; then
+	echo "uv is required to prepare Lantern's pinned local semantic worker." >&2
+	exit 1
+fi
+UV_PROJECT_ENVIRONMENT="$SEMANTIC_ENV" uv sync --locked --project "$SEMANTIC_SERVICE"
+env PYTHONPATH="$SEMANTIC_SERVICE" "$SEMANTIC_ENV/bin/python" \
+	-m lantern_semantic_index.prepare --model-cache "$SEMANTIC_MODEL_CACHE"
+
+printf 'Prepared Helix %s, Lazygit %s, the semantic worker, and the maintained Lantern runtime.\n' \
 	"$HELIX_REVISION" "$LAZYGIT_REVISION"
