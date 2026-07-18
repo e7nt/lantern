@@ -66,9 +66,12 @@ opening line 1.
 
 Implement next:
 
-1. Establish measured LSP and exact-search baselines on representative external
-   repositories.
-2. Spike semantic/vector retrieval only for questions those baselines miss.
+1. Reduce redundant discovery when typed selection, definition, and reference
+   evidence already answers the developer's question.
+2. Expand the external baseline with questions that exact and LSP evidence may
+   genuinely miss.
+3. Spike semantic/vector retrieval only for a measured miss; do not add it to
+   the current passing cases.
 
 The explicit live trace runner now exercises a natural repository explanation
 and active interruption through the real Protocol v6 daemon. It records
@@ -79,10 +82,17 @@ ignored local report. The initial repeated baseline is recorded in
 grounding and interruption passed, while one repetition correctly failed the
 tool-efficiency ceiling instead of having its budget relaxed.
 
-After that journey works, spike the incremental hybrid repository index. Start
-with measured LSP/exact baselines, then add semantic/vector retrieval and
-commit-synchronized summaries only where they improve real repository
-questions.
+The exact-versus-LSP runner now evaluates pinned Helix and Lazygit revisions.
+[The initial retrieval baseline](acceptance/2026-07-18-retrieval-baseline.md)
+found that typed LSP context produced useful text 4.9 seconds sooner on Helix
+and 16.2 seconds sooner on Lazygit while removing two and eight tool calls. All
+answers were grounded; exact-only Lazygit failed the efficiency ceiling. This
+does not justify a semantic index yet.
+
+An incremental hybrid repository index remains conditional. Add
+semantic/vector retrieval or commit-synchronized summaries only when a curated
+question remains materially slow or incorrect after exact and typed LSP
+evidence, and retain the component only if the same baseline improves.
 
 ## Not next
 
