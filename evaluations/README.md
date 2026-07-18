@@ -55,9 +55,10 @@ revisions with an explicit preparation instruction.
 
 `run_semantic_retrieval_spike.py` measures repository-only questions whose
 natural wording deliberately differs from the implementation identifiers. It
-records grounding, observed paths, tool count, first activity, timeout, and
-read-only state. Set `LANTERN_EVAL_CASE` to an exact case id to isolate one
-expensive live turn; unknown ids fail explicitly.
+records grounding, observed paths, tool count, first verified evidence, first
+model text, provider wait after evidence, timeout, and read-only state. Set
+`LANTERN_EVAL_CASE` to an exact case id to isolate one expensive live turn;
+unknown ids fail explicitly.
 
 `run_semantic_refresh.py` needs no provider credential. It clones the pinned
 p-limit fixture into a disposable directory, runs the real local embedding
