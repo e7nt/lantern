@@ -9,6 +9,7 @@ from run_live_trace import (
     EventReader,
     evaluate_explanation,
     evaluate_interruption,
+    evaluate_warm_follow_up,
     snapshot_repository,
     write_fixture,
 )
@@ -101,6 +102,33 @@ def test_interruption_contract_requires_bounded_cancel_and_settle(dataset: dict)
         dataset["interruption"],
     )
     assert passed, failures
+
+
+def test_warm_follow_up_requires_text_within_three_seconds(dataset: dict) -> None:
+    result = {
+        "answer": "The missing-token path returns 401.",
+        "tools": [],
+        "first_text_ms": 1800,
+        "settled_ms": 1900,
+        "outcome": "completed",
+        "fixture_unchanged": True,
+    }
+    passed, failures = evaluate_warm_follow_up(result, dataset["warm_follow_up"])
+    assert passed, failures
+
+
+def test_warm_follow_up_rejects_slow_first_text(dataset: dict) -> None:
+    result = {
+        "answer": "The missing-token path returns 401.",
+        "tools": [],
+        "first_text_ms": 3200,
+        "settled_ms": 3300,
+        "outcome": "completed",
+        "fixture_unchanged": True,
+    }
+    passed, failures = evaluate_warm_follow_up(result, dataset["warm_follow_up"])
+    assert not passed
+    assert any("first text" in failure for failure in failures)
 
 
 def test_interruption_contract_rejects_slow_cancellation(dataset: dict) -> None:

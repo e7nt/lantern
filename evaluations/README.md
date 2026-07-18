@@ -28,7 +28,8 @@ Pi's interactive `/login` flow. It writes a local timestamped report under
 Build Lantern first with `cargo build`; `run_live_trace.py` then exercises the
 real daemon through Protocol v6. It measures a grounded repository explanation,
 repository-relative evidence use, tool efficiency, time to first tool and text,
-settling time, and cancellation while a tool-driven turn is active. Override
+an under-three-second warm grounded follow-up, settling time, and cancellation
+while a tool-driven turn is active. Override
 the binaries explicitly with `LANTERN_DAEMON_BIN` or `LANTERN_PI_BIN`; the
 runner never chooses a fallback binary or provider.
 

@@ -35,6 +35,8 @@ and tool vocabulary should not become user-facing ceremony.
   authentication.
 - Repository-grounded Pi questions from the empty prompt; editor context is an
   optional accelerator and never a prerequisite for talking to the agent.
+- One lazily started Pi RPC process per workbench, with in-memory conversational
+  continuity across sequential and multi-step turns and no Pi session file.
 - Pi's pinned `read`, `grep`, `find`, `ls`, `edit`, `write`, and `bash` tools,
   launched inside the repository with typed activity in Lantern.
 - Successful edit/write activity opens the changed file in Helix; `Space-g` or
@@ -50,6 +52,11 @@ policy engine, capability fields, and `/trust` commands have been removed. Pi
 runs its explicit built-in coding-tool allowlist in that repository. Raw tool
 arguments, command output, and provider stderr are not copied into Lantern's
 bounded UI protocol or diagnostics.
+
+The persistent Pi driver remains workbench-local and sequential. Cancellation
+uses RPC abort and preserves a healthy driver. A crashed or malformed driver is
+stopped and reported; Lantern does not silently restart it. Closing the daemon
+terminates and reaps Pi.
 
 SQLite remains deferred by
 [ADR 002](decisions/002-defer-sqlite-until-needed.md). There is no durable
@@ -72,6 +79,12 @@ Implement next:
    genuinely miss.
 3. Spike semantic/vector retrieval only for a measured miss; do not add it to
    the current passing cases.
+
+[The persistent Pi acceptance report](acceptance/2026-07-18-persistent-pi.md)
+records a grounded warm follow-up beginning text in 1.52 seconds and settling
+in 2.49 seconds with no tools. The initial repository-discovery turn remained
+slower, so the under-three-second contract applies to warm context-grounded
+follow-ups and first visible activity where tools are necessary.
 
 The explicit live trace runner now exercises a natural repository explanation
 and active interruption through the real Protocol v6 daemon. It records
