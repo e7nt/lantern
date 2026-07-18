@@ -144,6 +144,7 @@ def run_operation(
     answer: list[str] = []
     tools: list[dict] = []
     evidence: list[dict] = []
+    first_evidence_ms = None
     first_tool_ms = None
     first_text_ms = None
     outcome = None
@@ -157,9 +158,12 @@ def run_operation(
         elapsed_ms = round((time.monotonic() - started) * 1000)
         event_type = event["type"]
         if event_type == "tool_started":
-            first_tool_ms = first_tool_ms or elapsed_ms
+            if first_tool_ms is None:
+                first_tool_ms = elapsed_ms
             tools.append({"tool": event["tool"], "relative_path": event.get("relative_path")})
         elif event_type == "evidence":
+            if first_evidence_ms is None:
+                first_evidence_ms = elapsed_ms
             evidence.append(
                 {
                     "source": event["evidence"]["source"],
@@ -167,7 +171,8 @@ def run_operation(
                 }
             )
         elif event_type == "text_delta":
-            first_text_ms = first_text_ms or elapsed_ms
+            if first_text_ms is None:
+                first_text_ms = elapsed_ms
             answer.append(event["delta"])
         elif event_type == "completed":
             outcome = "completed"
@@ -183,8 +188,14 @@ def run_operation(
                 "answer": "".join(answer).strip(),
                 "tools": tools,
                 "evidence": evidence,
+                "first_evidence_ms": first_evidence_ms,
                 "first_tool_ms": first_tool_ms,
                 "first_text_ms": first_text_ms,
+                "provider_wait_after_evidence_ms": (
+                    first_text_ms - first_evidence_ms
+                    if first_text_ms is not None and first_evidence_ms is not None
+                    else None
+                ),
                 "settled_ms": elapsed_ms,
                 "outcome": outcome,
                 "cancellation_latency_ms": cancellation_latency_ms,

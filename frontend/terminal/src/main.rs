@@ -1179,6 +1179,17 @@ fn handle_daemon_event(
             files_inspected, ..
         } => state.activity = Some(format!("Inspected {files_inspected} files…")),
         Event::Evidence { id, evidence } => {
+            if Some(id) == state.active_id
+                && matches!(
+                    evidence.source,
+                    EvidenceSource::Definition
+                        | EvidenceSource::Call
+                        | EvidenceSource::Semantic
+                        | EvidenceSource::LiteralMatch
+                )
+            {
+                state.activity = Some("Found relevant code · thinking…".into());
+            }
             if matches!(
                 evidence.source,
                 EvidenceSource::Definition
@@ -1595,6 +1606,34 @@ mod tests {
         assert!(should_navigate_evidence(EvidenceSource::LiteralMatch));
         assert!(!should_navigate_evidence(EvidenceSource::Reference));
     }
+
+    #[test]
+    fn verified_evidence_explains_the_model_wait_without_transcript_noise() {
+        let mut state = UiState::new(Path::new("."));
+        state.daemon = DaemonState::Ready;
+        state.active_id = Some(7);
+        state.navigated_for = Some(7);
+
+        handle_daemon_event(
+            Event::Evidence {
+                id: 7,
+                evidence: evidence(EvidenceSource::Semantic, "src/lib.rs"),
+            },
+            &mut state,
+            Path::new("."),
+            Path::new("unused"),
+        )
+        .expect("handle evidence");
+
+        assert_eq!(
+            state.activity.as_deref(),
+            Some("Found relevant code · thinking…")
+        );
+        assert!(!state.transcript.iter().any(|item| {
+            matches!(item, TranscriptItem::Line(line) if line.contains("thinking"))
+        }));
+    }
+
     #[test]
     fn evidence_selection_cycles_without_scanning_or_model_work() {
         let mut state = UiState::new(Path::new("."));

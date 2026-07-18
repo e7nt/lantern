@@ -78,8 +78,8 @@ opening line 1.
 
 Implement next:
 
-1. Investigate remaining provider-latency outliers without weakening the strict
-   three-second gate.
+1. Keep the next product slice contingent on workbench feedback; do not add
+   another retrieval or caching layer without a measured unmet question.
 
 [The persistent Pi acceptance report](acceptance/2026-07-18-persistent-pi.md)
 records a grounded warm follow-up beginning text in 1.52 seconds and settling
@@ -152,6 +152,14 @@ adds Protocol v8 `semantic` provenance. Ready-index vocabulary-mismatch turns
 across Requests, p-limit, and Pi used zero tools and began text in 2.21–2.27
 seconds. The daemon reopens every candidate against current source before use;
 stale indexes are rejected and changed symbols reuse content-hashed vectors.
+
+Ready semantic evidence now changes the compact activity line to `Found
+relevant code · thinking…` without adding transcript noise or another protocol
+event. Three repeated p-limit turns exposed verified code in 27–36 ms, used no
+tools, and began model text in 2.27–2.41 seconds. The remaining 2.23–2.38 seconds
+was provider wait, so another local cache was rejected. The measurement is
+recorded in
+[the grounded-wait report](acceptance/2026-07-18-grounded-wait-status.md).
 
 The incremental hybrid repository index is retained. Its model, virtual
 environment, and revision-keyed artifacts are disposable local state. Initial
