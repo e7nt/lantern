@@ -44,6 +44,8 @@ it requires bounded tool escalation and measures first useful activity instead
 of pretending a direct answer is possible. Prepare the pinned upstream
 repositories using the normal Lantern setup before running it. Dataset v3 adds
 the measured two-hop call evidence and requires the same answer with zero tools.
+Dataset v4 retains that Rust regression and adds a Go/Lazygit case captured from
+`gopls`, so the generic LSP boundary is exercised across languages.
 
 `run_external_edit_journey.py` creates disposable Git repositories outside the
 Lantern checkout. It submits a Protocol v7 symbol-grounded change, verifies the

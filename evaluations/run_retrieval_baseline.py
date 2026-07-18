@@ -29,7 +29,7 @@ from run_live_trace import (
 
 
 ROOT = Path(__file__).parent
-DATASET_PATH = ROOT / "datasets" / "retrieval_baseline" / "v3.json"
+DATASET_PATH = ROOT / "datasets" / "retrieval_baseline" / "v4.json"
 
 
 def repository_status(repository: Path) -> str:
