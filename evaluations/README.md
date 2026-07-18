@@ -20,6 +20,7 @@ cd evaluations
 DEEPEVAL_DISABLE_DOTENV=1 uv run python run_pi_quick_ask.py
 DEEPEVAL_DISABLE_DOTENV=1 uv run python run_live_trace.py
 DEEPEVAL_DISABLE_DOTENV=1 uv run python run_retrieval_baseline.py
+DEEPEVAL_DISABLE_DOTENV=1 uv run python run_semantic_retrieval_spike.py
 DEEPEVAL_DISABLE_DOTENV=1 uv run python run_external_edit_journey.py
 ```
 
@@ -50,6 +51,12 @@ Dataset v5 adds real Pyright and TypeScript-language-server evidence for Python,
 JavaScript, and TypeScript. Each evaluation checkout's upstream URL and exact
 revision are declared in the dataset; the runner rejects missing or mismatched
 revisions with an explicit preparation instruction.
+
+`run_semantic_retrieval_spike.py` measures repository-only questions whose
+natural wording deliberately differs from the implementation identifiers. It
+records grounding, observed paths, tool count, first activity, timeout, and
+read-only state. Set `LANTERN_EVAL_CASE` to an exact case id to isolate one
+expensive live turn; unknown ids fail explicitly.
 
 `run_external_edit_journey.py` creates disposable Git repositories outside the
 Lantern checkout. It submits a Protocol v7 symbol-grounded change, verifies the

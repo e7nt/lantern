@@ -1,0 +1,42 @@
+{
+  "dataset": "semantic_retrieval",
+  "version": 1,
+  "cases": [
+    {
+      "id": "requests-redirect-credential-leakage",
+      "repository": ".lantern/upstream/requests",
+      "remote": "https://github.com/psf/requests.git",
+      "revision": "f361ead047be5cb873174218582f7d8b9fcd9f49",
+      "question": "Where does Requests prevent credentials from leaking when a redirect crosses host or protocol boundaries?",
+      "required_answer_terms": ["should_strip_auth", "rebuild_auth"],
+      "required_paths": ["src/requests/sessions.py"],
+      "max_exact_tool_calls": 8,
+      "max_first_activity_ms": 3000,
+      "max_settled_ms": 45000
+    },
+    {
+      "id": "p-limit-capacity-wakes-queued-work",
+      "repository": ".lantern/upstream/p-limit",
+      "remote": "https://github.com/sindresorhus/p-limit.git",
+      "revision": "42599ebbbb1228a5bdab381fcf8f4ac20eb8d551",
+      "question": "How does this library wake queued work when execution capacity becomes available again?",
+      "required_answer_terms": ["next", "resumeNext"],
+      "required_paths": ["index.js"],
+      "max_exact_tool_calls": 8,
+      "max_first_activity_ms": 3000,
+      "max_settled_ms": 45000
+    },
+    {
+      "id": "pi-output-limit-unfinished-tools",
+      "repository": ".lantern/upstream/pi",
+      "remote": "https://github.com/earendil-works/pi.git",
+      "revision": "c6d8371521fc8357958bb21fd43552c15f46c7f4",
+      "question": "How does the agent recover unfinished tool invocations when generation reaches its output limit?",
+      "required_answer_terms": ["failToolCallsFromTruncatedMessage", "stopReason"],
+      "required_paths": ["packages/agent/src/agent-loop.ts"],
+      "max_exact_tool_calls": 8,
+      "max_first_activity_ms": 3000,
+      "max_settled_ms": 45000
+    }
+  ]
+}

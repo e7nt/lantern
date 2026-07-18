@@ -80,8 +80,9 @@ Implement next:
 
 1. Investigate remaining provider-latency outliers without weakening the strict
    three-second gate.
-2. Spike semantic/vector retrieval only for a measured miss; do not add it to
-   the current passing cases.
+2. Design a symbol-sized incremental semantic index against the version 1
+   vocabulary-mismatch dataset. Indexing must remain outside the question path
+   and earn its storage, startup, update, and retrieval costs before retention.
 
 [The persistent Pi acceptance report](acceptance/2026-07-18-persistent-pi.md)
 records a grounded warm follow-up beginning text in 1.52 seconds and settling
@@ -138,15 +139,22 @@ seconds. Dataset v4 retains both the Rust and Go regressions.
 uses real Pyright and TypeScript-language-server evidence. All three Protocol
 v7 turns used zero tools and began text in 2.27–2.34 seconds. Dataset v5 pins
 the external repositories and retains the language-specific call shapes.
+[The semantic retrieval spike](acceptance/2026-07-18-semantic-retrieval-spike.md)
+establishes three vocabulary-mismatch cases. Exact discovery missed the
+three-second activity gate twice and timed out once. Local embeddings ranked
+the correct JavaScript and Python regions in 11–14 ms, but naïve fixed-window
+indexing took 2.9–35.9 seconds and exceeded two minutes on Pi, so that
+implementation was rejected rather than added to the runtime.
 The Protocol v7 external edit journey also passes: typed call evidence leads to
 the implementation, Pi edits the implementation and focused test, Node
 verification passes, two expected files remain unstaged for review, and active
 inspection cancels and settles in 14 ms without changing repository state.
 
-An incremental hybrid repository index remains conditional. Add
-semantic/vector retrieval or commit-synchronized summaries only when a curated
-question remains materially slow or incorrect after exact and typed LSP
-evidence, and retain the component only if the same baseline improves.
+An incremental hybrid repository index is now justified by measured misses,
+but no implementation has yet earned retention. The next candidate must index
+symbol-sized source incrementally, persist only disposable revision-keyed
+artifacts, and improve the same vocabulary-mismatch baseline without entering
+the question latency path. Commit-synchronized summaries remain conditional.
 
 ## Not next
 
