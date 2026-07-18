@@ -606,6 +606,13 @@ if [[ ${LANTERN_FAKE_PI_MODE:?} == persistent ]]; then
     exit 0
 fi
 IFS= read -r prompt
+reasoning_fast_path=0
+if [[ $prompt == *'"type":"set_thinking_level"'* ]]; then
+    reasoning_fast_path=1
+    printf '%s\n' "$prompt" >> "$capture_dir/thinking.jsonl"
+    printf '%s\n' '{"type":"response","command":"set_thinking_level","success":true}'
+    IFS= read -r prompt
+fi
 printf '%s\n' "$prompt" > "$capture_dir/prompt.json"
 printf '%s\n' '{"type":"response","command":"prompt","success":true}'
 if [[ ${LANTERN_FAKE_PI_MODE:?} == rejected ]]; then
@@ -624,6 +631,19 @@ if [[ ${LANTERN_FAKE_PI_MODE:?} == malformed ]]; then
 fi
 if [[ ${LANTERN_FAKE_PI_MODE:?} == stderr-flood ]]; then
     head -c 131072 /dev/zero | tr '\0' x >&2
+fi
+if [[ ${LANTERN_FAKE_PI_MODE:?} == reasoning-escalation ]]; then
+    printf '%s\n' '{"type":"tool_execution_start","toolCallId":"call-read","toolName":"read","args":{"path":"sample.rs"}}'
+    IFS= read -r thinking
+    printf '%s\n' "$thinking" >> "$capture_dir/thinking.jsonl"
+    printf '%s\n' '{"type":"response","command":"set_thinking_level","success":true}'
+    printf '%s\n' '{"type":"tool_execution_end","toolCallId":"call-read","toolName":"read","result":{"content":[]},"isError":false}'
+    printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"targeted answer"}}'
+    printf '%s\n' '{"type":"agent_settled"}'
+    IFS= read -r thinking
+    printf '%s\n' "$thinking" >> "$capture_dir/thinking.jsonl"
+    printf '%s\n' '{"type":"response","command":"set_thinking_level","success":true}'
+    exit 0
 fi
 if [[ ${LANTERN_FAKE_PI_MODE:?} == cancel ]]; then
     IFS= read -r abort
@@ -652,6 +672,11 @@ else
 fi
 printf '%s\n' '{"type":"agent_end","willRetry":false}'
 printf '%s\n' '{"type":"agent_settled"}'
+if [[ $reasoning_fast_path == 1 ]]; then
+    IFS= read -r thinking
+    printf '%s\n' "$thinking" >> "$capture_dir/thinking.jsonl"
+    printf '%s\n' '{"type":"response","command":"set_thinking_level","success":true}'
+fi
 "#,
     )
     .expect("write fake Pi");
@@ -659,6 +684,29 @@ printf '%s\n' '{"type":"agent_settled"}'
     permissions.set_mode(0o755);
     fs::set_permissions(&path, permissions).expect("make fake Pi executable");
     path
+}
+
+#[cfg(unix)]
+fn await_thinking_levels(root: &Path, count: usize) -> Vec<String> {
+    let path = root.join("thinking.jsonl");
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    let commands = loop {
+        let commands = fs::read_to_string(&path).expect("read thinking-level commands");
+        if commands.lines().count() == count || std::time::Instant::now() >= deadline {
+            break commands;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    commands
+        .lines()
+        .map(|line| {
+            serde_json::from_str::<serde_json::Value>(line).expect("decode thinking command")
+                ["level"]
+                .as_str()
+                .expect("thinking level")
+                .to_owned()
+        })
+        .collect()
 }
 
 #[test]
@@ -1410,6 +1458,55 @@ fn streams_definition_and_references_before_a_symbol_grounded_answer() {
     assert!(prompt.contains("fn resolved() {}"));
     assert!(prompt.contains("bounded-definition-tail"));
     assert!(prompt.contains("Answer directly without tools"));
+    assert_eq!(await_thinking_levels(&model_workdir, 2), ["off", "medium"]);
+    fs::remove_dir_all(root).expect("remove repository fixture");
+    fs::remove_dir_all(model_workdir).expect("remove model fixture");
+}
+
+#[cfg(unix)]
+#[test]
+fn symbol_reasoning_starts_without_reasoning_and_escalates_before_tool_results() {
+    let root = fixture(
+        "reasoning-escalation-repository",
+        "fn caller() { resolved(); }\n",
+    );
+    fs::write(root.join("definition.rs"), "fn resolved() {}\n").expect("write definition");
+    let model_workdir = fixture("reasoning-escalation-workdir", "private\n");
+    let pi_bin = fake_pi(&model_workdir);
+    let mut daemon = Daemon::spawn_with_pi(&pi_bin, &model_workdir, "reasoning-escalation");
+    daemon.initialize();
+    daemon.trust_model(&root);
+    daemon.send(&Request::AskAgentSymbol {
+        id: 74,
+        repository: root.clone(),
+        query: "Follow the missing handoff".into(),
+        context: SymbolContext {
+            selection: SelectionContext {
+                relative_path: "sample.rs".into(),
+                language: Some("rust".into()),
+                start_line: 1,
+                start_column: 15,
+                end_line: 1,
+                end_column: 23,
+                text: "resolved".into(),
+                document_modified: false,
+            },
+            definition: SymbolLocation {
+                relative_path: "definition.rs".into(),
+                start_line: 1,
+                start_column: 4,
+                end_line: 1,
+                end_column: 12,
+            },
+            references: vec![],
+        },
+    });
+    while !matches!(daemon.next(), Event::Settled { id: 74 }) {}
+
+    assert_eq!(
+        await_thinking_levels(&model_workdir, 3),
+        ["off", "medium", "medium"]
+    );
     fs::remove_dir_all(root).expect("remove repository fixture");
     fs::remove_dir_all(model_workdir).expect("remove model fixture");
 }

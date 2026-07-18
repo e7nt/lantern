@@ -139,6 +139,14 @@ impl PiDriver {
             .map_err(|cause| format!("cannot send Pi command: {cause}"))
     }
 
+    fn set_thinking_level(&self, level: &str) -> Result<(), String> {
+        self.send(&serde_json::json!({
+            "id": format!("lantern-thinking-{level}"),
+            "type": "set_thinking_level",
+            "level": level,
+        }))
+    }
+
     fn stop(&self) {
         self.process.lock().expect("Pi process lock").stop();
         if let Some(reader) = self.stderr_reader.lock().expect("Pi stderr lock").take() {
@@ -873,13 +881,23 @@ fn run_pi_operation(
             ),
         );
         let prompt = format!("{editor_context}\n\nDeveloper question: {query}");
-        driver.send(
+        let evidence_fast_path = symbol_context.is_some();
+        if evidence_fast_path {
+            driver.set_thinking_level("off")?;
+        }
+        if let Err(cause) = driver.send(
             &serde_json::json!({"id":format!("lantern-turn-{id}"),"type":"prompt","message":prompt}),
-        )?;
+        ) {
+            if evidence_fast_path {
+                let _ = driver.set_thinking_level("medium");
+            }
+            return Err(cause);
+        }
         cancellation.attach_abort(driver.stdin.clone());
 
         let stream_result = (|| -> Result<bool, String> {
             let mut active_tools = HashMap::new();
+            let mut escalated_reasoning = false;
             let mut stdout = driver.stdout.lock().expect("Pi stdout lock");
             loop {
                 let mut line = String::new();
@@ -913,6 +931,10 @@ fn run_pi_operation(
                         return Err("Pi rejected the request; provider detail was excluded".into());
                     }
                     Some("tool_execution_start") => {
+                        if evidence_fast_path && !escalated_reasoning {
+                            driver.set_thinking_level("medium")?;
+                            escalated_reasoning = true;
+                        }
                         let call_id = event["toolCallId"]
                             .as_str()
                             .filter(|value| value.len() <= 256)
@@ -960,7 +982,13 @@ fn run_pi_operation(
                 }
             }
         })();
+        let restore_result = if evidence_fast_path {
+            driver.set_thinking_level("medium")
+        } else {
+            Ok(())
+        };
         let saw_agent_settled = stream_result?;
+        restore_result?;
         if !saw_agent_settled && !cancellation.is_requested() {
             return Err(
                 "Pi closed before the agent turn settled; provider stderr was excluded".into(),
