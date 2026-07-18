@@ -29,7 +29,7 @@ from run_live_trace import (
 
 
 ROOT = Path(__file__).parent
-DATASET_PATH = ROOT / "datasets" / "retrieval_baseline" / "v1.json"
+DATASET_PATH = ROOT / "datasets" / "retrieval_baseline" / "v2.json"
 
 
 def repository_status(repository: Path) -> str:
@@ -81,6 +81,11 @@ def evaluate_result(result: dict, case: dict, mode: str) -> tuple[bool, list[str
     metric.measure(LLMTestCase(input=case["question"], actual_output=json.dumps(trace)))
     if not metric.is_successful():
         failures.append(metric.reason)
+    if mode == "lsp" and len(result["tools"]) < case["min_lsp_tool_calls"]:
+        failures.append(
+            f"LSP operation used {len(result['tools'])} tools; minimum is "
+            f"{case['min_lsp_tool_calls']}"
+        )
 
     observed_paths = {
         item["relative_path"]
@@ -99,6 +104,18 @@ def evaluate_result(result: dict, case: dict, mode: str) -> tuple[bool, list[str
                 f"LSP first text arrived in {first_text_ms!r} ms; maximum is "
                 f"{case['max_lsp_first_text_ms']} ms"
             )
+        if "max_lsp_first_activity_ms" in case:
+            activity_times = [
+                value
+                for value in (result["first_tool_ms"], result["first_text_ms"])
+                if value is not None
+            ]
+            first_activity_ms = min(activity_times) if activity_times else None
+            if first_activity_ms is None or first_activity_ms > case["max_lsp_first_activity_ms"]:
+                failures.append(
+                    f"LSP first activity arrived in {first_activity_ms!r} ms; maximum is "
+                    f"{case['max_lsp_first_activity_ms']} ms"
+                )
     if result["outcome"] != "completed":
         failures.append(f"operation outcome was {result['outcome']!r}, expected 'completed'")
     if result["settled_ms"] > case["max_settled_ms"]:

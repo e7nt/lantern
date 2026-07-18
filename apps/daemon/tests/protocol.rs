@@ -1171,6 +1171,10 @@ fn external_repository_journey_edits_tests_and_leaves_a_reviewable_diff() {
     let diff = String::from_utf8(diff.stdout).expect("UTF-8 diff");
     assert!(diff.contains("-pub fn greeting() -> &'static str { \"old\" }"));
     assert!(diff.contains("+pub fn greeting() -> &str { \"new\" }"));
+    assert!(
+        !driver.join("thinking.jsonl").exists(),
+        "multi-step repository work must retain the configured medium reasoning level"
+    );
 
     fs::remove_dir_all(root).expect("remove repository fixture");
     fs::remove_dir_all(driver).expect("remove driver fixture");
