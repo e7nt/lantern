@@ -195,6 +195,14 @@ the selected range in Helix. Details are in
 [ADR 005](decisions/005-lantern-owned-runtime-and-git-surface.md) and the
 [Pi SDK spike report](acceptance/2026-07-18-pi-sdk-tool-control-spike.md).
 
+The first focused Git spike also passes its command-boundary gate. Six
+dependency-free Rust journeys prove exact categorized state, bounded diffs,
+file and hunk stage/unstage, commits, branches, detached HEAD, conflicts,
+history, and fetch plus fast-forward-only pull. Lazygit remains maintained until
+the real rail, command deadlines, noninteractive authentication, privacy review,
+and startup/memory comparison pass. See the
+[focused Git command report](acceptance/2026-07-18-focused-git-command-spike.md).
+
 ## Not next
 
 - SQLite or durable chat history.
