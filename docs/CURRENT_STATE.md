@@ -78,13 +78,11 @@ opening line 1.
 
 Implement next:
 
-1. Repeat the multi-step live edit journey under Protocol v7 and confirm that
-   repository work remains at medium reasoning.
-2. Add one non-Rust call-hierarchy case before expanding the signal beyond its
+1. Add one non-Rust call-hierarchy case before expanding the signal beyond its
    current bounded two-hop shape.
-3. Investigate remaining provider-latency outliers without weakening the strict
+2. Investigate remaining provider-latency outliers without weakening the strict
    three-second gate.
-4. Spike semantic/vector retrieval only for a measured miss; do not add it to
+3. Spike semantic/vector retrieval only for a measured miss; do not add it to
    the current passing cases.
 
 [The persistent Pi acceptance report](acceptance/2026-07-18-persistent-pi.md)
@@ -133,6 +131,10 @@ same Helix question used zero tools, began text in 2.34, 2.08, and 2.13 seconds
 (2.13-second median), and remained grounded and read-only. The previous
 incomplete-evidence baseline used three tools with a 3.22-second first-activity
 median.
+The Protocol v7 external edit journey also passes: typed call evidence leads to
+the implementation, Pi edits the implementation and focused test, Node
+verification passes, two expected files remain unstaged for review, and active
+inspection cancels and settles in 14 ms without changing repository state.
 
 An incremental hybrid repository index remains conditional. Add
 semantic/vector retrieval or commit-synchronized summaries only when a curated

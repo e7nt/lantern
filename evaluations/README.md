@@ -20,6 +20,7 @@ cd evaluations
 DEEPEVAL_DISABLE_DOTENV=1 uv run python run_pi_quick_ask.py
 DEEPEVAL_DISABLE_DOTENV=1 uv run python run_live_trace.py
 DEEPEVAL_DISABLE_DOTENV=1 uv run python run_retrieval_baseline.py
+DEEPEVAL_DISABLE_DOTENV=1 uv run python run_external_edit_journey.py
 ```
 
 This requires Pi `0.80.6` and a private OpenAI Codex login completed through
@@ -43,6 +44,12 @@ it requires bounded tool escalation and measures first useful activity instead
 of pretending a direct answer is possible. Prepare the pinned upstream
 repositories using the normal Lantern setup before running it. Dataset v3 adds
 the measured two-hop call evidence and requires the same answer with zero tools.
+
+`run_external_edit_journey.py` creates disposable Git repositories outside the
+Lantern checkout. It submits a Protocol v7 symbol-grounded change, verifies the
+exact implementation and test files, runs the focused repository test, requires
+an unstaged reviewable diff, and separately interrupts a tool-driven read. Its
+report contains only bounded tool metadata and outcome measurements.
 
 The versioned datasets cover missing-context selections, bounded LSP symbol
 context, and efficient coding-tool journeys. They check properties that do not require a judge:
