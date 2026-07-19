@@ -18,9 +18,12 @@ bound to the exact canonical workbench root and rejects traversal.
 The first 10% renderer shows the active branch and one compact, conflict-first
 list using `!`, `+`, `~`, and `?` markers. Arrow keys or `j`/`k` and the mouse
 select a path; Enter or `d` opens its bounded staged, unstaged, or untracked
-diff; Space stages or unstages the selected file; `r` refreshes; and `q` exits.
-A file with both staged and unstaged changes intentionally has two independently
-reviewable rows.
+diff; and Space stages or unstages the selected file. In diff view, `j`/`k`
+moves between independently applicable hunks, Page Up/Down or the mouse wheel
+scrolls a tall hunk, Space stages or unstages only that hunk, and Enter opens
+its changed-line range in the existing Helix process. Conflicts open directly
+in Helix. `r` refreshes and `q` exits. A file with both staged and unstaged
+changes intentionally has two independently reviewable rows.
 
 Try the renderer from a repository in a separate terminal:
 
@@ -29,7 +32,7 @@ cargo run --manifest-path /path/to/lantern/spikes/git-rail/Cargo.toml
 ```
 
 The renderer is deliberately not production-ready or wired to `/git`. Commit
-and branch dialogs, hunk selection, Helix opening, fetch/pull interaction,
-command deadlines, noninteractive credentials, privacy-reviewed diagnostics,
-concurrent refresh, accessibility checks, and a performance comparison remain.
+and branch dialogs, fetch/pull interaction, command deadlines, noninteractive
+credentials, privacy-reviewed diagnostics, concurrent refresh, accessibility
+checks, and a performance comparison remain.
 Failure of those promotion gates deletes this crate and retains pinned Lazygit.

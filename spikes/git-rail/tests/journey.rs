@@ -138,22 +138,11 @@ fn stages_and_unstages_one_hunk_without_touching_the_other() {
         "FIRST\nsecond\nthird\nfourth\nFIFTH\n",
     )
     .expect("write two hunks");
-    let diff = Command::new("git")
-        .args(["diff", "-U0", "--", "tracked.txt"])
-        .current_dir(&root)
-        .output()
-        .expect("read two-hunk diff")
-        .stdout;
-    let first_marker = diff
-        .windows(3)
-        .position(|window| window == b"@@ ")
-        .expect("first hunk");
-    let second_marker = diff[first_marker + 3..]
-        .windows(4)
-        .position(|window| window == b"\n@@ ")
-        .map(|offset| first_marker + 3 + offset + 1)
-        .expect("second hunk");
-    let first_hunk = &diff[..second_marker];
+    let hunks = rail
+        .diff_hunks(Path::new("tracked.txt"), false)
+        .expect("read two hunks");
+    assert_eq!(hunks.len(), 2);
+    let first_hunk = hunks[0].patch();
 
     rail.stage_hunk(first_hunk).expect("stage first hunk");
     let staged = String::from_utf8(

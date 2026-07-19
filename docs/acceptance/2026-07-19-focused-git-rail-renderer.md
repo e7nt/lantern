@@ -24,10 +24,11 @@ staged and unstaged changes. The existing six repository journeys now also
 prove pre-stage review of an untracked file. Formatting, ten tests, Clippy with
 warnings denied, and `git diff --check` pass.
 
-This does not promote the rail. The next slice must add file/hunk selection in
-the renderer, open the selected path or diff in the existing Helix process,
-then add the commit, local branch, fetch, fast-forward pull, and recent-history
-dialogs already supported by the command spike. Git deadlines,
+The hunk-review follow-up dated 2026-07-19 now adds typed hunk selection,
+selective stage/unstage, tall-hunk scrolling, and exact Helix navigation. This
+still does not promote the rail. The next slice must add the commit, local
+branch, fetch, fast-forward pull, and recent-history dialogs already supported
+by the command spike. Git deadlines,
 `GIT_TERMINAL_PROMPT=0`, bounded diagnostics, concurrent refresh behavior,
 keyboard focus, screen-reader semantics, and measured startup/RSS versus pinned
 Lazygit remain mandatory before replacement.

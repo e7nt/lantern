@@ -9,10 +9,11 @@ use crossterm::terminal::{
     enable_raw_mode,
 };
 use crossterm::{execute, queue};
-use lantern_git_rail_spike::{GitRail, Status};
+use lantern_git_rail_spike::{DiffHunk, GitRail, Status};
 use std::env;
 use std::io::{self, Stdout, Write};
 use std::path::PathBuf;
+use std::process::Command;
 use std::time::Duration;
 
 const CANVAS: Color = Color::Rgb {
@@ -72,7 +73,12 @@ struct Change {
 
 enum View {
     Changes,
-    Diff { lines: Vec<String>, offset: usize },
+    Diff {
+        change: Change,
+        hunks: Vec<DiffHunk>,
+        selected: usize,
+        offset: usize,
+    },
 }
 
 struct State {
@@ -140,21 +146,136 @@ impl State {
         let Some(change) = self.changes.get(self.selected) else {
             return;
         };
-        let diff = if change.kind == ChangeKind::Untracked {
-            rail.untracked_diff(&change.path)
-        } else {
-            rail.diff(&change.path, change.kind.staged())
-        };
-        match diff {
-            Ok(diff) => {
-                let lines = String::from_utf8_lossy(&diff)
-                    .lines()
-                    .map(ToOwned::to_owned)
-                    .collect();
-                self.view = View::Diff { lines, offset: 0 };
+        match rail.diff_hunks(&change.path, change.kind.staged()) {
+            Ok(hunks) => {
+                self.view = View::Diff {
+                    change: change.clone(),
+                    hunks,
+                    selected: 0,
+                    offset: 0,
+                };
                 self.notice = None;
             }
             Err(message) => self.notice = Some(message),
+        }
+    }
+
+    fn move_hunk(&mut self, amount: isize) {
+        let View::Diff {
+            hunks,
+            selected,
+            offset,
+            ..
+        } = &mut self.view
+        else {
+            return;
+        };
+        *selected = selected
+            .saturating_add_signed(amount)
+            .min(hunks.len().saturating_sub(1));
+        *offset = 0;
+    }
+
+    fn scroll_hunk(&mut self, amount: isize) {
+        let View::Diff {
+            hunks,
+            selected,
+            offset,
+            ..
+        } = &mut self.view
+        else {
+            return;
+        };
+        let line_count = hunks
+            .get(*selected)
+            .map(|hunk| String::from_utf8_lossy(hunk.display()).lines().count())
+            .unwrap_or(0);
+        *offset = offset
+            .saturating_add_signed(amount)
+            .min(line_count.saturating_sub(1));
+    }
+
+    fn toggle_hunk(&mut self, rail: &GitRail) {
+        let View::Diff {
+            change,
+            hunks,
+            selected,
+            ..
+        } = &self.view
+        else {
+            return;
+        };
+        let Some(hunk) = hunks.get(*selected) else {
+            return;
+        };
+        let change = change.clone();
+        let result = if change.kind.staged() {
+            rail.unstage_hunk(hunk.patch())
+        } else {
+            rail.stage_hunk(hunk.patch())
+        };
+        let action = if change.kind.staged() {
+            "Hunk unstaged."
+        } else {
+            "Hunk staged."
+        };
+        match result {
+            Ok(()) => {
+                self.view = View::Changes;
+                self.refresh(rail);
+                if let Some(index) = self.changes.iter().position(|candidate| {
+                    candidate.kind == change.kind && candidate.path == change.path
+                }) {
+                    self.selected = index;
+                    self.open_diff(rail);
+                }
+                self.notice = Some(action.into());
+            }
+            Err(message) => self.notice = Some(message),
+        }
+    }
+
+    fn open_selected_in_helix(&mut self) {
+        let (path, start, end) = match &self.view {
+            View::Changes => {
+                let Some(change) = self.changes.get(self.selected) else {
+                    return;
+                };
+                (change.path.clone(), 1, 2)
+            }
+            View::Diff {
+                change,
+                hunks,
+                selected,
+                ..
+            } => {
+                let Some(hunk) = hunks.get(*selected) else {
+                    return;
+                };
+                let Some((start, end)) = hunk.navigation_lines() else {
+                    self.notice = Some("Deleted hunk has no current Helix range.".into());
+                    return;
+                };
+                (change.path.clone(), start, end)
+            }
+        };
+        let output = Command::new("lantern-open-range")
+            .arg(&path)
+            .args([start.to_string(), "1".into(), end.to_string(), "1".into()])
+            .output();
+        match output {
+            Ok(output) if output.status.success() => {
+                self.notice = Some(format!("Opened {} in Helix.", path.display()));
+            }
+            Ok(output) => {
+                let detail = String::from_utf8_lossy(&output.stderr);
+                self.notice = Some(if detail.trim().is_empty() {
+                    "Helix navigation failed without diagnostics.".into()
+                } else {
+                    format!("Helix navigation failed: {}", detail.trim())
+                });
+            }
+            Err(cause) => self.notice = Some(format!("Cannot open Helix range: {cause}")),
         }
     }
 }
@@ -233,7 +354,12 @@ fn draw(stdout: &mut Stdout, state: &State) -> io::Result<()> {
     )?;
     match &state.view {
         View::Changes => draw_changes(stdout, state, width, height)?,
-        View::Diff { lines, offset } => draw_diff(stdout, lines, *offset, width, height)?,
+        View::Diff {
+            change,
+            hunks,
+            selected,
+            offset,
+        } => draw_diff(stdout, change, hunks, *selected, *offset, width, height)?,
     }
     stdout.flush()
 }
@@ -285,13 +411,28 @@ fn draw_changes(stdout: &mut Stdout, state: &State, width: u16, height: u16) -> 
 
 fn draw_diff(
     stdout: &mut Stdout,
-    lines: &[String],
+    change: &Change,
+    hunks: &[DiffHunk],
+    selected: usize,
     offset: usize,
     width: u16,
     height: u16,
 ) -> io::Result<()> {
-    let available = height.saturating_sub(2) as usize;
-    for (row, line) in lines.iter().skip(offset).take(available).enumerate() {
+    let Some(hunk) = hunks.get(selected) else {
+        return Ok(());
+    };
+    queue!(
+        stdout,
+        MoveTo(0, 1),
+        SetForegroundColor(MUTED),
+        Print(clipped(
+            &format!("{}/{} {}", selected + 1, hunks.len(), change.path.display()),
+            width as usize,
+        ))
+    )?;
+    let display = String::from_utf8_lossy(hunk.display());
+    let available = height.saturating_sub(3) as usize;
+    for (row, line) in display.lines().skip(offset).take(available).enumerate() {
         let color = if line.starts_with('+') && !line.starts_with("+++") {
             ACCENT
         } else if line.starts_with('-') && !line.starts_with("---") {
@@ -305,7 +446,7 @@ fn draw_diff(
         };
         queue!(
             stdout,
-            MoveTo(0, row as u16 + 1),
+            MoveTo(0, row as u16 + 2),
             SetForegroundColor(color),
             Print(clipped(line, width as usize))
         )?;
@@ -314,7 +455,7 @@ fn draw_diff(
         stdout,
         MoveTo(0, height.saturating_sub(1)),
         SetForegroundColor(MUTED),
-        Print(clipped("Esc back  j/k scroll", width as usize))
+        Print(clipped("↵ open  space stage  Pg scroll", width as usize))
     )
 }
 
@@ -342,16 +483,27 @@ fn run() -> Result<(), String> {
                     KeyCode::Up | KeyCode::Char('k') => state.move_selection(-1),
                     KeyCode::Down | KeyCode::Char('j') => state.move_selection(1),
                     KeyCode::Char(' ') => state.toggle_stage(&rail),
+                    KeyCode::Enter
+                        if state
+                            .changes
+                            .get(state.selected)
+                            .is_some_and(|change| change.kind == ChangeKind::Conflicted) =>
+                    {
+                        state.open_selected_in_helix()
+                    }
                     KeyCode::Enter | KeyCode::Char('d') => state.open_diff(&rail),
+                    KeyCode::Char('o') => state.open_selected_in_helix(),
                     KeyCode::Char('r') => state.refresh(&rail),
                     _ => {}
                 },
-                View::Diff { lines, offset } => match key.code {
+                View::Diff { .. } => match key.code {
                     KeyCode::Esc | KeyCode::Char('q') => state.view = View::Changes,
-                    KeyCode::Up | KeyCode::Char('k') => *offset = offset.saturating_sub(1),
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        *offset = (*offset + 1).min(lines.len().saturating_sub(1));
-                    }
+                    KeyCode::Up | KeyCode::Char('k') => state.move_hunk(-1),
+                    KeyCode::Down | KeyCode::Char('j') => state.move_hunk(1),
+                    KeyCode::PageUp => state.scroll_hunk(-10),
+                    KeyCode::PageDown => state.scroll_hunk(10),
+                    KeyCode::Char(' ') => state.toggle_hunk(&rail),
+                    KeyCode::Enter | KeyCode::Char('o') => state.open_selected_in_helix(),
                     _ => {}
                 },
             },
@@ -368,13 +520,11 @@ fn run() -> Result<(), String> {
                 }
                 MouseEventKind::ScrollUp => match &mut state.view {
                     View::Changes => state.move_selection(-1),
-                    View::Diff { offset, .. } => *offset = offset.saturating_sub(1),
+                    View::Diff { .. } => state.scroll_hunk(-3),
                 },
                 MouseEventKind::ScrollDown => match &mut state.view {
                     View::Changes => state.move_selection(1),
-                    View::Diff { lines, offset } => {
-                        *offset = (*offset + 1).min(lines.len().saturating_sub(1))
-                    }
+                    View::Diff { .. } => state.scroll_hunk(3),
                 },
                 _ => {}
             },
