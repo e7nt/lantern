@@ -927,14 +927,18 @@ fn run_pi_operation(
         let root = driver.root.clone();
         if let Some(selection) = &selection {
             let selected_path = root.join(&selection.relative_path);
-            let canonical_path = selected_path.canonicalize().map_err(|cause| {
-                format!(
-                    "cannot open selected file {}: {cause}",
-                    selected_path.display()
-                )
-            })?;
-            if !canonical_path.starts_with(&root) {
-                return Err("selected file escaped the repository".into());
+            let deleted_git_review =
+                selection.language.as_deref() == Some("git-diff") && !selected_path.exists();
+            if !deleted_git_review {
+                let canonical_path = selected_path.canonicalize().map_err(|cause| {
+                    format!(
+                        "cannot open selected file {}: {cause}",
+                        selected_path.display()
+                    )
+                })?;
+                if !canonical_path.starts_with(&root) {
+                    return Err("selected file escaped the repository".into());
+                }
             }
         }
 
@@ -1099,7 +1103,11 @@ fn run_pi_operation(
                 selection.start_column,
                 selection.end_line,
                 selection.end_column,
-                selection_evidence.as_ref().map_or(selection.text.as_str(), |evidence| evidence.excerpt.as_str()),
+                if selection.language.as_deref() == Some("git-diff") {
+                    selection.text.as_str()
+                } else {
+                    selection_evidence.as_ref().map_or(selection.text.as_str(), |evidence| evidence.excerpt.as_str())
+                },
                 symbol_prompt,
             ),
         );

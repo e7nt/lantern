@@ -27,6 +27,7 @@ async function fixture() {
 			'  printf "%%7 Helix\\n%%8 Lantern\\n"\n' +
 			'else\n' +
 			'  printf "%s\\n" "$*" >> "$TMUX_LOG"\n' +
+			'  if [ "$1" = display-popup ] && [ -n "$TMUX_POPUP_STATUS" ]; then exit "$TMUX_POPUP_STATUS"; fi\n' +
 			'fi\n'
 	);
 	await chmod(path.join(fakeBin, 'tmux'), 0o755);
@@ -38,11 +39,13 @@ async function fixture() {
 	return { directory, repository, fakeBin, tmuxLog, submitLog };
 }
 
-function environment({ repository, fakeBin, tmuxLog, submitLog }) {
+function environment({ directory, repository, fakeBin, tmuxLog, submitLog }) {
 	return {
 		...process.env,
 		PATH: `${fakeBin}:${process.env.PATH}`,
 		LANTERN_REPO: repository,
+		LANTERN_REVIEW_PATH: path.join(directory, 'review.json'),
+		LANTERN_GIT_RESUME_PATH: path.join(directory, 'git-resume.json'),
 		LANTERN_EDITOR_PANE: '%7',
 		TMUX: '/tmp/fake',
 		TMUX_CLIENT_WIDTH: '160',
@@ -137,6 +140,33 @@ test('Ctrl-a composer opens a small contextual popup', async () => {
 	const calls = await readFile(context.tmuxLog, 'utf8');
 	assert.match(calls, /display-popup -t %7 -E -w 70% -h 7 -T  Ask Lantern /);
 	assert.match(calls, /LANTERN_AGENT_PANE=%8/);
+	assert.match(calls, /LANTERN_REVIEW_PATH=/);
+});
+
+test('Git review exit opens the one existing agent composer', async () => {
+	const context = await fixture();
+	const gitRail = path.join(context.directory, 'lantern-git-rail');
+	const composerLog = path.join(context.directory, 'composer.log');
+	await writeFile(gitRail, '#!/bin/sh\nexit 0\n');
+	await chmod(gitRail, 0o755);
+	await writeFile(
+		path.join(context.fakeBin, 'lantern-agent-composer'),
+		'#!/bin/sh\nprintf "opened\\n" > "$COMPOSER_LOG"\n'
+	);
+	await chmod(path.join(context.fakeBin, 'lantern-agent-composer'), 0o755);
+
+	const result = spawnSync(path.join(frontendBin, 'lantern-git'), [], {
+		encoding: 'utf8',
+		env: {
+			...environment(context),
+			LANTERN_GIT_BIN: gitRail,
+			TMUX_POPUP_STATUS: '20',
+			COMPOSER_LOG: composerLog
+		}
+	});
+
+	assert.equal(result.status, 0, result.stderr);
+	assert.equal(await readFile(composerLog, 'utf8'), 'opened\n');
 });
 
 test('composer submits the question literally and focuses Lantern', async () => {
@@ -162,6 +192,28 @@ test('composer submits the question literally and focuses Lantern', async () => 
 	assert.equal(await readFile(context.submitLog, 'utf8'), question);
 	assert.doesNotMatch(calls, /send-keys/);
 	assert.match(calls, /select-pane -t %8/);
+});
+
+test('dismissing the Git composer clears its one-shot review context', async () => {
+	const context = await fixture();
+	const reviewPath = path.join(context.directory, 'review.json');
+	await writeFile(reviewPath, '{"bounded":"context"}\n');
+	const result = spawnSync(
+		path.join(frontendBin, 'lantern-agent-composer'),
+		['--prompt'],
+		{
+			encoding: 'utf8',
+			input: '\n',
+			env: {
+				...environment(context),
+				LANTERN_AGENT_PANE: '%8',
+				LANTERN_REVIEW_PATH: reviewPath
+			}
+		}
+	);
+
+	assert.equal(result.status, 0, result.stderr);
+	await assert.rejects(readFile(reviewPath, 'utf8'), /ENOENT/);
 });
 
 test('agent zoom toggles the same Lantern pane without rebuilding the layout', async () => {

@@ -15,9 +15,10 @@ use lantern_diagnostics::{
     DaemonState as DiagnosticDaemonState, bundle_from_stderr, summarize_stderr,
 };
 use lantern_protocol::{
-    BoundedTail, ChangeProposal, ControlRequest, Event, Evidence, EvidenceSource, GroundingState,
-    MAX_DIAGNOSTIC_BYTES, MAX_QUESTION_BYTES, MAX_SELECTION_BYTES, PROTOCOL_VERSION, Request,
-    SelectionContext, SymbolContext, SymbolContextExport, read_frame, search_term,
+    BoundedTail, ChangeProposal, ControlRequest, Event, Evidence, EvidenceSource, GitReviewContext,
+    GroundingState, MAX_DIAGNOSTIC_BYTES, MAX_QUESTION_BYTES, MAX_SELECTION_BYTES,
+    PROTOCOL_VERSION, Request, SelectionContext, SymbolContext, SymbolContextExport, read_frame,
+    search_term, validate_git_review,
 };
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -661,6 +662,19 @@ fn selection_for_question(
     symbol_context_for_question(state, selection_path).map(|context| context.selection)
 }
 
+fn read_review_context(path: &Path) -> Result<SelectionContext, String> {
+    let bytes = fs::read(path)
+        .map_err(|cause| format!("cannot read selected Git review context: {cause}"))?;
+    let _ = fs::remove_file(path);
+    if bytes.len() > MAX_SELECTION_BYTES + 4 * 1024 {
+        return Err("Git review context file exceeds its bounded size".into());
+    }
+    let context: GitReviewContext = serde_json::from_slice(&bytes)
+        .map_err(|cause| format!("Git review returned invalid context: {cause}"))?;
+    validate_git_review(&context)?;
+    Ok(context.into_selection())
+}
+
 fn show_proposal(selection_path: &Path, proposal: &ChangeProposal) -> Result<(), String> {
     let directory = selection_path
         .parent()
@@ -902,6 +916,7 @@ fn start_agent_question(
     state: &mut UiState,
     repository: &Path,
     selection_path: &Path,
+    review_path: &Path,
     daemon_stdin: &Arc<Mutex<BufWriter<ChildStdin>>>,
     query: &str,
 ) -> io::Result<()> {
@@ -910,30 +925,57 @@ fn start_agent_question(
         state.line("Type a question about the selection, then press Enter.");
         return Ok(());
     }
+    let review = if review_path.exists() {
+        match read_review_context(review_path) {
+            Ok(review) => {
+                let _ = fs::remove_file(selection_path);
+                state.pending_symbol_context = None;
+                Some(review)
+            }
+            Err(message) => {
+                state.line(format!("Git review context failed: {message}"));
+                return Ok(());
+            }
+        }
+    } else {
+        None
+    };
     let Some(id) = state.begin_operation() else {
         state.line("The agent is already working.");
         return Ok(());
     };
-    match symbol_context_for_question(state, selection_path) {
-        Ok(context) => {
-            send_request(
-                daemon_stdin,
-                &Request::AskAgentSymbol {
-                    id,
-                    repository: repository.to_owned(),
-                    query: query.to_owned(),
-                    context,
-                },
-            )?;
-        }
-        Err(_) => send_request(
+    if let Some(selection) = review {
+        send_request(
             daemon_stdin,
-            &Request::AskAgent {
+            &Request::AskAgentSelection {
                 id,
                 repository: repository.to_owned(),
                 query: query.to_owned(),
+                selection,
             },
-        )?,
+        )?;
+    } else {
+        match symbol_context_for_question(state, selection_path) {
+            Ok(context) => {
+                send_request(
+                    daemon_stdin,
+                    &Request::AskAgentSymbol {
+                        id,
+                        repository: repository.to_owned(),
+                        query: query.to_owned(),
+                        context,
+                    },
+                )?;
+            }
+            Err(_) => send_request(
+                daemon_stdin,
+                &Request::AskAgent {
+                    id,
+                    repository: repository.to_owned(),
+                    query: query.to_owned(),
+                },
+            )?,
+        }
     }
     Ok(())
 }
@@ -1038,6 +1080,7 @@ fn handle_line(
     state: &mut UiState,
     repository: &Path,
     selection_path: &Path,
+    review_path: &Path,
     daemon_stdin: &Arc<Mutex<BufWriter<ChildStdin>>>,
     diagnostics: &Arc<Mutex<BoundedTail>>,
 ) -> io::Result<bool> {
@@ -1117,7 +1160,14 @@ fn handle_line(
     } else if line.starts_with('/') {
         state.line("Unknown diagnostic command.");
     } else {
-        start_agent_question(state, repository, selection_path, daemon_stdin, &line)?;
+        start_agent_question(
+            state,
+            repository,
+            selection_path,
+            review_path,
+            daemon_stdin,
+            &line,
+        )?;
     }
     Ok(false)
 }
@@ -1127,6 +1177,7 @@ fn handle_key(
     state: &mut UiState,
     repository: &Path,
     selection_path: &Path,
+    review_path: &Path,
     daemon_stdin: &Arc<Mutex<BufWriter<ChildStdin>>>,
     diagnostics: &Arc<Mutex<BoundedTail>>,
 ) -> io::Result<bool> {
@@ -1185,6 +1236,7 @@ fn handle_key(
                 state,
                 repository,
                 selection_path,
+                review_path,
                 daemon_stdin,
                 diagnostics,
             )
@@ -1458,6 +1510,7 @@ fn run(
     repository: PathBuf,
     daemon_path: PathBuf,
     selection_path: PathBuf,
+    review_path: PathBuf,
     control_socket: PathBuf,
 ) -> io::Result<()> {
     let mut daemon = Command::new(daemon_path)
@@ -1500,6 +1553,7 @@ fn run(
                 &mut state,
                 &repository,
                 &selection_path,
+                &review_path,
                 &daemon_stdin,
                 &diagnostics,
             )?,
@@ -1534,6 +1588,7 @@ fn run(
                 &mut state,
                 &repository,
                 &selection_path,
+                &review_path,
                 &daemon_stdin,
                 &diagnostics,
             )?,
@@ -1563,10 +1618,19 @@ fn main() -> io::Result<()> {
     let selection_path = env::var_os("LANTERN_SELECTION_PATH")
         .map(PathBuf::from)
         .ok_or_else(|| io::Error::other("LANTERN_SELECTION_PATH is not configured"))?;
+    let review_path = env::var_os("LANTERN_REVIEW_PATH")
+        .map(PathBuf::from)
+        .ok_or_else(|| io::Error::other("LANTERN_REVIEW_PATH is not configured"))?;
     let control_socket = env::var_os("LANTERN_CONTROL_SOCKET")
         .map(PathBuf::from)
         .ok_or_else(|| io::Error::other("LANTERN_CONTROL_SOCKET is not configured"))?;
-    run(repository, daemon, selection_path, control_socket)
+    run(
+        repository,
+        daemon,
+        selection_path,
+        review_path,
+        control_socket,
+    )
 }
 
 #[cfg(test)]
@@ -1597,6 +1661,32 @@ mod tests {
         let state = UiState::new(Path::new("."));
         assert!(state.transcript.is_empty());
         assert!(state.activity.is_none());
+    }
+
+    #[test]
+    fn consumes_typed_git_review_as_one_agent_selection() {
+        let path = env::temp_dir().join(format!(
+            "lantern-review-{}-{}.json",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let review = GitReviewContext {
+            relative_path: "src/session.ts".into(),
+            state: lantern_protocol::GitReviewState::Modified,
+            scope: lantern_protocol::GitReviewScope::Hunk,
+            start_line: 12,
+            end_line: 15,
+            diff: "@@ -12 +12,3 @@\n-old\n+new\n".into(),
+        };
+        fs::write(&path, serde_json::to_vec(&review).unwrap()).unwrap();
+        let selection = read_review_context(&path).unwrap();
+        assert_eq!(selection.relative_path, Path::new("src/session.ts"));
+        assert_eq!((selection.start_line, selection.end_line), (12, 15));
+        assert!(selection.text.contains("Git review state: modified"));
+        assert!(!path.exists());
     }
 
     #[cfg(unix)]

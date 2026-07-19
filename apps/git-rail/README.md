@@ -32,6 +32,9 @@ changes intentionally has two independently reviewable rows.
 Press `?` for shortcuts specific to the current view. Long paths retain their
 filename in narrow rails. With the mouse, left click selects and reviews, right
 click stages or unstages, middle click opens in Helix, and the wheel scrolls.
+Press `Ctrl-a` on a file or hunk to close the modal rail and ask through the
+existing Lantern composer with that exact bounded Git review attached. Opening
+`/git` again restores the reviewed file and exact or nearest surviving hunk.
 
 Press `a` for the temporary action overlay: commit the staged set, create or
 switch a local branch, fetch, fast-forward pull, or inspect twenty recent

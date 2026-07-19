@@ -77,6 +77,8 @@ name = "lantern-git-rail"
 version = "0.1.0"
 dependencies = [
  "crossterm",
+ "lantern-protocol",
+ "serde_json",
 ]
 
 [[package]]

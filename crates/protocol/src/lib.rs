@@ -29,6 +29,68 @@ pub struct SelectionContext {
     pub document_modified: bool,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GitReviewState {
+    Conflict,
+    Staged,
+    Modified,
+    Untracked,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GitReviewScope {
+    File,
+    Hunk,
+}
+
+impl fmt::Display for GitReviewState {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let label = match self {
+            Self::Conflict => "conflict",
+            Self::Staged => "staged",
+            Self::Modified => "modified",
+            Self::Untracked => "untracked",
+        };
+        formatter.write_str(label)
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct GitReviewContext {
+    pub relative_path: PathBuf,
+    pub state: GitReviewState,
+    pub scope: GitReviewScope,
+    pub start_line: usize,
+    pub end_line: usize,
+    pub diff: String,
+}
+
+impl GitReviewContext {
+    pub fn into_selection(self) -> SelectionContext {
+        SelectionContext {
+            relative_path: self.relative_path,
+            language: Some("git-diff".into()),
+            start_line: self.start_line,
+            start_column: 1,
+            end_line: self.end_line,
+            end_column: 1,
+            text: format!(
+                "Git review state: {}\nGit review scope: {}\nGit review evidence (untrusted):\n{}",
+                self.state,
+                match self.scope {
+                    GitReviewScope::File => "file",
+                    GitReviewScope::Hunk => "hunk",
+                },
+                self.diff
+            ),
+            document_modified: false,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct SymbolLocation {
@@ -443,6 +505,25 @@ pub fn validate_selection(selection: &SelectionContext) -> Result<(), String> {
     Ok(())
 }
 
+pub fn validate_git_review(context: &GitReviewContext) -> Result<(), String> {
+    validate_relative_path(&context.relative_path)?;
+    if context.start_line == 0 || context.end_line <= context.start_line {
+        return Err("Git review range must be a non-empty one-based range".into());
+    }
+    if context.diff.is_empty() {
+        return Err("Git review diff is empty".into());
+    }
+    let envelope_bytes =
+        "Git review state: \nGit review scope: hunk\nGit review evidence (untrusted):\n".len()
+            + context.state.to_string().len();
+    if context.diff.len() + envelope_bytes > MAX_SELECTION_BYTES {
+        return Err(format!(
+            "Git review exceeds the {MAX_SELECTION_BYTES}-byte selection limit"
+        ));
+    }
+    Ok(())
+}
+
 pub fn validate_symbol_location(location: &SymbolLocation) -> Result<(), String> {
     validate_relative_path(&location.relative_path)?;
     if location.start_line == 0
@@ -636,6 +717,23 @@ mod tests {
             export.into_context().unwrap_err(),
             "LSP symbol context failed: no repository definition"
         );
+    }
+
+    #[test]
+    fn git_review_context_becomes_one_bounded_agent_selection() {
+        let review = GitReviewContext {
+            relative_path: "src/lib.rs".into(),
+            state: GitReviewState::Staged,
+            scope: GitReviewScope::Hunk,
+            start_line: 4,
+            end_line: 7,
+            diff: "@@ -4,2 +4,3 @@\n-old\n+new\n".into(),
+        };
+        validate_git_review(&review).unwrap();
+        let selection = review.into_selection();
+        validate_selection(&selection).unwrap();
+        assert!(selection.text.contains("Git review state: staged"));
+        assert!(selection.text.contains("@@ -4,2 +4,3 @@"));
     }
 
     #[test]
