@@ -245,6 +245,13 @@ event-driven rather than continuously repainting every 50 ms. The interaction
 gate is recorded in the
 [accessibility report](acceptance/2026-07-19-git-interaction-accessibility.md).
 
+The reproducible 1,001-file performance gate passes. The focused rail measured
+79.7 ms median startup and 2,960 KiB RSS versus pinned Lazygit's 95.6 ms and
+24,888 KiB; visible external refresh measured 704.7 ms versus 8,364.7 ms. The
+next checkpoint is promotion: wire `/git` to the focused rail and remove the
+Lazygit binary, preparation, configuration, launcher, and tests together. See
+the [performance report](acceptance/2026-07-19-git-surface-performance.md).
+
 ## Not next
 
 - SQLite or durable chat history.

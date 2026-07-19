@@ -8,6 +8,8 @@ version used by Lantern's terminal, and it does not replace Lazygit.
 cargo fmt --manifest-path spikes/git-rail/Cargo.toml --check
 cargo test --manifest-path spikes/git-rail/Cargo.toml
 cargo clippy --manifest-path spikes/git-rail/Cargo.toml --all-targets -- -D warnings
+cargo build --release --manifest-path spikes/git-rail/Cargo.toml
+node scripts/benchmark-git-surfaces.mjs
 ```
 
 The spike supports exact categorized status, bounded file diffs, file and hunk
@@ -49,6 +51,6 @@ functional scope is complete. Commands now have bounded output, typed private
 errors, noninteractive credentials, and local/network deadlines; fetch and
 fast-forward pull remain responsive and support `Esc` cancellation. One
 coalesced background scan detects external edits while preserving the selected
-path and hunk. The accessibility and interaction-quality gate passes; only the
-performance comparison remains.
-Failure of those promotion gates deletes this crate and retains pinned Lazygit.
+path and hunk. Accessibility and performance promotion gates pass. The next
+checkpoint must wire this rail to `/git` and remove the pinned Lazygit path
+together; no permanent fallback remains.
