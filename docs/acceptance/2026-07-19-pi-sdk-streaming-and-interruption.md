@@ -32,8 +32,9 @@ session-only measurement. One provider turn met Lantern's under-three-second
 experience goal and one did not, so a single fast run is not accepted as a
 latency result. These runs also cannot yet be compared fairly with the
 maintained RPC path because the prompt and measurement boundary differ. The
-next gate is a same-process benchmark harness that feeds the identical fixture
-and prompt to both transports and separates local overhead from provider wait.
+matched transport benchmark dated 2026-07-19 now supplies that common boundary;
+repeated samples are still required before treating latency as a promotion
+result.
 
 No prompt text, answer text, tool arguments, credentials, or fixture contents
 are printed by the live runner. Run both checks with:
