@@ -108,6 +108,12 @@ ambiguous requests stay read-only; “look into” produces a readiness brief,
 language such as “implement,” “fix,” or “proceed” enables coding tools. The same
 rule applies when code or a Git hunk is selected.
 
+Follow-ups remain part of that conversation. After exploring an idea, phrases
+such as “Yes, but keep it bounded” and “Only use the existing invalidation
+hook” refine the current direction. “Do it” carries the refined result into the
+coding turn. The pane shows concrete file and tool activity rather than naming
+these internal routing states.
+
 Diagnostic commands remain available:
 
 - `/git` opens Lantern's focused Git review rail.
