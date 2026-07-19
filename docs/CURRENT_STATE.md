@@ -217,6 +217,15 @@ Helix's existing typed navigation command. A live two-hunk journey proved the
 index received only the selected change. See the
 [hunk-review report](acceptance/2026-07-19-git-hunk-review-and-helix-navigation.md).
 
+One temporary `a` overlay now completes the bounded functional scope: commit
+the staged set, create or switch local branches, fetch, pull only when typed
+upstream state permits a fast-forward, and inspect bounded recent history and
+commit diffs. A live narrow-terminal journey proves commit, branch, history,
+and commit-diff interaction. Functional expansion stops; Lazygit replacement
+still requires operational hardening, accessibility checks, and measured
+startup/RSS superiority. See the
+[action-overlay report](acceptance/2026-07-19-focused-git-action-overlay.md).
+
 ## Not next
 
 - SQLite or durable chat history.

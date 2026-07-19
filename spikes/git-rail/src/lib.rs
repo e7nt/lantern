@@ -23,10 +23,19 @@ pub struct Status {
     pub conflicted: Vec<PathBuf>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Commit {
     pub id: String,
     pub summary: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SyncState {
+    NoUpstream,
+    UpToDate,
+    Ahead { commits: usize },
+    Behind { commits: usize },
+    Diverged { ahead: usize, behind: usize },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -160,6 +169,16 @@ impl GitRail {
         self.git_ok(["switch", name])
     }
 
+    pub fn local_branches(&self) -> Result<Vec<String>, String> {
+        let output = self.git_text([
+            OsString::from("for-each-ref"),
+            OsString::from("--sort=refname"),
+            OsString::from("--format=%(refname:short)"),
+            OsString::from("refs/heads"),
+        ])?;
+        Ok(output.lines().map(ToOwned::to_owned).collect())
+    }
+
     pub fn commit(&self, message: &str) -> Result<(), String> {
         let message = message.trim();
         if message.is_empty() || message.len() > 4_096 || message.contains('\0') {
@@ -173,6 +192,29 @@ impl GitRail {
     }
     pub fn pull_fast_forward(&self) -> Result<(), String> {
         self.git_ok(["pull", "--ff-only"])
+    }
+
+    pub fn sync_state(&self) -> Result<SyncState, String> {
+        let branch = self.branch()?;
+        if branch.starts_with("(detached ") {
+            return Ok(SyncState::NoUpstream);
+        }
+        let upstream = self.git_text([
+            OsString::from("for-each-ref"),
+            OsString::from("--format=%(upstream)"),
+            OsString::from(format!("refs/heads/{branch}")),
+        ])?;
+        let upstream = upstream.trim();
+        if upstream.is_empty() {
+            return Ok(SyncState::NoUpstream);
+        }
+        let counts = self.git_text([
+            OsString::from("rev-list"),
+            OsString::from("--left-right"),
+            OsString::from("--count"),
+            OsString::from(format!("HEAD...{upstream}")),
+        ])?;
+        parse_sync_counts(&counts)
     }
 
     pub fn recent_commits(&self, limit: usize) -> Result<Vec<Commit>, String> {
@@ -198,6 +240,24 @@ impl GitRail {
                 })
             })
             .collect()
+    }
+
+    pub fn commit_diff(&self, id: &str) -> Result<Vec<u8>, String> {
+        if !(40..=64).contains(&id.len()) || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err("commit id must be a full hexadecimal object id".into());
+        }
+        self.git_bounded(
+            [
+                OsString::from("show"),
+                OsString::from("--format="),
+                OsString::from("--no-ext-diff"),
+                OsString::from("--unified=0"),
+                OsString::from(id),
+                OsString::from("--"),
+            ],
+            MAX_DIFF_BYTES,
+            false,
+        )
     }
 
     fn paths<const N: usize>(&self, arguments: [&str; N]) -> Result<Vec<PathBuf>, String> {
@@ -264,8 +324,11 @@ impl GitRail {
         Ok(())
     }
 
-    fn git_text<const N: usize>(&self, arguments: [&str; N]) -> Result<String, String> {
-        String::from_utf8(self.git_bytes(arguments.map(OsString::from))?)
+    fn git_text<const N: usize, S: Into<OsString>>(
+        &self,
+        arguments: [S; N],
+    ) -> Result<String, String> {
+        String::from_utf8(self.git_bytes(arguments.map(Into::into))?)
             .map_err(|_| "Git output is not UTF-8".into())
     }
 
@@ -327,6 +390,29 @@ impl GitRail {
         }
         Ok(())
     }
+}
+
+fn parse_sync_counts(counts: &str) -> Result<SyncState, String> {
+    let mut values = counts.split_whitespace();
+    let ahead = values
+        .next()
+        .ok_or("Git sync state has no ahead count")?
+        .parse::<usize>()
+        .map_err(|_| "Git ahead count is invalid")?;
+    let behind = values
+        .next()
+        .ok_or("Git sync state has no behind count")?
+        .parse::<usize>()
+        .map_err(|_| "Git behind count is invalid")?;
+    if values.next().is_some() {
+        return Err("Git sync state has unexpected fields".into());
+    }
+    Ok(match (ahead, behind) {
+        (0, 0) => SyncState::UpToDate,
+        (ahead, 0) => SyncState::Ahead { commits: ahead },
+        (0, behind) => SyncState::Behind { commits: behind },
+        (ahead, behind) => SyncState::Diverged { ahead, behind },
+    })
 }
 
 fn parse_diff_hunks(diff: &[u8]) -> Result<Vec<DiffHunk>, String> {
@@ -465,5 +551,26 @@ mod tests {
     fn rejects_binary_or_malformed_diffs_without_a_hunk() {
         assert!(parse_diff_hunks(b"diff --git a/a b/a\nBinary files differ\n").is_err());
         assert!(parse_diff_hunks(b"not a diff\n").is_err());
+    }
+
+    #[test]
+    fn classifies_upstream_counts_without_prose_parsing() {
+        assert_eq!(parse_sync_counts("0\t0\n").unwrap(), SyncState::UpToDate);
+        assert_eq!(
+            parse_sync_counts("2 0").unwrap(),
+            SyncState::Ahead { commits: 2 }
+        );
+        assert_eq!(
+            parse_sync_counts("0 3").unwrap(),
+            SyncState::Behind { commits: 3 }
+        );
+        assert_eq!(
+            parse_sync_counts("2 3").unwrap(),
+            SyncState::Diverged {
+                ahead: 2,
+                behind: 3
+            }
+        );
+        assert!(parse_sync_counts("unknown").is_err());
     }
 }

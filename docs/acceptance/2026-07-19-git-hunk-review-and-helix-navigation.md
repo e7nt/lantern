@@ -28,7 +28,6 @@ four renderer-state tests, and six repository journeys. Formatting, all tests,
 Clippy with warnings denied, the narrow live interaction, and
 `git diff --check` pass.
 
-The next slice is one compact action overlay for commit message, local branch
-creation/switching, fetch, fast-forward-only pull, and bounded recent history.
-It must not introduce permanent panels or expose excluded destructive Git
-operations.
+The compact action-overlay follow-up dated 2026-07-19 now completes commit,
+local branch, fetch, fast-forward-only pull, and bounded history interaction
+without adding permanent panels or excluded destructive Git operations.

@@ -1,4 +1,4 @@
-use lantern_git_rail_spike::GitRail;
+use lantern_git_rail_spike::{GitRail, SyncState};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -80,10 +80,16 @@ fn focused_git_journey_preserves_review_state() {
     rail.commit("update tracked file").expect("commit");
     rail.create_branch("review").expect("create branch");
     assert_eq!(rail.status().expect("branch status").branch, "review");
+    assert_eq!(
+        rail.local_branches().expect("local branches"),
+        ["main", "review"]
+    );
     rail.switch_branch("main").expect("switch branch");
     let commits = rail.recent_commits(2).expect("history");
     assert_eq!(commits[0].summary, "update tracked file");
     assert_eq!(commits[1].summary, "initial");
+    let commit_diff = rail.commit_diff(&commits[0].id).expect("commit diff");
+    assert!(commit_diff.windows(7).any(|window| window == b"+second"));
     assert_eq!(
         rail.status().expect("final status").untracked,
         [PathBuf::from("new.txt")]
@@ -234,7 +240,15 @@ fn fetches_and_fast_forwards_without_hidden_merge() {
 
     let rail = GitRail::open(&root).expect("open rail");
     rail.fetch().expect("fetch");
+    assert_eq!(
+        rail.sync_state().expect("behind state"),
+        SyncState::Behind { commits: 1 }
+    );
     rail.pull_fast_forward().expect("fast-forward pull");
+    assert_eq!(
+        rail.sync_state().expect("up-to-date state"),
+        SyncState::UpToDate
+    );
     assert_eq!(
         fs::read_to_string(root.join("tracked.txt")).expect("read pulled file"),
         "remote\n"
