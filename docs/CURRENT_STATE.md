@@ -222,9 +222,14 @@ the staged set, create or switch local branches, fetch, pull only when typed
 upstream state permits a fast-forward, and inspect bounded recent history and
 commit diffs. A live narrow-terminal journey proves commit, branch, history,
 and commit-diff interaction. Functional expansion stops; Lazygit replacement
-still requires operational hardening, accessibility checks, and measured
+now has one bounded, noninteractive Git runner with typed private errors and
+process-group deadlines. Fetch and fast-forward pull run without blocking the
+rail and support `Esc` cancellation. Lazygit replacement still requires
+state-preserving external refresh, accessibility checks, and measured
 startup/RSS superiority. See the
 [action-overlay report](acceptance/2026-07-19-focused-git-action-overlay.md).
+The command and concurrency proof is recorded in the
+[hardening report](acceptance/2026-07-19-git-command-hardening.md).
 
 ## Not next
 

@@ -1,13 +1,135 @@
 use std::ffi::{OsStr, OsString};
-use std::io::{Read, Write};
+use std::fmt;
+use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use std::thread;
+use std::time::{Duration, Instant};
 
 #[cfg(unix)]
 use std::os::unix::ffi::OsStringExt;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 
 pub const MAX_DIFF_BYTES: usize = 512 * 1024;
 pub const MAX_HISTORY_ENTRIES: usize = 50;
+const MAX_COMMAND_BYTES: usize = 512 * 1024;
+const MAX_ERROR_BYTES: usize = 8 * 1024;
+const LOCAL_TIMEOUT: Duration = Duration::from_secs(5);
+const NETWORK_TIMEOUT: Duration = Duration::from_secs(30);
+const WAIT_INTERVAL: Duration = Duration::from_millis(5);
+
+pub type GitResult<T> = Result<T, GitError>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GitErrorKind {
+    InvalidInput,
+    NotRepository,
+    TimedOut,
+    Cancelled,
+    OutputTooLarge,
+    AuthenticationRequired,
+    CommandFailed,
+    InvalidOutput,
+    CannotStart,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct GitError {
+    pub kind: GitErrorKind,
+    operation: &'static str,
+    detail: Option<String>,
+}
+
+impl GitError {
+    fn new(kind: GitErrorKind, operation: &'static str, detail: Option<String>) -> Self {
+        Self {
+            kind,
+            operation,
+            detail,
+        }
+    }
+}
+
+impl fmt::Display for GitError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let recovery = match self.kind {
+            GitErrorKind::InvalidInput => "Correct the selected value and try again.",
+            GitErrorKind::NotRepository => "Open the exact Git workbench root.",
+            GitErrorKind::TimedOut => "Check the repository or remote, then retry.",
+            GitErrorKind::Cancelled => "Retry when you are ready.",
+            GitErrorKind::OutputTooLarge => "Review this change in Helix or the terminal.",
+            GitErrorKind::AuthenticationRequired => {
+                "Authenticate with Git in a terminal, then retry."
+            }
+            GitErrorKind::CommandFailed => "Run the operation in a terminal for full diagnostics.",
+            GitErrorKind::InvalidOutput => "Check the installed Git version and repository state.",
+            GitErrorKind::CannotStart => "Install Git or correct PATH, then retry.",
+        };
+        write!(formatter, "Git {} failed", self.operation)?;
+        if let Some(detail) = &self.detail {
+            write!(formatter, ": {detail}")?;
+        }
+        write!(formatter, ". {recovery}")
+    }
+}
+
+impl std::error::Error for GitError {}
+
+impl From<String> for GitError {
+    fn from(detail: String) -> Self {
+        Self::new(
+            GitErrorKind::InvalidOutput,
+            "interpret output",
+            Some(detail),
+        )
+    }
+}
+
+impl From<&str> for GitError {
+    fn from(detail: &str) -> Self {
+        detail.to_owned().into()
+    }
+}
+
+#[derive(Debug)]
+struct GitOutput {
+    status: ExitStatus,
+    stdout: Vec<u8>,
+}
+
+struct RunOptions<'a> {
+    operation: &'static str,
+    timeout: Duration,
+    stdout_limit: usize,
+    accepted_exit_codes: &'a [i32],
+    stdin: Option<&'a [u8]>,
+    cancellation: Option<Cancellation>,
+}
+
+impl RunOptions<'_> {
+    fn local(operation: &'static str) -> Self {
+        Self {
+            operation,
+            timeout: LOCAL_TIMEOUT,
+            stdout_limit: MAX_COMMAND_BYTES,
+            accepted_exit_codes: &[0],
+            stdin: None,
+            cancellation: None,
+        }
+    }
+
+    fn network(operation: &'static str) -> Self {
+        Self {
+            timeout: NETWORK_TIMEOUT,
+            ..Self::local(operation)
+        }
+    }
+}
 
 #[cfg(windows)]
 const NULL_DEVICE: &str = "NUL";
@@ -64,27 +186,41 @@ impl DiffHunk {
     }
 }
 
+#[derive(Clone)]
 pub struct GitRail {
     repository: PathBuf,
 }
 
 impl GitRail {
-    pub fn open(repository: impl AsRef<Path>) -> Result<Self, String> {
-        let repository = repository
-            .as_ref()
-            .canonicalize()
-            .map_err(|cause| format!("cannot open repository: {cause}"))?;
+    pub fn open(repository: impl AsRef<Path>) -> GitResult<Self> {
+        let repository = repository.as_ref().canonicalize().map_err(|cause| {
+            GitError::new(
+                GitErrorKind::NotRepository,
+                "open repository",
+                Some(cause.to_string()),
+            )
+        })?;
         let rail = Self { repository };
         let root = Path::new(rail.git_text(["rev-parse", "--show-toplevel"])?.trim())
             .canonicalize()
-            .map_err(|cause| format!("cannot resolve Git root: {cause}"))?;
+            .map_err(|cause| {
+                GitError::new(
+                    GitErrorKind::NotRepository,
+                    "resolve repository",
+                    Some(cause.to_string()),
+                )
+            })?;
         if root != rail.repository {
-            return Err("Git rail must open the exact workbench root".into());
+            return Err(GitError::new(
+                GitErrorKind::NotRepository,
+                "open repository",
+                Some("selected folder is not the exact workbench root".into()),
+            ));
         }
         Ok(rail)
     }
 
-    pub fn status(&self) -> Result<Status, String> {
+    pub fn status(&self) -> GitResult<Status> {
         Ok(Status {
             branch: self.branch()?,
             staged: self.paths(["diff", "--cached", "--name-only", "-z"])?,
@@ -94,7 +230,7 @@ impl GitRail {
         })
     }
 
-    pub fn diff(&self, path: &Path, staged: bool) -> Result<Vec<u8>, String> {
+    pub fn diff(&self, path: &Path, staged: bool) -> GitResult<Vec<u8>> {
         validate_path(path)?;
         let mut arguments = vec![
             OsString::from("diff"),
@@ -108,11 +244,15 @@ impl GitRail {
         self.git_bounded(arguments, MAX_DIFF_BYTES, false)
     }
 
-    pub fn untracked_diff(&self, path: &Path) -> Result<Vec<u8>, String> {
+    pub fn untracked_diff(&self, path: &Path) -> GitResult<Vec<u8>> {
         validate_path(path)?;
         let tracked = self.paths(["ls-files", "--error-unmatch", "-z", "--"]);
         if tracked.is_ok_and(|paths| paths.iter().any(|candidate| candidate == path)) {
-            return Err("untracked diff requires an untracked path".into());
+            return Err(GitError::new(
+                GitErrorKind::InvalidInput,
+                "read untracked diff",
+                Some("selected path is already tracked".into()),
+            ));
         }
         self.git_bounded(
             [
@@ -129,7 +269,7 @@ impl GitRail {
         )
     }
 
-    pub fn diff_hunks(&self, path: &Path, staged: bool) -> Result<Vec<DiffHunk>, String> {
+    pub fn diff_hunks(&self, path: &Path, staged: bool) -> GitResult<Vec<DiffHunk>> {
         let diff = if staged {
             self.diff(path, true)?
         } else if self
@@ -141,35 +281,37 @@ impl GitRail {
         } else {
             self.diff(path, false)?
         };
-        parse_diff_hunks(&diff)
+        parse_diff_hunks(&diff).map_err(|detail| {
+            GitError::new(GitErrorKind::InvalidOutput, "parse diff", Some(detail))
+        })
     }
 
-    pub fn stage(&self, path: &Path) -> Result<(), String> {
+    pub fn stage(&self, path: &Path) -> GitResult<()> {
         self.path_command(["add", "--"], path)
     }
-    pub fn unstage(&self, path: &Path) -> Result<(), String> {
+    pub fn unstage(&self, path: &Path) -> GitResult<()> {
         self.path_command(["restore", "--staged", "--"], path)
     }
 
-    pub fn stage_hunk(&self, patch: &[u8]) -> Result<(), String> {
+    pub fn stage_hunk(&self, patch: &[u8]) -> GitResult<()> {
         self.apply_cached_patch(patch, false)
     }
 
-    pub fn unstage_hunk(&self, patch: &[u8]) -> Result<(), String> {
+    pub fn unstage_hunk(&self, patch: &[u8]) -> GitResult<()> {
         self.apply_cached_patch(patch, true)
     }
 
-    pub fn create_branch(&self, name: &str) -> Result<(), String> {
-        validate_branch(name)?;
+    pub fn create_branch(&self, name: &str) -> GitResult<()> {
+        self.validate_branch(name)?;
         self.git_ok(["switch", "-c", name])
     }
 
-    pub fn switch_branch(&self, name: &str) -> Result<(), String> {
-        validate_branch(name)?;
+    pub fn switch_branch(&self, name: &str) -> GitResult<()> {
+        self.validate_branch(name)?;
         self.git_ok(["switch", name])
     }
 
-    pub fn local_branches(&self) -> Result<Vec<String>, String> {
+    pub fn local_branches(&self) -> GitResult<Vec<String>> {
         let output = self.git_text([
             OsString::from("for-each-ref"),
             OsString::from("--sort=refname"),
@@ -179,22 +321,39 @@ impl GitRail {
         Ok(output.lines().map(ToOwned::to_owned).collect())
     }
 
-    pub fn commit(&self, message: &str) -> Result<(), String> {
+    pub fn commit(&self, message: &str) -> GitResult<()> {
         let message = message.trim();
         if message.is_empty() || message.len() > 4_096 || message.contains('\0') {
-            return Err("commit message must contain 1 to 4096 bytes".into());
+            return Err(GitError::new(
+                GitErrorKind::InvalidInput,
+                "commit",
+                Some("message must contain 1 to 4096 bytes".into()),
+            ));
         }
         self.git_ok(["commit", "-m", message])
     }
 
-    pub fn fetch(&self) -> Result<(), String> {
-        self.git_ok(["fetch", "--prune"])
+    pub fn fetch(&self) -> GitResult<()> {
+        self.git_ok_with(["fetch", "--prune"], RunOptions::network("fetch"))
     }
-    pub fn pull_fast_forward(&self) -> Result<(), String> {
-        self.git_ok(["pull", "--ff-only"])
+    pub fn fetch_with_cancellation(&self, cancellation: Cancellation) -> GitResult<()> {
+        let mut options = RunOptions::network("fetch");
+        options.cancellation = Some(cancellation);
+        self.git_ok_with(["fetch", "--prune"], options)
+    }
+    pub fn pull_fast_forward(&self) -> GitResult<()> {
+        self.git_ok_with(
+            ["pull", "--ff-only"],
+            RunOptions::network("fast-forward pull"),
+        )
+    }
+    pub fn pull_fast_forward_with_cancellation(&self, cancellation: Cancellation) -> GitResult<()> {
+        let mut options = RunOptions::network("fast-forward pull");
+        options.cancellation = Some(cancellation);
+        self.git_ok_with(["pull", "--ff-only"], options)
     }
 
-    pub fn sync_state(&self) -> Result<SyncState, String> {
+    pub fn sync_state(&self) -> GitResult<SyncState> {
         let branch = self.branch()?;
         if branch.starts_with("(detached ") {
             return Ok(SyncState::NoUpstream);
@@ -214,12 +373,22 @@ impl GitRail {
             OsString::from("--count"),
             OsString::from(format!("HEAD...{upstream}")),
         ])?;
-        parse_sync_counts(&counts)
+        parse_sync_counts(&counts).map_err(|detail| {
+            GitError::new(
+                GitErrorKind::InvalidOutput,
+                "read synchronization state",
+                Some(detail),
+            )
+        })
     }
 
-    pub fn recent_commits(&self, limit: usize) -> Result<Vec<Commit>, String> {
+    pub fn recent_commits(&self, limit: usize) -> GitResult<Vec<Commit>> {
         if limit == 0 || limit > MAX_HISTORY_ENTRIES {
-            return Err(format!("history limit must be 1 to {MAX_HISTORY_ENTRIES}"));
+            return Err(GitError::new(
+                GitErrorKind::InvalidInput,
+                "read history",
+                Some(format!("limit must be 1 to {MAX_HISTORY_ENTRIES}")),
+            ));
         }
         let output = self.git_bytes([
             OsString::from("log"),
@@ -242,9 +411,13 @@ impl GitRail {
             .collect()
     }
 
-    pub fn commit_diff(&self, id: &str) -> Result<Vec<u8>, String> {
+    pub fn commit_diff(&self, id: &str) -> GitResult<Vec<u8>> {
         if !(40..=64).contains(&id.len()) || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return Err("commit id must be a full hexadecimal object id".into());
+            return Err(GitError::new(
+                GitErrorKind::InvalidInput,
+                "read commit diff",
+                Some("commit id must be a full hexadecimal object id".into()),
+            ));
         }
         self.git_bounded(
             [
@@ -260,25 +433,33 @@ impl GitRail {
         )
     }
 
-    fn paths<const N: usize>(&self, arguments: [&str; N]) -> Result<Vec<PathBuf>, String> {
+    fn paths<const N: usize>(&self, arguments: [&str; N]) -> GitResult<Vec<PathBuf>> {
         let output = self.git_bytes(arguments.map(OsString::from))?;
         output
             .split(|byte| *byte == 0)
             .filter(|path| !path.is_empty())
-            .map(path_from_git)
+            .map(|path| {
+                path_from_git(path).map_err(|detail| {
+                    GitError::new(GitErrorKind::InvalidOutput, "read paths", Some(detail))
+                })
+            })
             .collect()
     }
 
-    fn branch(&self) -> Result<String, String> {
-        let symbolic = Command::new("git")
-            .args(["symbolic-ref", "--quiet", "--short", "HEAD"])
-            .current_dir(&self.repository)
-            .output()
-            .map_err(|cause| format!("cannot read Git branch: {cause}"))?;
+    fn branch(&self) -> GitResult<String> {
+        let mut options = RunOptions::local("read branch");
+        options.accepted_exit_codes = &[0, 1];
+        let symbolic = self.run_git(["symbolic-ref", "--quiet", "--short", "HEAD"], options)?;
         if symbolic.status.success() {
             return String::from_utf8(symbolic.stdout)
                 .map(|value| value.trim().to_owned())
-                .map_err(|_| "Git branch is not UTF-8".into());
+                .map_err(|_| {
+                    GitError::new(
+                        GitErrorKind::InvalidOutput,
+                        "read branch",
+                        Some("branch name is not UTF-8".into()),
+                    )
+                });
         }
         Ok(format!(
             "(detached {})",
@@ -286,62 +467,45 @@ impl GitRail {
         ))
     }
 
-    fn path_command<const N: usize>(&self, prefix: [&str; N], path: &Path) -> Result<(), String> {
+    fn path_command<const N: usize>(&self, prefix: [&str; N], path: &Path) -> GitResult<()> {
         validate_path(path)?;
         let mut arguments = prefix.map(OsString::from).to_vec();
         arguments.push(path.as_os_str().to_owned());
         self.git_ok(arguments)
     }
 
-    fn apply_cached_patch(&self, patch: &[u8], reverse: bool) -> Result<(), String> {
+    fn apply_cached_patch(&self, patch: &[u8], reverse: bool) -> GitResult<()> {
         if patch.is_empty() || patch.len() > MAX_DIFF_BYTES || !patch.starts_with(b"diff --git ") {
-            return Err("Git hunk must be a bounded unified diff".into());
+            return Err(GitError::new(
+                GitErrorKind::InvalidInput,
+                "apply hunk",
+                Some("the hunk is not a bounded unified diff".into()),
+            ));
         }
-        let mut command = Command::new("git");
-        command.args(["apply", "--cached", "--recount", "--unidiff-zero"]);
+        let mut arguments = vec!["apply", "--cached", "--recount", "--unidiff-zero"];
         if reverse {
-            command.arg("--reverse");
+            arguments.push("--reverse");
         }
-        let mut child = command
-            .current_dir(&self.repository)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|cause| format!("cannot run Git: {cause}"))?;
-        child
-            .stdin
-            .take()
-            .expect("Git stdin")
-            .write_all(patch)
-            .map_err(|cause| format!("cannot send Git hunk: {cause}"))?;
-        let output = child
-            .wait_with_output()
-            .map_err(|cause| format!("cannot finish Git hunk: {cause}"))?;
-        if !output.status.success() {
-            return Err(git_failure(&output.stderr));
-        }
+        let mut options = RunOptions::local("apply hunk");
+        options.stdin = Some(patch);
+        options.stdout_limit = 0;
+        self.run_git(arguments, options)?;
         Ok(())
     }
 
-    fn git_text<const N: usize, S: Into<OsString>>(
-        &self,
-        arguments: [S; N],
-    ) -> Result<String, String> {
-        String::from_utf8(self.git_bytes(arguments.map(Into::into))?)
-            .map_err(|_| "Git output is not UTF-8".into())
+    fn git_text<const N: usize, S: Into<OsString>>(&self, arguments: [S; N]) -> GitResult<String> {
+        String::from_utf8(self.git_bytes(arguments.map(Into::into))?).map_err(|_| {
+            GitError::new(
+                GitErrorKind::InvalidOutput,
+                "read text",
+                Some("output is not UTF-8".into()),
+            )
+        })
     }
 
-    fn git_bytes(&self, arguments: impl IntoIterator<Item = OsString>) -> Result<Vec<u8>, String> {
-        let output = Command::new("git")
-            .args(arguments)
-            .current_dir(&self.repository)
-            .output()
-            .map_err(|cause| format!("cannot run Git: {cause}"))?;
-        if !output.status.success() {
-            return Err(git_failure(&output.stderr));
-        }
-        Ok(output.stdout)
+    fn git_bytes(&self, arguments: impl IntoIterator<Item = OsString>) -> GitResult<Vec<u8>> {
+        self.run_git(arguments, RunOptions::local("read repository"))
+            .map(|output| output.stdout)
     }
 
     fn git_bounded(
@@ -349,47 +513,253 @@ impl GitRail {
         arguments: impl IntoIterator<Item = OsString>,
         limit: usize,
         accept_difference: bool,
-    ) -> Result<Vec<u8>, String> {
-        let mut child = Command::new("git")
-            .args(arguments)
-            .current_dir(&self.repository)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|cause| format!("cannot run Git: {cause}"))?;
-        let mut output = Vec::new();
-        child
-            .stdout
-            .take()
-            .expect("Git stdout")
-            .take((limit + 1) as u64)
-            .read_to_end(&mut output)
-            .map_err(|cause| format!("cannot read Git output: {cause}"))?;
-        if output.len() > limit {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(format!("Git diff exceeds the {limit}-byte display limit"));
-        }
-        let result = child
-            .wait_with_output()
-            .map_err(|cause| format!("cannot finish Git: {cause}"))?;
-        if !(result.status.success() || accept_difference && result.status.code() == Some(1)) {
-            return Err(git_failure(&result.stderr));
-        }
-        Ok(output)
+    ) -> GitResult<Vec<u8>> {
+        let mut options = RunOptions::local("read diff");
+        options.stdout_limit = limit;
+        options.accepted_exit_codes = if accept_difference { &[0, 1] } else { &[0] };
+        self.run_git(arguments, options).map(|output| output.stdout)
     }
 
-    fn git_ok(&self, arguments: impl IntoIterator<Item = impl AsRef<OsStr>>) -> Result<(), String> {
-        let output = Command::new("git")
-            .args(arguments)
-            .current_dir(&self.repository)
-            .output()
-            .map_err(|cause| format!("cannot run Git: {cause}"))?;
-        if !output.status.success() {
-            return Err(git_failure(&output.stderr));
-        }
+    fn git_ok(&self, arguments: impl IntoIterator<Item = impl AsRef<OsStr>>) -> GitResult<()> {
+        self.git_ok_with(arguments, RunOptions::local("update repository"))
+    }
+
+    fn git_ok_with(
+        &self,
+        arguments: impl IntoIterator<Item = impl AsRef<OsStr>>,
+        options: RunOptions<'_>,
+    ) -> GitResult<()> {
+        self.run_git(
+            arguments
+                .into_iter()
+                .map(|argument| argument.as_ref().to_owned()),
+            options,
+        )?;
         Ok(())
     }
+
+    fn validate_branch(&self, name: &str) -> GitResult<()> {
+        if name.is_empty() || name.len() > 255 || name.starts_with('-') || name.contains('\0') {
+            return Err(GitError::new(
+                GitErrorKind::InvalidInput,
+                "validate branch",
+                Some("branch name is invalid".into()),
+            ));
+        }
+        self.run_git(
+            ["check-ref-format", "--branch", name],
+            RunOptions::local("validate branch"),
+        )?;
+        Ok(())
+    }
+
+    fn run_git(
+        &self,
+        arguments: impl IntoIterator<Item = impl AsRef<OsStr>>,
+        options: RunOptions<'_>,
+    ) -> GitResult<GitOutput> {
+        let mut command = Command::new("git");
+        command
+            .args(arguments)
+            .current_dir(&self.repository)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GCM_INTERACTIVE", "Never")
+            .stdin(if options.stdin.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        #[cfg(unix)]
+        command.process_group(0);
+        let mut child = command.spawn().map_err(|cause| {
+            GitError::new(
+                GitErrorKind::CannotStart,
+                options.operation,
+                Some(cause.to_string()),
+            )
+        })?;
+
+        let stdout = child.stdout.take().expect("piped Git stdout");
+        let stderr = child.stderr.take().expect("piped Git stderr");
+        let stdout_limit = options.stdout_limit;
+        let stdout_reader = thread::spawn(move || read_bounded(stdout, stdout_limit));
+        let stderr_reader = thread::spawn(move || read_bounded(stderr, MAX_ERROR_BYTES));
+        let stdin_writer = options.stdin.map(|input| {
+            let mut stdin = child.stdin.take().expect("piped Git stdin");
+            let input = input.to_vec();
+            thread::spawn(move || stdin.write_all(&input))
+        });
+
+        let deadline = Instant::now() + options.timeout;
+        let status = loop {
+            if let Some(status) = child.try_wait().map_err(|cause| {
+                GitError::new(
+                    GitErrorKind::CommandFailed,
+                    options.operation,
+                    Some(cause.to_string()),
+                )
+            })? {
+                break status;
+            }
+            if Instant::now() >= deadline {
+                terminate(&mut child);
+                let _ = child.wait();
+                join_reader(stdout_reader, options.operation)?;
+                join_reader(stderr_reader, options.operation)?;
+                if let Some(writer) = stdin_writer {
+                    let _ = writer.join();
+                }
+                return Err(GitError::new(
+                    GitErrorKind::TimedOut,
+                    options.operation,
+                    Some(format!("deadline was {} ms", options.timeout.as_millis())),
+                ));
+            }
+            if options
+                .cancellation
+                .as_ref()
+                .is_some_and(Cancellation::is_cancelled)
+            {
+                terminate(&mut child);
+                let _ = child.wait();
+                join_reader(stdout_reader, options.operation)?;
+                join_reader(stderr_reader, options.operation)?;
+                if let Some(writer) = stdin_writer {
+                    let _ = writer.join();
+                }
+                return Err(GitError::new(
+                    GitErrorKind::Cancelled,
+                    options.operation,
+                    None,
+                ));
+            }
+            thread::sleep(WAIT_INTERVAL);
+        };
+
+        if let Some(writer) = stdin_writer {
+            writer
+                .join()
+                .map_err(|_| {
+                    GitError::new(
+                        GitErrorKind::CommandFailed,
+                        options.operation,
+                        Some("stdin writer stopped unexpectedly".into()),
+                    )
+                })?
+                .map_err(|cause| {
+                    GitError::new(
+                        GitErrorKind::CommandFailed,
+                        options.operation,
+                        Some(cause.to_string()),
+                    )
+                })?;
+        }
+        let (stdout, stdout_overflow) = join_reader(stdout_reader, options.operation)?;
+        let (stderr, stderr_overflow) = join_reader(stderr_reader, options.operation)?;
+        if stdout_overflow || stderr_overflow {
+            return Err(GitError::new(
+                GitErrorKind::OutputTooLarge,
+                options.operation,
+                Some("command output exceeded its display bound".into()),
+            ));
+        }
+        if !status.success()
+            && !status
+                .code()
+                .is_some_and(|code| options.accepted_exit_codes.contains(&code))
+        {
+            let kind = if authentication_failed(&stderr) {
+                GitErrorKind::AuthenticationRequired
+            } else {
+                GitErrorKind::CommandFailed
+            };
+            return Err(GitError::new(
+                kind,
+                options.operation,
+                status.code().map(|code| format!("exit status {code}")),
+            ));
+        }
+        Ok(GitOutput { status, stdout })
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Cancellation(Arc<AtomicBool>);
+
+impl Cancellation {
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::Release);
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+}
+
+fn read_bounded(mut reader: impl Read, limit: usize) -> io::Result<(Vec<u8>, bool)> {
+    let mut retained = Vec::with_capacity(limit.min(8 * 1024));
+    let mut overflow = false;
+    let mut buffer = [0_u8; 8 * 1024];
+    loop {
+        let bytes = reader.read(&mut buffer)?;
+        if bytes == 0 {
+            break;
+        }
+        let remaining = limit.saturating_sub(retained.len());
+        retained.extend_from_slice(&buffer[..bytes.min(remaining)]);
+        overflow |= bytes > remaining;
+    }
+    Ok((retained, overflow))
+}
+
+fn terminate(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        let _ = Command::new("kill")
+            .args(["-TERM", "--", &format!("-{}", child.id())])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    let _ = child.kill();
+}
+
+fn join_reader(
+    reader: thread::JoinHandle<io::Result<(Vec<u8>, bool)>>,
+    operation: &'static str,
+) -> GitResult<(Vec<u8>, bool)> {
+    reader
+        .join()
+        .map_err(|_| {
+            GitError::new(
+                GitErrorKind::CommandFailed,
+                operation,
+                Some("output reader stopped unexpectedly".into()),
+            )
+        })?
+        .map_err(|cause| {
+            GitError::new(
+                GitErrorKind::CommandFailed,
+                operation,
+                Some(cause.to_string()),
+            )
+        })
+}
+
+fn authentication_failed(stderr: &[u8]) -> bool {
+    let detail = String::from_utf8_lossy(stderr).to_ascii_lowercase();
+    [
+        "authentication failed",
+        "terminal prompts disabled",
+        "could not read username",
+        "could not read password",
+        "credential prompt",
+    ]
+    .iter()
+    .any(|marker| detail.contains(marker))
 }
 
 fn parse_sync_counts(counts: &str) -> Result<SyncState, String> {
@@ -490,44 +860,48 @@ fn path_from_git(path: &[u8]) -> Result<PathBuf, String> {
         .map_err(|_| "Git path is not UTF-8 on this platform".into())
 }
 
-fn validate_path(path: &Path) -> Result<(), String> {
+fn validate_path(path: &Path) -> GitResult<()> {
     if path.as_os_str().is_empty()
         || path.is_absolute()
         || path
             .components()
             .any(|part| !matches!(part, Component::Normal(_)))
     {
-        return Err("Git path must be repository-relative without traversal".into());
+        return Err(GitError::new(
+            GitErrorKind::InvalidInput,
+            "validate path",
+            Some("path must be repository-relative without traversal".into()),
+        ));
     }
     Ok(())
-}
-
-fn validate_branch(name: &str) -> Result<(), String> {
-    if name.is_empty() || name.len() > 255 || name.starts_with('-') || name.contains('\0') {
-        return Err("branch name is invalid".into());
-    }
-    let output = Command::new("git")
-        .args(["check-ref-format", "--branch", name])
-        .output()
-        .map_err(|cause| format!("cannot validate branch: {cause}"))?;
-    if !output.status.success() {
-        return Err("branch name is invalid".into());
-    }
-    Ok(())
-}
-
-fn git_failure(stderr: &[u8]) -> String {
-    let detail = String::from_utf8_lossy(stderr);
-    if detail.trim().is_empty() {
-        "Git command failed without diagnostics".into()
-    } else {
-        format!("Git command failed: {}", detail.trim())
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn repository() -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "lantern-git-runner-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        fs::create_dir(&root).expect("create runner fixture");
+        assert!(
+            Command::new("git")
+                .args(["init", "-q"])
+                .current_dir(&root)
+                .status()
+                .expect("initialize runner fixture")
+                .success()
+        );
+        root
+    }
 
     #[test]
     fn splits_unified_diff_into_independently_applicable_hunks() {
@@ -572,5 +946,72 @@ mod tests {
             }
         );
         assert!(parse_sync_counts("unknown").is_err());
+    }
+
+    #[test]
+    fn runner_enforces_noninteractive_git_environment() {
+        let root = repository();
+        let rail = GitRail::open(&root).expect("open runner fixture");
+        rail.run_git(
+            [
+                "-c",
+                "alias.check=!test \"$GIT_TERMINAL_PROMPT\" = 0 && test \"$GCM_INTERACTIVE\" = Never",
+                "check",
+            ],
+            RunOptions::local("check environment"),
+        )
+        .expect("noninteractive environment");
+        fs::remove_dir_all(root).expect("remove runner fixture");
+    }
+
+    #[test]
+    fn runner_bounds_output_and_deadlines_the_process_group() {
+        let root = repository();
+        let rail = GitRail::open(&root).expect("open runner fixture");
+        let mut bounded = RunOptions::local("bound output");
+        bounded.stdout_limit = 8;
+        let error = rail
+            .run_git(["-c", "alias.emit=!printf 123456789", "emit"], bounded)
+            .expect_err("reject oversized output");
+        assert_eq!(error.kind, GitErrorKind::OutputTooLarge);
+
+        let mut deadline = RunOptions::local("deadline probe");
+        deadline.timeout = Duration::from_millis(25);
+        let started = Instant::now();
+        let error = rail
+            .run_git(["-c", "alias.pause=!sleep 2", "pause"], deadline)
+            .expect_err("time out process group");
+        assert_eq!(error.kind, GitErrorKind::TimedOut);
+        assert!(started.elapsed() < Duration::from_millis(500));
+        fs::remove_dir_all(root).expect("remove runner fixture");
+    }
+
+    #[test]
+    fn runner_cancels_the_process_group_before_its_deadline() {
+        let root = repository();
+        let rail = GitRail::open(&root).expect("open runner fixture");
+        let cancellation = Cancellation::default();
+        let signal = cancellation.clone();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(25));
+            signal.cancel();
+        });
+        let mut options = RunOptions::network("cancel operation");
+        options.cancellation = Some(cancellation);
+        let started = Instant::now();
+        let error = rail
+            .run_git(["-c", "alias.pause=!sleep 2", "pause"], options)
+            .expect_err("cancel process group");
+        assert_eq!(error.kind, GitErrorKind::Cancelled);
+        assert!(started.elapsed() < Duration::from_millis(500));
+        fs::remove_dir_all(root).expect("remove runner fixture");
+    }
+
+    #[test]
+    fn authentication_errors_are_typed_without_echoing_provider_output() {
+        assert!(authentication_failed(b"fatal: terminal prompts disabled"));
+        let error = GitError::new(GitErrorKind::AuthenticationRequired, "fetch", None);
+        assert!(!error.to_string().contains("fatal"));
+        assert!(error.to_string().contains("Authenticate with Git"));
     }
 }

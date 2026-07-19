@@ -39,7 +39,9 @@ cargo run --manifest-path /path/to/lantern/spikes/git-rail/Cargo.toml
 ```
 
 The renderer is deliberately not production-ready or wired to `/git`. Its
-functional scope is complete; command deadlines, noninteractive credentials,
-privacy-reviewed diagnostics, concurrent refresh, accessibility checks, and a
-performance comparison remain.
+functional scope is complete. Commands now have bounded output, typed private
+errors, noninteractive credentials, and local/network deadlines; fetch and
+fast-forward pull remain responsive and support `Esc` cancellation. External
+state-preserving refresh, accessibility checks, and a performance comparison
+remain.
 Failure of those promotion gates deletes this crate and retains pinned Lazygit.
