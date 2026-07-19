@@ -1,7 +1,8 @@
 # Focused Git rail spike
 
-This isolated Rust crate tests the smallest Git command boundary proposed by
-ADR 005. It has no runtime dependencies and does not replace Lazygit.
+This isolated Rust crate tests the smallest Git command and renderer boundary
+proposed by ADR 005. Its only runtime dependency is the same pinned Crossterm
+version used by Lantern's terminal, and it does not replace Lazygit.
 
 ```bash
 cargo fmt --manifest-path spikes/git-rail/Cargo.toml --check
@@ -14,9 +15,21 @@ stage/unstage, local branch create/switch, commit, fetch, fast-forward-only pull
 recent history, conflict visibility, and detached HEAD. Every path operation is
 bound to the exact canonical workbench root and rejects traversal.
 
-It is deliberately not production-ready. Git commands still need deadlines,
-noninteractive credential behavior, bounded and privacy-reviewed diagnostics,
-concurrent refresh semantics, and typed error categories. The 10% keyboard and
-mouse rail, Helix navigation, performance comparison, and accessibility checks
-are not implemented. Failure of those promotion gates deletes this crate and
-retains pinned Lazygit.
+The first 10% renderer shows the active branch and one compact, conflict-first
+list using `!`, `+`, `~`, and `?` markers. Arrow keys or `j`/`k` and the mouse
+select a path; Enter or `d` opens its bounded staged, unstaged, or untracked
+diff; Space stages or unstages the selected file; `r` refreshes; and `q` exits.
+A file with both staged and unstaged changes intentionally has two independently
+reviewable rows.
+
+Try the renderer from a repository in a separate terminal:
+
+```bash
+cargo run --manifest-path /path/to/lantern/spikes/git-rail/Cargo.toml
+```
+
+The renderer is deliberately not production-ready or wired to `/git`. Commit
+and branch dialogs, hunk selection, Helix opening, fetch/pull interaction,
+command deadlines, noninteractive credentials, privacy-reviewed diagnostics,
+concurrent refresh, accessibility checks, and a performance comparison remain.
+Failure of those promotion gates deletes this crate and retains pinned Lazygit.

@@ -9,6 +9,11 @@ use std::os::unix::ffi::OsStringExt;
 pub const MAX_DIFF_BYTES: usize = 512 * 1024;
 pub const MAX_HISTORY_ENTRIES: usize = 50;
 
+#[cfg(windows)]
+const NULL_DEVICE: &str = "NUL";
+#[cfg(not(windows))]
+const NULL_DEVICE: &str = "/dev/null";
+
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Status {
     pub branch: String,
@@ -61,7 +66,27 @@ impl GitRail {
             arguments.push(OsString::from("--cached"));
         }
         arguments.extend([OsString::from("--"), path.as_os_str().to_owned()]);
-        self.git_bounded(arguments, MAX_DIFF_BYTES)
+        self.git_bounded(arguments, MAX_DIFF_BYTES, false)
+    }
+
+    pub fn untracked_diff(&self, path: &Path) -> Result<Vec<u8>, String> {
+        validate_path(path)?;
+        let tracked = self.paths(["ls-files", "--error-unmatch", "-z", "--"]);
+        if tracked.is_ok_and(|paths| paths.iter().any(|candidate| candidate == path)) {
+            return Err("untracked diff requires an untracked path".into());
+        }
+        self.git_bounded(
+            [
+                OsString::from("diff"),
+                OsString::from("--no-index"),
+                OsString::from("--no-ext-diff"),
+                OsString::from("--"),
+                OsString::from(NULL_DEVICE),
+                path.as_os_str().to_owned(),
+            ],
+            MAX_DIFF_BYTES,
+            true,
+        )
     }
 
     pub fn stage(&self, path: &Path) -> Result<(), String> {
@@ -214,6 +239,7 @@ impl GitRail {
         &self,
         arguments: impl IntoIterator<Item = OsString>,
         limit: usize,
+        accept_difference: bool,
     ) -> Result<Vec<u8>, String> {
         let mut child = Command::new("git")
             .args(arguments)
@@ -238,7 +264,7 @@ impl GitRail {
         let result = child
             .wait_with_output()
             .map_err(|cause| format!("cannot finish Git: {cause}"))?;
-        if !result.status.success() {
+        if !(result.status.success() || accept_difference && result.status.code() == Some(1)) {
             return Err(git_failure(&result.stderr));
         }
         Ok(output)

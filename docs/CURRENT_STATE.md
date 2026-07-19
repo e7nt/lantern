@@ -203,6 +203,14 @@ the real rail, command deadlines, noninteractive authentication, privacy review,
 and startup/memory comparison pass. See the
 [focused Git command report](acceptance/2026-07-18-focused-git-command-spike.md).
 
+The first removable focused-rail renderer now shows the branch plus a compact
+conflict/staged/unstaged/untracked list at 10%-rail dimensions. Keyboard and
+mouse selection, bounded staged/unstaged/untracked diff review, and file
+stage/unstage pass ten deterministic tests. It is not wired to `/git`; pinned
+Lazygit remains maintained until the remaining interaction, hardening,
+accessibility, and performance gates pass. See the
+[renderer report](acceptance/2026-07-19-focused-git-rail-renderer.md).
+
 ## Not next
 
 - SQLite or durable chat history.
