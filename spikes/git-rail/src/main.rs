@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const CANVAS: Color = Color::Rgb {
     r: 58,
@@ -47,6 +47,7 @@ const SELECTED: Color = Color::Rgb {
 };
 const ACTIONS: [&str; 5] = ["Commit", "Branches", "Fetch", "Pull", "History"];
 const HISTORY_LIMIT: usize = 20;
+const REFRESH_INTERVAL: Duration = Duration::from_millis(750);
 
 #[derive(Clone, Copy)]
 enum InputKind {
@@ -122,6 +123,7 @@ struct State {
     view: View,
     notice: Option<String>,
     network: Option<NetworkOperation>,
+    repository_generation: u64,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -149,6 +151,21 @@ struct NetworkResult {
     result: GitResult<()>,
 }
 
+#[derive(Clone)]
+struct RefreshFocus {
+    change: Change,
+    hunk_identity: Vec<u8>,
+    selected: usize,
+    offset: usize,
+}
+
+struct RefreshResult {
+    generation: u64,
+    status: GitResult<Status>,
+    focus: Option<RefreshFocus>,
+    hunks: Option<GitResult<Vec<DiffHunk>>>,
+}
+
 impl State {
     fn load(rail: &GitRail) -> Result<Self, String> {
         let status = rail.status().map_err(|error| error.to_string())?;
@@ -159,18 +176,123 @@ impl State {
             view: View::Changes,
             notice: None,
             network: None,
+            repository_generation: 0,
         })
     }
 
     fn refresh(&mut self, rail: &GitRail) {
         match rail.status() {
             Ok(status) => {
-                self.branch = status.branch.clone();
-                self.changes = changes(status);
-                self.selected = self.selected.min(self.changes.len().saturating_sub(1));
+                self.repository_generation = self.repository_generation.wrapping_add(1);
+                self.apply_status(status);
                 self.notice = None;
             }
             Err(message) => self.notice = Some(message.to_string()),
+        }
+    }
+
+    fn apply_status(&mut self, status: Status) {
+        let selected = self.changes.get(self.selected).cloned();
+        self.branch = status.branch.clone();
+        self.changes = changes(status);
+        self.selected = selected
+            .as_ref()
+            .and_then(|selected| self.changes.iter().position(|change| change == selected))
+            .or_else(|| {
+                selected.as_ref().and_then(|selected| {
+                    self.changes
+                        .iter()
+                        .position(|change| change.path == selected.path)
+                })
+            })
+            .unwrap_or_else(|| self.selected.min(self.changes.len().saturating_sub(1)));
+    }
+
+    fn refresh_focus(&self) -> Option<RefreshFocus> {
+        let View::Diff {
+            change,
+            hunks,
+            selected,
+            offset,
+        } = &self.view
+        else {
+            return None;
+        };
+        hunks.get(*selected).map(|hunk| RefreshFocus {
+            change: change.clone(),
+            hunk_identity: hunk.display().to_vec(),
+            selected: *selected,
+            offset: *offset,
+        })
+    }
+
+    fn apply_background_refresh(&mut self, completed: RefreshResult) {
+        if completed.generation != self.repository_generation {
+            return;
+        }
+        let status = match completed.status {
+            Ok(status) => status,
+            Err(error) => {
+                self.notice = Some(error.to_string());
+                return;
+            }
+        };
+        self.apply_status(status);
+        let Some(focus) = completed.focus else {
+            return;
+        };
+        if self
+            .refresh_focus()
+            .is_none_or(|current| current.hunk_identity != focus.hunk_identity)
+        {
+            return;
+        }
+        let exact = self
+            .changes
+            .iter()
+            .position(|change| change == &focus.change);
+        let same_path = self
+            .changes
+            .iter()
+            .position(|change| change.path == focus.change.path);
+        let Some(index) = exact.or(same_path) else {
+            self.view = View::Changes;
+            self.notice = Some(format!("{} is now clean.", focus.change.path.display()));
+            return;
+        };
+        self.selected = index;
+        if exact.is_none() {
+            self.view = View::Changes;
+            self.notice = Some(format!(
+                "{} changed Git state; review the refreshed entry.",
+                focus.change.path.display()
+            ));
+            return;
+        }
+        match completed.hunks {
+            Some(Ok(hunks)) if !hunks.is_empty() => {
+                let selected = hunks
+                    .iter()
+                    .position(|hunk| hunk.display() == focus.hunk_identity)
+                    .unwrap_or_else(|| focus.selected.min(hunks.len() - 1));
+                let line_count = String::from_utf8_lossy(hunks[selected].display())
+                    .lines()
+                    .count();
+                self.view = View::Diff {
+                    change: focus.change,
+                    hunks,
+                    selected,
+                    offset: focus.offset.min(line_count.saturating_sub(1)),
+                };
+            }
+            Some(Err(error)) => {
+                self.view = View::Changes;
+                self.notice = Some(error.to_string());
+            }
+            _ => {
+                self.view = View::Changes;
+                self.notice = Some(format!("{} is now clean.", focus.change.path.display()));
+            }
         }
     }
 
@@ -660,6 +782,32 @@ fn visible_start(selected: usize, available: usize) -> usize {
     selected.saturating_sub(available.saturating_sub(1))
 }
 
+fn request_background_refresh(
+    rail: &GitRail,
+    generation: u64,
+    focus: Option<RefreshFocus>,
+    sender: &Sender<RefreshResult>,
+) {
+    let rail = rail.clone();
+    let sender = sender.clone();
+    thread::spawn(move || {
+        let status = rail.status();
+        let hunks = if status.is_ok() {
+            focus
+                .as_ref()
+                .map(|focus| rail.diff_hunks(&focus.change.path, focus.change.kind.staged()))
+        } else {
+            None
+        };
+        let _ = sender.send(RefreshResult {
+            generation,
+            status,
+            focus,
+            hunks,
+        });
+    });
+}
+
 struct TerminalGuard;
 
 impl TerminalGuard {
@@ -964,6 +1112,10 @@ fn run() -> Result<(), String> {
     let mut state = State::load(&rail)?;
     let (network_sender, network_receiver): (Sender<NetworkResult>, Receiver<NetworkResult>) =
         mpsc::channel();
+    let (refresh_sender, refresh_receiver): (Sender<RefreshResult>, Receiver<RefreshResult>) =
+        mpsc::channel();
+    let mut refresh_in_flight = false;
+    let mut next_refresh = Instant::now() + REFRESH_INTERVAL;
     let mut stdout = io::stdout();
     let _guard = TerminalGuard::enter(&mut stdout)
         .map_err(|cause| format!("cannot enter Git rail: {cause}"))?;
@@ -971,6 +1123,21 @@ fn run() -> Result<(), String> {
     loop {
         while let Ok(completed) = network_receiver.try_recv() {
             state.finish_network(&rail, completed);
+            next_refresh = Instant::now() + REFRESH_INTERVAL;
+        }
+        while let Ok(completed) = refresh_receiver.try_recv() {
+            refresh_in_flight = false;
+            state.apply_background_refresh(completed);
+        }
+        if !refresh_in_flight && state.network.is_none() && Instant::now() >= next_refresh {
+            request_background_refresh(
+                &rail,
+                state.repository_generation,
+                state.refresh_focus(),
+                &refresh_sender,
+            );
+            refresh_in_flight = true;
+            next_refresh = Instant::now() + REFRESH_INTERVAL;
         }
         draw(&mut stdout, &state).map_err(|cause| format!("cannot draw Git rail: {cause}"))?;
         if !event::poll(Duration::from_millis(50))
@@ -1141,6 +1308,43 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::path::Path;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn git(repository: &Path, arguments: &[&str]) {
+        assert!(
+            Command::new("git")
+                .args(arguments)
+                .current_dir(repository)
+                .status()
+                .expect("run Git fixture command")
+                .success()
+        );
+    }
+
+    fn repository() -> PathBuf {
+        let root = env::temp_dir().join(format!(
+            "lantern-git-refresh-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        fs::create_dir(&root).expect("create refresh fixture");
+        git(&root, &["init", "-q", "-b", "main"]);
+        git(&root, &["config", "user.name", "Lantern Test"]);
+        git(&root, &["config", "user.email", "test@example.com"]);
+        fs::write(
+            root.join("tracked.txt"),
+            "01\n02\n03\n04\n05\n06\n07\n08\n09\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n",
+        )
+        .expect("write tracked fixture");
+        git(&root, &["add", "tracked.txt"]);
+        git(&root, &["commit", "-qm", "initial"]);
+        root
+    }
 
     fn state_with(view: View) -> State {
         State {
@@ -1150,6 +1354,7 @@ mod tests {
             view,
             notice: None,
             network: None,
+            repository_generation: 0,
         }
     }
 
@@ -1215,5 +1420,73 @@ mod tests {
         state.edit_input(KeyCode::Char('é'));
         state.edit_input(KeyCode::Backspace);
         assert!(matches!(state.view, View::Input { ref value, .. } if value.is_empty()));
+    }
+
+    #[test]
+    fn background_refresh_preserves_hunk_and_handles_a_cleaned_file() {
+        let root = repository();
+        let rail = GitRail::open(&root).expect("open refresh fixture");
+        fs::write(
+            root.join("tracked.txt"),
+            "01\nchanged 02\n03\n04\n05\n06\n07\n08\n09\n10\n11\n12\n13\n14\n15\n16\n17\nchanged 18\n19\n20\n",
+        )
+        .expect("edit two hunks");
+        let mut state = State::load(&rail).expect("load refresh state");
+        state.open_diff(&rail);
+        state.move_hunk(1);
+        assert!(matches!(state.view, View::Diff { selected: 1, .. }));
+        let selected_hunk = state.refresh_focus().expect("selected hunk").hunk_identity;
+
+        fs::write(root.join("external.txt"), "external\n").expect("external edit");
+        fs::write(
+            root.join("tracked.txt"),
+            "01\nchanged 02\n03\n04\n05\n06\n07\n08\n09\nchanged 10\n11\n12\n13\n14\n15\n16\n17\nchanged 18\n19\n20\n",
+        )
+        .expect("insert an earlier hunk");
+        let (sender, receiver) = mpsc::channel();
+        request_background_refresh(
+            &rail,
+            state.repository_generation,
+            state.refresh_focus(),
+            &sender,
+        );
+        state.apply_background_refresh(
+            receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("background refresh"),
+        );
+        assert!(state.changes.iter().any(|change| {
+            change.kind == ChangeKind::Untracked && change.path == Path::new("external.txt")
+        }));
+        assert_eq!(
+            state.refresh_focus().expect("preserved hunk").hunk_identity,
+            selected_hunk
+        );
+        assert!(matches!(state.view, View::Diff { selected: 2, .. }));
+
+        fs::write(
+            root.join("tracked.txt"),
+            "01\n02\n03\n04\n05\n06\n07\n08\n09\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n",
+        )
+        .expect("clean tracked file");
+        request_background_refresh(
+            &rail,
+            state.repository_generation,
+            state.refresh_focus(),
+            &sender,
+        );
+        state.apply_background_refresh(
+            receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("clean refresh"),
+        );
+        assert!(matches!(state.view, View::Changes));
+        assert!(
+            state
+                .notice
+                .as_deref()
+                .is_some_and(|notice| notice.contains("is now clean"))
+        );
+        fs::remove_dir_all(root).expect("remove refresh fixture");
     }
 }
