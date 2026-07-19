@@ -14,7 +14,7 @@ use lantern_git_rail_spike::{
 };
 use std::env;
 use std::io::{self, Stdout, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
@@ -64,12 +64,12 @@ enum ChangeKind {
 }
 
 impl ChangeKind {
-    fn marker(self) -> char {
+    fn label(self) -> &'static str {
         match self {
-            Self::Conflicted => '!',
-            Self::Staged => '+',
-            Self::Unstaged => '~',
-            Self::Untracked => '?',
+            Self::Conflicted => "conflict",
+            Self::Staged => "staged",
+            Self::Unstaged => "modified",
+            Self::Untracked => "untracked",
         }
     }
 
@@ -124,6 +124,7 @@ struct State {
     notice: Option<String>,
     network: Option<NetworkOperation>,
     repository_generation: u64,
+    help: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -177,6 +178,7 @@ impl State {
             notice: None,
             network: None,
             repository_generation: 0,
+            help: false,
         })
     }
 
@@ -778,6 +780,37 @@ fn clipped(value: &str, width: usize) -> String {
     value.chars().take(width - 1).chain(['…']).collect()
 }
 
+fn clipped_path(path: &Path, width: usize) -> String {
+    let value = path.to_string_lossy();
+    if value.chars().count() <= width {
+        return value.into_owned();
+    }
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy())
+        .unwrap_or(value);
+    if width <= 2 {
+        return clipped(&name, width);
+    }
+    let available = width - 2;
+    let name = if name.chars().count() > available {
+        clipped(&name, available)
+    } else {
+        name.into_owned()
+    };
+    format!("…/{name}")
+}
+
+fn change_row(change: &Change, width: usize, selected: bool) -> String {
+    let focus = if selected { "> " } else { "  " };
+    let label = change.kind.label();
+    let path_width = width.saturating_sub(focus.len() + label.chars().count() + 1);
+    clipped(
+        &format!("{focus}{label} {}", clipped_path(&change.path, path_width)),
+        width,
+    )
+}
+
 fn visible_start(selected: usize, available: usize) -> usize {
     selected.saturating_sub(available.saturating_sub(1))
 }
@@ -880,7 +913,9 @@ fn draw(stdout: &mut Stdout, state: &State) -> io::Result<()> {
             ..
         } => draw_commit_diff(stdout, title, lines, *offset, width, height)?,
     }
-    if let Some(notice) = &state.notice {
+    if state.help {
+        draw_help(stdout, &state.view, width, height)?;
+    } else if let Some(notice) = &state.notice {
         queue!(
             stdout,
             MoveTo(0, height.saturating_sub(1)),
@@ -894,6 +929,82 @@ fn draw(stdout: &mut Stdout, state: &State) -> io::Result<()> {
         )?;
     }
     stdout.flush()
+}
+
+fn draw_help(stdout: &mut Stdout, view: &View, width: u16, height: u16) -> io::Result<()> {
+    let (title, rows): (&str, &[&str]) = match view {
+        View::Changes => (
+            "Changes help",
+            &[
+                "↑/k ↓/j  select",
+                "↵/d  review diff",
+                "space  stage / unstage",
+                "o  open in Helix",
+                "a  Git actions",
+                "r  refresh",
+                "mouse: left review",
+                "mouse: right stage",
+                "mouse: middle open",
+                "q/Esc  quit",
+            ],
+        ),
+        View::Diff { .. } => (
+            "Diff help",
+            &[
+                "↑/k ↓/j  select hunk",
+                "PgUp/PgDn  scroll",
+                "space  stage / unstage",
+                "↵/o  open in Helix",
+                "mouse wheel  scroll",
+                "mouse: right stage",
+                "mouse: middle open",
+                "Esc  changes",
+            ],
+        ),
+        View::Actions { .. } => (
+            "Actions help",
+            &["↑/k ↓/j  select", "↵/left click  choose", "Esc  changes"],
+        ),
+        View::Branches { .. } => (
+            "Branches help",
+            &["↑/k ↓/j  select", "↵/left click  choose", "Esc  actions"],
+        ),
+        View::History { .. } => (
+            "History help",
+            &["↑/k ↓/j  select", "↵/left click  inspect", "Esc  actions"],
+        ),
+        View::CommitDiff { .. } => (
+            "History diff help",
+            &["↑/k ↓/j  scroll", "PgUp/PgDn  scroll", "Esc  history"],
+        ),
+        View::Input { .. } => return Ok(()),
+    };
+    queue!(
+        stdout,
+        MoveTo(0, 1),
+        SetBackgroundColor(CANVAS),
+        Clear(ClearType::FromCursorDown),
+        SetForegroundColor(ACCENT),
+        Print(clipped(title, width as usize))
+    )?;
+    for (row, item) in rows
+        .iter()
+        .take(height.saturating_sub(4) as usize)
+        .enumerate()
+    {
+        queue!(
+            stdout,
+            MoveTo(0, row as u16 + 2),
+            SetForegroundColor(TEXT),
+            Print(clipped(item, width as usize))
+        )?;
+    }
+    queue!(
+        stdout,
+        MoveTo(0, height.saturating_sub(1)),
+        SetForegroundColor(MUTED),
+        Print(clipped("? / Esc close", width as usize))
+    )
 }
 
 fn draw_menu(
@@ -925,7 +1036,10 @@ fn draw_menu(
             MoveTo(0, row as u16 + 2),
             SetBackgroundColor(if selected { SELECTED } else { CANVAS }),
             SetForegroundColor(if selected { ACCENT } else { TEXT }),
-            Print(clipped(item.as_ref(), width as usize)),
+            Print(clipped(
+                &format!("{}{}", if selected { "> " } else { "  " }, item.as_ref()),
+                width as usize,
+            )),
             ResetColor,
             SetBackgroundColor(CANVAS)
         )?;
@@ -1034,10 +1148,7 @@ fn draw_changes(stdout: &mut Stdout, state: &State, width: u16, height: u16) -> 
             MoveTo(0, row as u16 + 1),
             SetBackgroundColor(if selected { SELECTED } else { CANVAS }),
             SetForegroundColor(if selected { ACCENT } else { TEXT }),
-            Print(clipped(
-                &format!("{} {}", change.kind.marker(), change.path.display()),
-                width as usize,
-            )),
+            Print(change_row(change, width as usize, selected)),
             ResetColor,
             SetBackgroundColor(CANVAS)
         )?;
@@ -1045,7 +1156,7 @@ fn draw_changes(stdout: &mut Stdout, state: &State, width: u16, height: u16) -> 
     let footer = state
         .notice
         .as_deref()
-        .unwrap_or("a actions  ↵ diff  space stage");
+        .unwrap_or("? help  a actions  ↵ diff  space stage");
     queue!(
         stdout,
         MoveTo(0, height.saturating_sub(1)),
@@ -1119,15 +1230,18 @@ fn run() -> Result<(), String> {
     let mut stdout = io::stdout();
     let _guard = TerminalGuard::enter(&mut stdout)
         .map_err(|cause| format!("cannot enter Git rail: {cause}"))?;
+    let mut dirty = true;
 
     loop {
         while let Ok(completed) = network_receiver.try_recv() {
             state.finish_network(&rail, completed);
             next_refresh = Instant::now() + REFRESH_INTERVAL;
+            dirty = true;
         }
         while let Ok(completed) = refresh_receiver.try_recv() {
             refresh_in_flight = false;
             state.apply_background_refresh(completed);
+            dirty = true;
         }
         if !refresh_in_flight && state.network.is_none() && Instant::now() >= next_refresh {
             request_background_refresh(
@@ -1139,18 +1253,33 @@ fn run() -> Result<(), String> {
             refresh_in_flight = true;
             next_refresh = Instant::now() + REFRESH_INTERVAL;
         }
-        draw(&mut stdout, &state).map_err(|cause| format!("cannot draw Git rail: {cause}"))?;
+        if dirty {
+            draw(&mut stdout, &state).map_err(|cause| format!("cannot draw Git rail: {cause}"))?;
+            dirty = false;
+        }
         if !event::poll(Duration::from_millis(50))
             .map_err(|cause| format!("cannot poll terminal: {cause}"))?
         {
             continue;
         }
-        match event::read().map_err(|cause| format!("cannot read terminal: {cause}"))? {
+        let input = event::read().map_err(|cause| format!("cannot read terminal: {cause}"))?;
+        dirty = true;
+        match input {
             Event::Key(key) if key.kind == KeyEventKind::Press => {
                 if state.network.is_some() {
                     if key.code == KeyCode::Esc {
                         state.cancel_network();
                     }
+                    continue;
+                }
+                if state.help {
+                    if matches!(key.code, KeyCode::Esc | KeyCode::Char('?')) {
+                        state.help = false;
+                    }
+                    continue;
+                }
+                if key.code == KeyCode::Char('?') && !matches!(&state.view, View::Input { .. }) {
+                    state.help = true;
                     continue;
                 }
                 match &mut state.view {
@@ -1245,6 +1374,9 @@ fn run() -> Result<(), String> {
                 }
             }
             Event::Mouse(mouse) => match mouse.kind {
+                MouseEventKind::Down(_) if state.help => {
+                    state.help = false;
+                }
                 MouseEventKind::Down(MouseButton::Left) if matches!(state.view, View::Changes) => {
                     let row = mouse.row.saturating_sub(1) as usize;
                     let (_, height) = terminal::size()
@@ -1252,8 +1384,37 @@ fn run() -> Result<(), String> {
                     let available = height.saturating_sub(3) as usize;
                     let index = visible_start(state.selected, available) + row;
                     if index < state.changes.len() && row < available {
-                        state.selected = index;
+                        if state.selected == index {
+                            if state.changes[index].kind == ChangeKind::Conflicted {
+                                state.open_selected_in_helix();
+                            } else {
+                                state.open_diff(&rail);
+                            }
+                        } else {
+                            state.selected = index;
+                        }
                     }
+                }
+                MouseEventKind::Down(MouseButton::Right) if matches!(state.view, View::Changes) => {
+                    let row = mouse.row.saturating_sub(1) as usize;
+                    let (_, height) = terminal::size()
+                        .map_err(|cause| format!("cannot read terminal size: {cause}"))?;
+                    let available = height.saturating_sub(3) as usize;
+                    let index = visible_start(state.selected, available) + row;
+                    if index < state.changes.len() && row < available {
+                        state.selected = index;
+                        state.toggle_stage(&rail);
+                    }
+                }
+                MouseEventKind::Down(MouseButton::Middle)
+                    if matches!(state.view, View::Changes | View::Diff { .. }) =>
+                {
+                    state.open_selected_in_helix();
+                }
+                MouseEventKind::Down(MouseButton::Right)
+                    if matches!(state.view, View::Diff { .. }) =>
+                {
+                    state.toggle_hunk(&rail);
                 }
                 MouseEventKind::Down(MouseButton::Left)
                     if matches!(
@@ -1355,6 +1516,7 @@ mod tests {
             notice: None,
             network: None,
             repository_generation: 0,
+            help: false,
         }
     }
 
@@ -1380,6 +1542,22 @@ mod tests {
         assert_eq!(clipped("hélice", 4), "hél…");
         assert_eq!(clipped("hello", 1), "…");
         assert_eq!(clipped("hello", 0), "");
+    }
+
+    #[test]
+    fn change_rows_expose_state_focus_and_the_filename_without_color() {
+        let change = Change {
+            kind: ChangeKind::Unstaged,
+            path: PathBuf::from("src/deep/authentication/session_controller.ts"),
+        };
+        let row = change_row(&change, 34, true);
+        assert!(row.starts_with("> modified "));
+        assert!(row.ends_with("session_controller.ts"));
+        assert!(row.chars().count() <= 34);
+        assert_eq!(
+            clipped_path(Path::new("src/deep/session.ts"), 12),
+            "…/session.ts"
+        );
     }
 
     #[test]

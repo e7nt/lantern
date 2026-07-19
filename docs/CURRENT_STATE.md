@@ -238,6 +238,13 @@ results cannot overwrite newer local actions, and a cleaned file returns to the
 list with an explanation. See the
 [external-refresh report](acceptance/2026-07-19-git-external-refresh.md).
 
+The focused rail now expresses Git state and keyboard focus in text, preserves
+filenames in narrow paths, offers contextual `?` help without replacing review
+state, and maps mouse review/stage/open interactions explicitly. Rendering is
+event-driven rather than continuously repainting every 50 ms. The interaction
+gate is recorded in the
+[accessibility report](acceptance/2026-07-19-git-interaction-accessibility.md).
+
 ## Not next
 
 - SQLite or durable chat history.
