@@ -10,7 +10,7 @@ left = ["mode", "spinner", "file-name", "file-modification-indicator"]
 right = ["diagnostics", "position"]
 
 [keys.normal.space]
-g = ":run-shell-command lantern-lazygit"
+g = ":run-shell-command lantern-git"
 
 [keys.normal]
 C-a = [":lantern-export-symbol-context", ":run-shell-command lantern-agent-composer"]

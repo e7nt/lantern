@@ -952,10 +952,10 @@ fn cancel_active(
 }
 
 fn open_git(state: &mut UiState) {
-    match Command::new("lantern-lazygit").status() {
-        Ok(status) if status.success() => state.line("Returned from Lazygit."),
-        Ok(status) => state.line(format!("Lazygit exited with {status}.")),
-        Err(cause) => state.line(format!("Could not start Lazygit: {cause}")),
+    match Command::new("lantern-git").status() {
+        Ok(status) if status.success() => state.line("Returned from Git review."),
+        Ok(status) => state.line(format!("Git review exited with {status}.")),
+        Err(cause) => state.line(format!("Could not start Git review: {cause}")),
     }
 }
 

@@ -2,7 +2,6 @@
 
 import { spawnSync } from 'node:child_process';
 import {
-	copyFileSync,
 	mkdtempSync,
 	mkdirSync,
 	readFileSync,
@@ -15,9 +14,8 @@ import { basename, join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 
 const ROOT = resolve(import.meta.dirname, '..');
-const RAIL = resolve(process.env.LANTERN_GIT_RAIL_BIN ?? join(ROOT, 'spikes/git-rail/target/release/lantern-git-rail-spike'));
+const RAIL = resolve(process.env.LANTERN_GIT_RAIL_BIN ?? join(ROOT, 'target/release/lantern-git-rail'));
 const LAZYGIT = resolve(process.env.LANTERN_LAZYGIT_BIN ?? join(ROOT, '.lantern/toolchains/lazygit/lazygit'));
-const LAZYGIT_CONFIG = resolve(process.env.LANTERN_LAZYGIT_CONFIG ?? join(ROOT, 'frontend/helix/config/lazygit/config.yml'));
 const TMUX_SOCKET = `lantern-git-benchmark-${process.pid}`;
 const WIDTH = 120;
 const HEIGHT = 40;
@@ -187,15 +185,14 @@ function measureLaunch(kind, repository, home, config, probeInteractions) {
 }
 
 function main() {
-	for (const path of [RAIL, LAZYGIT, LAZYGIT_CONFIG]) statSync(path);
+	for (const path of [RAIL, LAZYGIT]) statSync(path);
 	const directory = mkdtempSync(join(tmpdir(), 'lantern-git-surface-benchmark-'));
 	try {
 		const repository = createFixture(directory);
 		const home = join(directory, 'home');
 		mkdirSync(home);
 		const config = join(directory, 'lazygit.yml');
-		copyFileSync(LAZYGIT_CONFIG, config);
-		writeFileSync(config, `${readFileSync(config, 'utf8')}\ndisableStartupPopups: true\n`);
+		writeFileSync(config, 'gui:\n  showRandomTip: false\n  showCommandLog: false\ndisableStartupPopups: true\n');
 		spawnSync('tmux', ['-L', TMUX_SOCKET, 'kill-server']);
 		const samples = { rail: [], lazygit: [] };
 		for (let index = 0; index < STARTUP_SAMPLES; index += 1) {

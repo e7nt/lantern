@@ -9,9 +9,7 @@ use crossterm::terminal::{
     enable_raw_mode,
 };
 use crossterm::{execute, queue};
-use lantern_git_rail_spike::{
-    Cancellation, Commit, DiffHunk, GitRail, GitResult, Status, SyncState,
-};
+use lantern_git_rail::{Cancellation, Commit, DiffHunk, GitRail, GitResult, Status, SyncState};
 use std::env;
 use std::io::{self, Stdout, Write};
 use std::path::{Path, PathBuf};

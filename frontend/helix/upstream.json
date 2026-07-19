@@ -5,10 +5,5 @@
     "repository": "https://github.com/helix-editor/helix.git",
     "revision": "14d6bc0febed9c692048271a8ae2362ac969c6e0",
     "license": "MPL-2.0"
-  },
-  "lazygit": {
-    "repository": "https://github.com/jesseduffield/lazygit.git",
-    "revision": "080da5cacfcff63a89ea23493bb91b11b0612876",
-    "license": "MIT"
   }
 }

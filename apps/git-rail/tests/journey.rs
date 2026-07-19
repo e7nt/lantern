@@ -1,4 +1,4 @@
-use lantern_git_rail_spike::{GitRail, SyncState};
+use lantern_git_rail::{GitRail, SyncState};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;

@@ -7,7 +7,7 @@ after `AGENTS.md` and before choosing work from the full roadmap.
 
 Lantern is an open-source, lightweight coding workbench for developers who love
 to understand and write code. The primary surface is Helix above a full-width
-agent pane, with Lazygit available as a narrow rail. Pi is the initial agent
+agent pane, with Lantern's focused Git review available as a narrow rail. Pi is the initial agent
 harness. A launched workbench is trusted by default: the agent is intended to
 search, edit, run development commands, and use Git while narrating meaningful
 work and remaining immediately interruptible.
@@ -19,8 +19,8 @@ and tool vocabulary should not become user-facing ceremony.
 
 ## What works today
 
-- Reproducible pinned Helix and Lazygit preparation.
-- The 80/20 Helix/agent composition and on-demand 10% Lazygit rail.
+- Reproducible pinned Helix and maintained Lantern runtime preparation.
+- The 80/20 Helix/agent composition and on-demand 10% focused Git rail.
 - Mouse and keyboard interaction across the surfaces.
 - A `Ctrl-a` contextual composer over Helix and reversible `F2` full-screen
   reading mode for the persistent agent pane.
@@ -247,10 +247,12 @@ gate is recorded in the
 
 The reproducible 1,001-file performance gate passes. The focused rail measured
 79.7 ms median startup and 2,960 KiB RSS versus pinned Lazygit's 95.6 ms and
-24,888 KiB; visible external refresh measured 704.7 ms versus 8,364.7 ms. The
-next checkpoint is promotion: wire `/git` to the focused rail and remove the
-Lazygit binary, preparation, configuration, launcher, and tests together. See
-the [performance report](acceptance/2026-07-19-git-surface-performance.md).
+24,888 KiB; visible external refresh measured 704.7 ms versus 8,364.7 ms. ADR
+006 therefore promotes `apps/git-rail` as the only `/git` implementation.
+Lazygit's build, configuration, launcher, environment, and product tests have
+been removed together. See the
+[performance report](acceptance/2026-07-19-git-surface-performance.md) and
+[promotion decision](decisions/006-promote-focused-git-rail.md).
 
 ## Not next
 

@@ -123,7 +123,7 @@ over the same visible, interruptible agent session.
 ## Architecture direction
 
 ```text
-Lantern terminal environment (Helix + Lantern pane + Lazygit)
+Lantern terminal environment (Helix + Lantern pane + focused Git rail)
   -> local editor-neutral typed stdio protocol
       -> agent daemon
           -> model adapters
@@ -136,7 +136,7 @@ Lantern terminal environment (Helix + Lantern pane + Lazygit)
 ```
 
 The first frontend is a pinned Helix build with a narrow, documented Lantern
-patch layer, a full-width terminal agent pane, and a focused Lazygit rail.
+patch layer, a full-width terminal agent pane, and a focused Lantern Git rail.
 Helix remains the editing and language-intelligence authority. The daemon
 remains independent so agent execution and durable state do not become coupled
 to editor internals. Pi is the initial harness behind a replaceable adapter.

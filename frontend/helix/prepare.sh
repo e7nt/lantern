@@ -5,13 +5,10 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 FRONTEND_DIR="$ROOT/frontend/helix"
 HELIX_DIR="$ROOT/.lantern/upstream/helix"
-LAZYGIT_DIR="$ROOT/.lantern/upstream/lazygit"
-LAZYGIT_BIN="$ROOT/.lantern/toolchains/lazygit/lazygit"
 SEMANTIC_SERVICE="$ROOT/services/semantic-index"
 SEMANTIC_ENV="$ROOT/.lantern/toolchains/semantic-index"
 SEMANTIC_MODEL_CACHE="$ROOT/.lantern/toolchains/semantic-models"
 HELIX_REVISION=14d6bc0febed9c692048271a8ae2362ac969c6e0
-LAZYGIT_REVISION=080da5cacfcff63a89ea23493bb91b11b0612876
 HELIX_PATCHES=(
 	"$FRONTEND_DIR/patches/0001-add-lantern-range-navigation.patch"
 	"$FRONTEND_DIR/patches/0002-add-picker-mouse-interaction.patch"
@@ -45,7 +42,6 @@ verify_revision() {
 }
 
 verify_revision "$HELIX_DIR" "$HELIX_REVISION" Helix
-verify_revision "$LAZYGIT_DIR" "$LAZYGIT_REVISION" Lazygit
 
 if git -C "$HELIX_DIR" diff --quiet; then
 	for patch in "${HELIX_PATCHES[@]}"; do
@@ -70,13 +66,6 @@ fi
 cargo build --release --locked --manifest-path "$HELIX_DIR/Cargo.toml"
 cargo build --release --locked --manifest-path "$ROOT/Cargo.toml"
 
-if ! command -v go >/dev/null; then
-	echo "Go is required to build the pinned Lazygit source." >&2
-	exit 1
-fi
-mkdir -p "$(dirname "$LAZYGIT_BIN")"
-(cd "$LAZYGIT_DIR" && go build -trimpath -o "$LAZYGIT_BIN" ./)
-
 if ! command -v uv >/dev/null; then
 	echo "uv is required to prepare Lantern's pinned local semantic worker." >&2
 	exit 1
@@ -85,5 +74,5 @@ UV_PROJECT_ENVIRONMENT="$SEMANTIC_ENV" uv sync --locked --project "$SEMANTIC_SER
 env PYTHONPATH="$SEMANTIC_SERVICE" "$SEMANTIC_ENV/bin/python" \
 	-m lantern_semantic_index.prepare --model-cache "$SEMANTIC_MODEL_CACHE"
 
-printf 'Prepared Helix %s, Lazygit %s, the semantic worker, and the maintained Lantern runtime.\n' \
-	"$HELIX_REVISION" "$LAZYGIT_REVISION"
+printf 'Prepared Helix %s, the semantic worker, and the maintained Lantern runtime.\n' \
+	"$HELIX_REVISION"

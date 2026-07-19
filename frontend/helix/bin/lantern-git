@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ -z ${TMUX:-} ]]; then
+	echo "Lantern's Git surface requires the Lantern tmux session." >&2
+	exit 1
+fi
+
+: "${LANTERN_REPO:?Lantern repository is not configured}"
+: "${LANTERN_GIT_BIN:?Lantern Git binary is not configured}"
+
+if [[ ! -x $LANTERN_GIT_BIN ]]; then
+	echo "Lantern Git binary is not executable: $LANTERN_GIT_BIN" >&2
+	exit 1
+fi
+
+client_width=$(tmux display-message -p '#{client_width}')
+if [[ ! $client_width =~ ^[0-9]+$ ]]; then
+	echo "Could not determine the tmux client width: $client_width" >&2
+	exit 1
+fi
+if ((client_width < 120)); then
+	echo "The 10% Git rail requires a terminal at least 120 columns wide." >&2
+	echo "Current terminal width: $client_width columns." >&2
+	exit 1
+fi
+
+# Git is a narrow rail over the left edge of the upper Helix region. The
+# 80% height preserves list navigation without covering the full-width agent
+# terminal below. It exits back to the unchanged editor process.
+tmux display-popup \
+	-E \
+	-w '10%' \
+	-h '80%' \
+	-x 0 \
+	-y 0 \
+	-d "$LANTERN_REPO" \
+	env LANTERN_REPO="$LANTERN_REPO" "$LANTERN_GIT_BIN"
