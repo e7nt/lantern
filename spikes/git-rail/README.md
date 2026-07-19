@@ -25,14 +25,21 @@ its changed-line range in the existing Helix process. Conflicts open directly
 in Helix. `r` refreshes and `q` exits. A file with both staged and unstaged
 changes intentionally has two independently reviewable rows.
 
+Press `a` for the temporary action overlay: commit the staged set, create or
+switch a local branch, fetch, fast-forward pull, or inspect twenty recent
+commits and one bounded commit diff. Pull reports no-upstream, up-to-date,
+ahead, behind, and diverged states explicitly and executes only for behind
+branches through `git pull --ff-only`. The overlay contains no push, discard,
+reset, stash, rebase, amend, or remote-administration action.
+
 Try the renderer from a repository in a separate terminal:
 
 ```bash
 cargo run --manifest-path /path/to/lantern/spikes/git-rail/Cargo.toml
 ```
 
-The renderer is deliberately not production-ready or wired to `/git`. Commit
-and branch dialogs, fetch/pull interaction, command deadlines, noninteractive
-credentials, privacy-reviewed diagnostics, concurrent refresh, accessibility
-checks, and a performance comparison remain.
+The renderer is deliberately not production-ready or wired to `/git`. Its
+functional scope is complete; command deadlines, noninteractive credentials,
+privacy-reviewed diagnostics, concurrent refresh, accessibility checks, and a
+performance comparison remain.
 Failure of those promotion gates deletes this crate and retains pinned Lazygit.
