@@ -211,6 +211,12 @@ Lazygit remains maintained until the remaining interaction, hardening,
 accessibility, and performance gates pass. See the
 [renderer report](acceptance/2026-07-19-focused-git-rail-renderer.md).
 
+The renderer now reviews one typed hunk at a time, selectively stages or
+unstages it, scrolls tall hunks, and opens the changed-line range through
+Helix's existing typed navigation command. A live two-hunk journey proved the
+index received only the selected change. See the
+[hunk-review report](acceptance/2026-07-19-git-hunk-review-and-helix-navigation.md).
+
 ## Not next
 
 - SQLite or durable chat history.

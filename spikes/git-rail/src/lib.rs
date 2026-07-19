@@ -29,6 +29,32 @@ pub struct Commit {
     pub summary: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiffHunk {
+    patch: Vec<u8>,
+    display: Vec<u8>,
+    new_start: usize,
+    new_lines: usize,
+}
+
+impl DiffHunk {
+    pub fn patch(&self) -> &[u8] {
+        &self.patch
+    }
+
+    pub fn display(&self) -> &[u8] {
+        &self.display
+    }
+
+    pub fn navigation_lines(&self) -> Option<(usize, usize)> {
+        if self.new_lines == 0 {
+            return None;
+        }
+        let start = self.new_start.max(1);
+        Some((start, start.saturating_add(self.new_lines)))
+    }
+}
+
 pub struct GitRail {
     repository: PathBuf,
 }
@@ -61,7 +87,11 @@ impl GitRail {
 
     pub fn diff(&self, path: &Path, staged: bool) -> Result<Vec<u8>, String> {
         validate_path(path)?;
-        let mut arguments = vec![OsString::from("diff"), OsString::from("--no-ext-diff")];
+        let mut arguments = vec![
+            OsString::from("diff"),
+            OsString::from("--no-ext-diff"),
+            OsString::from("--unified=0"),
+        ];
         if staged {
             arguments.push(OsString::from("--cached"));
         }
@@ -80,6 +110,7 @@ impl GitRail {
                 OsString::from("diff"),
                 OsString::from("--no-index"),
                 OsString::from("--no-ext-diff"),
+                OsString::from("--unified=0"),
                 OsString::from("--"),
                 OsString::from(NULL_DEVICE),
                 path.as_os_str().to_owned(),
@@ -87,6 +118,21 @@ impl GitRail {
             MAX_DIFF_BYTES,
             true,
         )
+    }
+
+    pub fn diff_hunks(&self, path: &Path, staged: bool) -> Result<Vec<DiffHunk>, String> {
+        let diff = if staged {
+            self.diff(path, true)?
+        } else if self
+            .paths(["ls-files", "--others", "--exclude-standard", "-z"])?
+            .iter()
+            .any(|candidate| candidate == path)
+        {
+            self.untracked_diff(path)?
+        } else {
+            self.diff(path, false)?
+        };
+        parse_diff_hunks(&diff)
     }
 
     pub fn stage(&self, path: &Path) -> Result<(), String> {
@@ -283,6 +329,69 @@ impl GitRail {
     }
 }
 
+fn parse_diff_hunks(diff: &[u8]) -> Result<Vec<DiffHunk>, String> {
+    if !diff.starts_with(b"diff --git ") {
+        return Err("Git did not return a unified file diff".into());
+    }
+    let line_starts = std::iter::once(0)
+        .chain(
+            diff.iter()
+                .enumerate()
+                .filter_map(|(index, byte)| (*byte == b'\n').then_some(index + 1)),
+        )
+        .filter(|start| *start < diff.len())
+        .collect::<Vec<_>>();
+    let hunk_starts = line_starts
+        .into_iter()
+        .filter(|start| diff[*start..].starts_with(b"@@ "))
+        .collect::<Vec<_>>();
+    let Some(first_hunk) = hunk_starts.first().copied() else {
+        return Err("Git diff has no selectable text hunks".into());
+    };
+    let file_header = &diff[..first_hunk];
+    let mut hunks = Vec::with_capacity(hunk_starts.len());
+    for (index, start) in hunk_starts.iter().copied().enumerate() {
+        let end = hunk_starts.get(index + 1).copied().unwrap_or(diff.len());
+        let display = diff[start..end].to_vec();
+        let header_end = display
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .unwrap_or(display.len());
+        let (new_start, new_lines) = parse_new_range(&display[..header_end])?;
+        let mut patch = Vec::with_capacity(file_header.len() + display.len());
+        patch.extend_from_slice(file_header);
+        patch.extend_from_slice(&display);
+        hunks.push(DiffHunk {
+            patch,
+            display,
+            new_start,
+            new_lines,
+        });
+    }
+    Ok(hunks)
+}
+
+fn parse_new_range(header: &[u8]) -> Result<(usize, usize), String> {
+    let plus = header
+        .iter()
+        .position(|byte| *byte == b'+')
+        .ok_or("Git hunk has no new-file range")?;
+    let range = &header[plus + 1..];
+    let end = range
+        .iter()
+        .position(|byte| byte.is_ascii_whitespace())
+        .unwrap_or(range.len());
+    let range = std::str::from_utf8(&range[..end]).map_err(|_| "Git hunk range is not UTF-8")?;
+    let (start, lines) = range.split_once(',').unwrap_or((range, "1"));
+    let start = start
+        .parse::<usize>()
+        .map_err(|_| "Git hunk start line is invalid")?;
+    let lines = lines
+        .parse::<usize>()
+        .map_err(|_| "Git hunk line count is invalid")?;
+    Ok((start, lines))
+}
+
 #[cfg(unix)]
 fn path_from_git(path: &[u8]) -> Result<PathBuf, String> {
     Ok(PathBuf::from(OsString::from_vec(path.to_vec())))
@@ -327,5 +436,34 @@ fn git_failure(stderr: &[u8]) -> String {
         "Git command failed without diagnostics".into()
     } else {
         format!("Git command failed: {}", detail.trim())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn splits_unified_diff_into_independently_applicable_hunks() {
+        let diff = b"diff --git a/a.txt b/a.txt\nindex 123..456 100644\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new\n@@ -5,0 +6,2 @@\n+six\n+seven\n";
+        let hunks = parse_diff_hunks(diff).expect("parse hunks");
+        assert_eq!(hunks.len(), 2);
+        assert!(hunks[0].patch().starts_with(b"diff --git "));
+        assert!(!hunks[0].patch().windows(6).any(|value| value == b"+seven"));
+        assert_eq!(hunks[0].navigation_lines(), Some((1, 2)));
+        assert_eq!(hunks[1].navigation_lines(), Some((6, 8)));
+    }
+
+    #[test]
+    fn deletion_only_hunk_has_no_fabricated_current_range() {
+        let diff = b"diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +0,0 @@\n-old\n";
+        let hunks = parse_diff_hunks(diff).expect("parse deletion");
+        assert_eq!(hunks[0].navigation_lines(), None);
+    }
+
+    #[test]
+    fn rejects_binary_or_malformed_diffs_without_a_hunk() {
+        assert!(parse_diff_hunks(b"diff --git a/a b/a\nBinary files differ\n").is_err());
+        assert!(parse_diff_hunks(b"not a diff\n").is_err());
     }
 }
