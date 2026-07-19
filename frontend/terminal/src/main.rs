@@ -15,10 +15,11 @@ use lantern_diagnostics::{
     DaemonState as DiagnosticDaemonState, bundle_from_stderr, summarize_stderr,
 };
 use lantern_protocol::{
-    BoundedTail, ChangeProposal, ControlRequest, Event, Evidence, EvidenceSource, GitReviewContext,
-    GroundingState, MAX_DIAGNOSTIC_BYTES, MAX_QUESTION_BYTES, MAX_SELECTION_BYTES,
-    PROTOCOL_VERSION, Request, SelectionContext, SymbolContext, SymbolContextExport, read_frame,
-    search_term, validate_git_review,
+    AgentGitFocus, BoundedTail, ChangeProposal, ControlRequest, Event, Evidence, EvidenceSource,
+    GitReviewContext, GroundingState, MAX_AGENT_TOUCHED_PATHS, MAX_DIAGNOSTIC_BYTES,
+    MAX_QUESTION_BYTES, MAX_SELECTION_BYTES, PROTOCOL_VERSION, Request, SelectionContext,
+    SymbolContext, SymbolContextExport, read_frame, search_term, validate_agent_git_focus,
+    validate_git_review,
 };
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -102,6 +103,7 @@ struct UiState {
     navigated_for: Option<u64>,
     selected_evidence: Option<usize>,
     expanded_semantic_groups: HashSet<(u64, PathBuf)>,
+    agent_touched_paths: Vec<PathBuf>,
 }
 
 impl UiState {
@@ -120,6 +122,7 @@ impl UiState {
             navigated_for: None,
             selected_evidence: None,
             expanded_semantic_groups: HashSet::new(),
+            agent_touched_paths: Vec::new(),
         }
     }
 
@@ -157,6 +160,7 @@ impl UiState {
         self.active_id = Some(id);
         self.accepted_id = None;
         self.selected_evidence = None;
+        self.agent_touched_paths.clear();
         Some(id)
     }
 
@@ -1001,6 +1005,22 @@ fn open_git(state: &mut UiState) {
     }
 }
 
+fn publish_agent_git_focus(path: &Path, relative_paths: &[PathBuf]) -> Result<(), String> {
+    let focus = AgentGitFocus {
+        relative_paths: relative_paths.to_vec(),
+    };
+    validate_agent_git_focus(&focus)?;
+    let payload = serde_json::to_vec(&focus)
+        .map_err(|cause| format!("cannot encode agent Git focus: {cause}"))?;
+    let temporary = path.with_extension("tmp");
+    fs::write(&temporary, payload)
+        .map_err(|cause| format!("cannot write agent Git focus: {cause}"))?;
+    fs::rename(&temporary, path).map_err(|cause| {
+        let _ = fs::remove_file(&temporary);
+        format!("cannot publish agent Git focus: {cause}")
+    })
+}
+
 fn toggle_agent_zoom(state: &mut UiState) {
     match Command::new("lantern-toggle-agent").status() {
         Ok(status) if status.success() => {}
@@ -1332,6 +1352,7 @@ fn handle_daemon_event(
     state: &mut UiState,
     repository: &Path,
     selection_path: &Path,
+    git_focus_path: &Path,
 ) -> io::Result<()> {
     match event {
         Event::Initialized { .. } => {
@@ -1424,6 +1445,7 @@ fn handle_daemon_event(
             state.activity = Some(format!("{}{}…", tool.label(), location));
         }
         Event::ToolFinished {
+            id,
             tool,
             relative_path,
             success,
@@ -1440,6 +1462,12 @@ fn handle_daemon_event(
                 )
                 && let Some(relative_path) = relative_path
             {
+                if state.active_id == Some(id)
+                    && state.agent_touched_paths.len() < MAX_AGENT_TOUCHED_PATHS
+                    && !state.agent_touched_paths.contains(&relative_path)
+                {
+                    state.agent_touched_paths.push(relative_path.clone());
+                }
                 let line = changed_line(repository, &relative_path).unwrap_or(1);
                 if let Err(cause) = navigate_range(&relative_path, line, 1, line, 1) {
                     state.line(format!("Could not show the changed file: {cause}"));
@@ -1475,6 +1503,22 @@ fn handle_daemon_event(
         Event::Settled { id } => {
             state.activity = None;
             if state.active_id == Some(id) {
+                if !state.agent_touched_paths.is_empty() {
+                    match publish_agent_git_focus(git_focus_path, &state.agent_touched_paths) {
+                        Ok(()) => state.line(format!(
+                            "Review {} agent-edited file{} · Space-g in Helix or /git",
+                            state.agent_touched_paths.len(),
+                            if state.agent_touched_paths.len() == 1 {
+                                ""
+                            } else {
+                                "s"
+                            }
+                        )),
+                        Err(message) => {
+                            state.line(format!("Could not prepare Git review: {message}"))
+                        }
+                    }
+                }
                 state.active_id = None;
                 state.accepted_id = None;
                 state.navigated_for = None;
@@ -1511,6 +1555,7 @@ fn run(
     daemon_path: PathBuf,
     selection_path: PathBuf,
     review_path: PathBuf,
+    git_focus_path: PathBuf,
     control_socket: PathBuf,
 ) -> io::Result<()> {
     let mut daemon = Command::new(daemon_path)
@@ -1563,7 +1608,13 @@ fn run(
             Input::Terminal(TerminalEvent::Resize(_, _)) => false,
             Input::Terminal(_) => false,
             Input::Daemon(event) => {
-                handle_daemon_event(event, &mut state, &repository, &selection_path)?;
+                handle_daemon_event(
+                    event,
+                    &mut state,
+                    &repository,
+                    &selection_path,
+                    &git_focus_path,
+                )?;
                 if state.daemon == DaemonState::Unavailable {
                     let _ = daemon.kill();
                 }
@@ -1621,6 +1672,9 @@ fn main() -> io::Result<()> {
     let review_path = env::var_os("LANTERN_REVIEW_PATH")
         .map(PathBuf::from)
         .ok_or_else(|| io::Error::other("LANTERN_REVIEW_PATH is not configured"))?;
+    let git_focus_path = env::var_os("LANTERN_GIT_FOCUS_PATH")
+        .map(PathBuf::from)
+        .ok_or_else(|| io::Error::other("LANTERN_GIT_FOCUS_PATH is not configured"))?;
     let control_socket = env::var_os("LANTERN_CONTROL_SOCKET")
         .map(PathBuf::from)
         .ok_or_else(|| io::Error::other("LANTERN_CONTROL_SOCKET is not configured"))?;
@@ -1629,6 +1683,7 @@ fn main() -> io::Result<()> {
         daemon,
         selection_path,
         review_path,
+        git_focus_path,
         control_socket,
     )
 }
@@ -1971,6 +2026,7 @@ mod tests {
             &mut state,
             Path::new("."),
             Path::new("unused"),
+            Path::new("unused-focus"),
         )
         .expect("handle evidence");
 
@@ -1997,6 +2053,7 @@ mod tests {
             &mut state,
             Path::new("."),
             Path::new("unused"),
+            Path::new("unused-focus"),
         )
         .expect("handle preparing state");
         assert_eq!(
@@ -2012,6 +2069,7 @@ mod tests {
             &mut state,
             Path::new("."),
             Path::new("unused"),
+            Path::new("unused-focus"),
         )
         .expect("handle search-only state");
         assert_eq!(state.activity.as_deref(), Some("Searching the repository…"));
@@ -2059,6 +2117,52 @@ mod tests {
     }
 
     #[test]
+    fn settled_agent_edits_publish_one_bounded_git_focus() {
+        let directory = env::temp_dir().join(format!(
+            "lantern-agent-focus-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&directory).unwrap();
+        let focus_path = directory.join("git-focus.json");
+        let mut state = UiState::new(Path::new("."));
+        state.daemon = DaemonState::Ready;
+        state.active_id = Some(7);
+
+        handle_daemon_event(
+            Event::ToolFinished {
+                id: 7,
+                tool: lantern_protocol::WorkbenchTool::Edit,
+                relative_path: Some("src/lib.rs".into()),
+                success: true,
+            },
+            &mut state,
+            Path::new("."),
+            Path::new("unused"),
+            &focus_path,
+        )
+        .unwrap();
+        handle_daemon_event(
+            Event::Settled { id: 7 },
+            &mut state,
+            Path::new("."),
+            Path::new("unused"),
+            &focus_path,
+        )
+        .unwrap();
+
+        let focus: AgentGitFocus = serde_json::from_slice(&fs::read(&focus_path).unwrap()).unwrap();
+        assert_eq!(focus.relative_paths, vec![PathBuf::from("src/lib.rs")]);
+        assert!(state.transcript.iter().any(|item| {
+            matches!(item, TranscriptItem::Line(line) if line.contains("Space-g in Helix"))
+        }));
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
     fn daemon_failure_keeps_the_pane_available_and_clears_operation_state() {
         let mut state = UiState::new(Path::new("."));
         state.daemon = DaemonState::Ready;
@@ -2088,6 +2192,7 @@ mod tests {
             &mut state,
             Path::new("."),
             Path::new("unused"),
+            Path::new("unused-focus"),
         )
         .expect("handle initialization");
         assert_eq!(state.daemon, DaemonState::Ready);
@@ -2104,6 +2209,7 @@ mod tests {
             &mut state,
             Path::new("."),
             Path::new("unused"),
+            Path::new("unused-focus"),
         )
         .expect("handle workspace configuration");
 

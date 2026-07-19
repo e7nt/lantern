@@ -11,7 +11,8 @@ use crossterm::terminal::{
 use crossterm::{execute, queue};
 use lantern_git_rail::{Cancellation, Commit, DiffHunk, GitRail, GitResult, Status, SyncState};
 use lantern_protocol::{
-    GitReviewContext, GitReviewScope, GitReviewState, MAX_SELECTION_BYTES, validate_git_review,
+    AgentGitFocus, GitReviewContext, GitReviewScope, GitReviewState, MAX_AGENT_GIT_FOCUS_BYTES,
+    MAX_SELECTION_BYTES, validate_agent_git_focus, validate_git_review,
 };
 use std::env;
 use std::fs;
@@ -790,6 +791,53 @@ impl State {
         }
     }
 
+    fn focus_agent_changes(&mut self, path: &Path) {
+        if fs::metadata(path)
+            .is_ok_and(|metadata| metadata.len() > MAX_AGENT_GIT_FOCUS_BYTES as u64 + 4 * 1024)
+        {
+            let _ = fs::remove_file(path);
+            self.notice = Some("Agent Git review context exceeded its bound.".into());
+            return;
+        }
+        let Ok(bytes) = fs::read(path) else {
+            return;
+        };
+        let _ = fs::remove_file(path);
+        let Ok(focus) = serde_json::from_slice::<AgentGitFocus>(&bytes) else {
+            self.notice = Some("Agent Git review context was invalid.".into());
+            return;
+        };
+        if let Err(message) = validate_agent_git_focus(&focus) {
+            self.notice = Some(message);
+            return;
+        }
+        let selected = focus
+            .relative_paths
+            .iter()
+            .find_map(|path| self.changes.iter().position(|change| change.path == *path));
+        let Some(selected) = selected else {
+            self.notice = Some("The files edited by the agent are now clean.".into());
+            return;
+        };
+        let already_reviewing = match &self.view {
+            View::Diff { change, .. } => focus.relative_paths.contains(&change.path),
+            _ => false,
+        };
+        if !already_reviewing {
+            self.view = View::Changes;
+            self.selected = selected;
+        }
+        let changed = focus
+            .relative_paths
+            .iter()
+            .filter(|path| self.changes.iter().any(|change| change.path == **path))
+            .count();
+        self.notice = Some(format!(
+            "Reviewing {changed} agent-edited file{}.",
+            if changed == 1 { "" } else { "s" }
+        ));
+    }
+
     fn fail_action(&mut self, message: String) {
         self.view = View::Changes;
         self.notice = Some(message);
@@ -1417,6 +1465,9 @@ fn run() -> Result<RunOutcome, String> {
     if let Some(path) = env::var_os("LANTERN_GIT_RESUME_PATH").map(PathBuf::from) {
         state.restore_review_context(&rail, &path);
     }
+    if let Some(path) = env::var_os("LANTERN_GIT_FOCUS_PATH").map(PathBuf::from) {
+        state.focus_agent_changes(&path);
+    }
     let (network_sender, network_receiver): (Sender<NetworkResult>, Receiver<NetworkResult>) =
         mpsc::channel();
     let (refresh_sender, refresh_receiver): (Sender<RefreshResult>, Receiver<RefreshResult>) =
@@ -1810,6 +1861,34 @@ mod tests {
         state.edit_input(KeyCode::Char('é'));
         state.edit_input(KeyCode::Backspace);
         assert!(matches!(state.view, View::Input { ref value, .. } if value.is_empty()));
+    }
+
+    #[test]
+    fn one_shot_agent_focus_selects_the_first_still_changed_path() {
+        let root = repository();
+        fs::write(root.join("tracked.txt"), "agent edit\n").expect("edit tracked fixture");
+        fs::write(root.join("second.txt"), "agent edit\n").expect("write second fixture");
+        let rail = GitRail::open(&root).expect("open focus fixture");
+        let mut state = State::load(&rail).expect("load focus fixture");
+        let focus_path = root.join("agent-focus.json");
+        fs::write(
+            &focus_path,
+            serde_json::to_vec(&AgentGitFocus {
+                relative_paths: vec!["second.txt".into(), "tracked.txt".into()],
+            })
+            .unwrap(),
+        )
+        .expect("write focus context");
+
+        state.focus_agent_changes(&focus_path);
+
+        assert!(!focus_path.exists());
+        assert_eq!(state.changes[state.selected].path, Path::new("second.txt"));
+        assert_eq!(
+            state.notice.as_deref(),
+            Some("Reviewing 2 agent-edited files.")
+        );
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

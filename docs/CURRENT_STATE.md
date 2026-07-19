@@ -261,6 +261,14 @@ interactive; reopening `/git` restores the exact or nearest surviving hunk
 after agent edits. See the
 [review-handoff report](acceptance/2026-07-19-git-agent-review-handoff.md).
 
+The return path is connected as well. Successful edit/write events are retained
+only for the active turn in a bounded path set. On settlement, Lantern offers
+one compact review instruction; the next `Space-g` or `/git` consumes that
+focus and selects the first agent-edited path that still has a live Git change.
+The rail remains the authority for current Git state and continues to show all
+repository changes. See the
+[agent-change review report](acceptance/2026-07-19-agent-change-review-handoff.md).
+
 ## Not next
 
 - SQLite or durable chat history.

@@ -35,6 +35,10 @@ click stages or unstages, middle click opens in Helix, and the wheel scrolls.
 Press `Ctrl-a` on a file or hunk to close the modal rail and ask through the
 existing Lantern composer with that exact bounded Git review attached. Opening
 `/git` again restores the reviewed file and exact or nearest surviving hunk.
+After an agent turn edits files, the next rail opening consumes a bounded
+one-shot focus and selects the first touched path that still has a live Git
+change. Other repository changes remain visible, and the rail does not
+attribute individual hunks when a file was already dirty.
 
 Press `a` for the temporary action overlay: commit the staged set, create or
 switch a local branch, fetch, fast-forward pull, or inspect twenty recent

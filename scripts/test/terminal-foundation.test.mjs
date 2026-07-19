@@ -46,6 +46,7 @@ function environment({ directory, repository, fakeBin, tmuxLog, submitLog }) {
 		LANTERN_REPO: repository,
 		LANTERN_REVIEW_PATH: path.join(directory, 'review.json'),
 		LANTERN_GIT_RESUME_PATH: path.join(directory, 'git-resume.json'),
+		LANTERN_GIT_FOCUS_PATH: path.join(directory, 'git-focus.json'),
 		LANTERN_EDITOR_PANE: '%7',
 		TMUX: '/tmp/fake',
 		TMUX_CLIENT_WIDTH: '160',
@@ -102,6 +103,7 @@ test('focused Git is constrained to a 10 percent rail above the agent', async ()
 	assert.match(calls, /display-popup -E -w 10% -h 80% -x 0 -y 0/);
 	assert.ok(calls.includes(context.repository));
 	assert.ok(calls.includes(gitRail));
+	assert.ok(calls.includes(environment(context).LANTERN_GIT_FOCUS_PATH));
 });
 
 test('focused Git rejects a terminal too narrow for the 10 percent rail', async () => {
