@@ -3,7 +3,7 @@ use std::fmt;
 use std::io::{self, BufRead};
 use std::path::{Component, Path, PathBuf};
 
-pub const PROTOCOL_VERSION: u32 = 9;
+pub const PROTOCOL_VERSION: u32 = 10;
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const MAX_EVENT_BYTES: usize = 256 * 1024;
 pub const MAX_DIAGNOSTIC_BYTES: usize = 8 * 1024;
@@ -190,6 +190,11 @@ pub enum Request {
         repository: PathBuf,
         query: String,
     },
+    InvestigateAgent {
+        id: u64,
+        repository: PathBuf,
+        objective: String,
+    },
     AskAgentSymbol {
         id: u64,
         repository: PathBuf,
@@ -235,6 +240,7 @@ pub enum EvidenceSource {
     Call,
     Semantic,
     LiteralMatch,
+    Investigation,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]

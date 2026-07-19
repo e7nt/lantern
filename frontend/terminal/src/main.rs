@@ -372,6 +372,10 @@ fn evidence_source_text(source: EvidenceSource) -> (&'static str, &'static str) 
         EvidenceSource::Call => ("Call path", "bounded outgoing call resolved by Helix"),
         EvidenceSource::Semantic => ("Related code", "local semantic match verified from source"),
         EvidenceSource::LiteralMatch => ("Exact match", "local repository text match"),
+        EvidenceSource::Investigation => (
+            "Investigation evidence",
+            "source inspected during the read-only investigation",
+        ),
     }
 }
 
@@ -827,6 +831,7 @@ fn should_navigate_evidence(source: EvidenceSource) -> bool {
             | EvidenceSource::Call
             | EvidenceSource::Semantic
             | EvidenceSource::LiteralMatch
+            | EvidenceSource::Investigation
     )
 }
 
@@ -1142,7 +1147,26 @@ fn handle_line(
         state.line(message);
         return Ok(false);
     }
-    if let Some(replacement) = line.strip_prefix("/preview ") {
+    if let Some(objective) = line.strip_prefix("/investigate ") {
+        let objective = objective.trim();
+        if objective.is_empty() {
+            state.line("Enter `/investigate <feature objective>`.");
+            return Ok(false);
+        }
+        let Some(id) = state.begin_operation() else {
+            return Ok(false);
+        };
+        send_request(
+            daemon_stdin,
+            &Request::InvestigateAgent {
+                id,
+                repository: repository.to_owned(),
+                objective: objective.to_owned(),
+            },
+        )?;
+    } else if line == "/investigate" {
+        state.line("Enter `/investigate <feature objective>`.");
+    } else if let Some(replacement) = line.strip_prefix("/preview ") {
         match selection_for_question(state, selection_path) {
             Ok(selection) => {
                 let Some(id) = state.begin_operation() else {
@@ -1401,6 +1425,7 @@ fn handle_daemon_event(
                         | EvidenceSource::Call
                         | EvidenceSource::Semantic
                         | EvidenceSource::LiteralMatch
+                        | EvidenceSource::Investigation
                 )
             {
                 state.activity = Some("Found relevant code · thinking…".into());
@@ -1411,6 +1436,7 @@ fn handle_daemon_event(
                     | EvidenceSource::Call
                     | EvidenceSource::Semantic
                     | EvidenceSource::LiteralMatch
+                    | EvidenceSource::Investigation
             ) {
                 state.transcript.push(TranscriptItem::Evidence {
                     id,

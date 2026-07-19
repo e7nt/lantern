@@ -26,7 +26,7 @@ and tool vocabulary should not become user-facing ceremony.
   reading mode for the persistent agent pane.
 - Bounded, typed composer submission over a private session-local Unix socket;
   tmux owns presentation and focus but never transports questions.
-- Maintained Rust terminal, daemon, diagnostics, and Protocol v9 crates.
+- Maintained Rust terminal, daemon, diagnostics, and Protocol v10 crates.
 - Selection capture, exact navigation, bounded local literal search, and
   Helix-provided definition/reference context.
 - Bounded two-hop outgoing-call context from Helix's active language server,
@@ -52,7 +52,7 @@ and tool vocabulary should not become user-facing ceremony.
 
 ## Current boundary
 
-Protocol v9 and the terminal open one trusted repository directly. The old
+Protocol v10 and the terminal open one trusted repository directly. The old
 policy engine, capability fields, and `/trust` commands have been removed. Pi
 runs its explicit built-in coding-tool allowlist in that repository. Raw tool
 arguments, command output, and provider stderr are not copied into Lantern's
@@ -78,8 +78,9 @@ opening line 1.
 
 Implement next:
 
-1. Keep the next product slice contingent on workbench feedback; do not add
-   another retrieval or caching layer without a measured unmet question.
+1. Validate the read-only readiness brief on a real feature investigation
+   before adding Markdown persistence or plan tasks. Do not add another
+   retrieval or caching layer without a measured unmet question.
 
 [The persistent Pi acceptance report](acceptance/2026-07-18-persistent-pi.md)
 records a grounded warm follow-up beginning text in 1.52 seconds and settling
@@ -163,7 +164,8 @@ recorded in
 
 Cold repository questions now expose `Preparing code understanding…` while the
 local index builds, or `Searching the repository…` when semantic grounding is
-unavailable. Protocol v9 carries only those two typed transient states. A real
+unavailable. Protocol v9 introduced those two typed transient states and v10
+retains them unchanged. A real
 cold Requests clone exposed preparation in 1 ms without waiting for the index
 or provider. The result is recorded in
 [the cold-grounding report](acceptance/2026-07-18-cold-grounding-status.md).
@@ -268,6 +270,15 @@ focus and selects the first agent-edited path that still has a live Git change.
 The rail remains the authority for current Git state and continues to show all
 repository changes. See the
 [agent-change review report](acceptance/2026-07-19-agent-change-review-handoff.md).
+
+`/investigate <feature objective>` runs one explicitly read-only Pi turn with
+only `read`, `grep`, `find`, and `ls`. It streams a concise readiness brief
+through the existing pane, separates observations from unknowns, requires an
+explicit Ready or Blocked result, and exposes inspected files as navigable
+investigation evidence. Its bounded brief is handed once to the warm coding
+session when the developer follows up, so “proceed” retains context without
+durable chat storage. It does not persist a plan or create another UI. See
+the [investigation report](acceptance/2026-07-19-read-only-feature-investigation.md).
 
 ## Not next
 

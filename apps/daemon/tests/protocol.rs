@@ -1,7 +1,7 @@
 use lantern_diagnostics::{Code as DiagnosticCode, Record as DiagnosticRecord};
 use lantern_protocol::{
     Event, Evidence, EvidenceSource, GroundingState, MAX_FILES, MAX_FRAME_BYTES, PROTOCOL_VERSION,
-    Request, SelectionContext, SymbolCall, SymbolContext, SymbolLocation,
+    Request, SelectionContext, SymbolCall, SymbolContext, SymbolLocation, WorkbenchTool,
 };
 use std::fs;
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
@@ -101,11 +101,11 @@ impl Daemon {
 }
 
 #[test]
-fn golden_wire_fixtures_match_the_v9_types() {
-    for line in include_str!("../../../protocol/v9/requests.jsonl").lines() {
+fn golden_wire_fixtures_match_the_v10_types() {
+    for line in include_str!("../../../protocol/v10/requests.jsonl").lines() {
         serde_json::from_str::<Request>(line).expect("golden request must deserialize");
     }
-    for line in include_str!("../../../protocol/v9/events.jsonl").lines() {
+    for line in include_str!("../../../protocol/v10/events.jsonl").lines() {
         serde_json::from_str::<Event>(line).expect("golden event must deserialize");
     }
 }
@@ -648,6 +648,10 @@ fi
 if [[ ${LANTERN_FAKE_PI_MODE:?} == cancel ]]; then
     IFS= read -r abort
     printf '%s\n' "$abort" > "$capture_dir/abort.json"
+elif [[ ${LANTERN_FAKE_PI_MODE:?} == investigation ]]; then
+    printf '%s\n' '{"type":"tool_execution_start","toolCallId":"call-read","toolName":"read","args":{"path":"sample.rs"}}'
+    printf '%s\n' '{"type":"tool_execution_end","toolCallId":"call-read","toolName":"read","result":{"content":[]},"isError":false}'
+    printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Goal\nObserved\nRead existing flow.\nAffected flow\nrequest\nLikely changes\nnone yet\nOpen questions\nconfiguration\nAcceptance criteria\nexplicit behavior\nExclusions\nimplementation\nRisks\nstale configuration\nReadiness\nBlocked"}}'
 elif [[ ${LANTERN_FAKE_PI_MODE:?} == tools ]]; then
     printf '%s\n' '{"type":"tool_execution_start","toolCallId":"call-read","toolName":"read","args":{"path":"sample.rs"}}'
     printf '%s\n' '{"type":"tool_execution_end","toolCallId":"call-read","toolName":"read","result":{"content":[]},"isError":false}'
@@ -1091,7 +1095,7 @@ fn repository_question_reaches_pi_without_editor_context() {
     let root = fixture("pi-repository-question", "fn selected() {}\n");
     let driver = fixture("pi-repository-question-driver", "private\n");
     let pi_bin = fake_pi(&driver);
-    let mut daemon = Daemon::spawn_with_pi(&pi_bin, &driver, "stream");
+    let mut daemon = Daemon::spawn_with_pi(&pi_bin, &driver, "investigation");
     daemon.initialize();
     daemon.open(&root);
     daemon.send(&Request::AskAgent {
@@ -1116,6 +1120,85 @@ fn repository_question_reaches_pi_without_editor_context() {
     assert!(prompt.contains("No editor selection was supplied"));
     assert!(prompt.contains("What does this project do?"));
     assert!(!prompt.contains("Selected source"));
+    fs::remove_dir_all(root).expect("remove repository fixture");
+    fs::remove_dir_all(driver).expect("remove driver fixture");
+}
+
+#[cfg(unix)]
+#[test]
+fn investigation_uses_a_read_only_pi_profile_and_structured_brief_prompt() {
+    let root = fixture("pi-investigation", "fn existing_flow() {}\n");
+    let driver = fixture("pi-investigation-driver", "private\n");
+    let pi_bin = fake_pi(&driver);
+    let before = fs::read(root.join("sample.rs")).expect("read fixture before investigation");
+    let mut daemon = Daemon::spawn_with_pi(&pi_bin, &driver, "investigation");
+    daemon.initialize();
+    daemon.open(&root);
+    daemon.send(&Request::InvestigateAgent {
+        id: 37,
+        repository: root.clone(),
+        objective: "Add per-workbench model selection".into(),
+    });
+
+    let mut completed = false;
+    let mut evidence = false;
+    loop {
+        match daemon.next() {
+            Event::ToolStarted {
+                id: 37,
+                tool: WorkbenchTool::Edit | WorkbenchTool::Write | WorkbenchTool::Bash,
+                ..
+            } => panic!("investigation exposed a mutating tool"),
+            Event::Completed { id: 37, .. } => completed = true,
+            Event::Evidence {
+                id: 37,
+                evidence:
+                    Evidence {
+                        source: EvidenceSource::Investigation,
+                        relative_path,
+                        ..
+                    },
+            } => evidence = relative_path == Path::new("sample.rs"),
+            Event::Settled { id: 37 } => break,
+            _ => {}
+        }
+    }
+
+    let invocation = fs::read_to_string(driver.join("invocation.args")).expect("read Pi args");
+    assert!(invocation.contains("--tools read,grep,find,ls"));
+    assert!(!invocation.contains("read,grep,find,ls,edit,write,bash"));
+    let prompt = fs::read_to_string(driver.join("prompt.json")).expect("read Pi prompt");
+    for heading in [
+        "Goal",
+        "Observed",
+        "Affected flow",
+        "Open questions",
+        "Acceptance criteria",
+        "Readiness",
+    ] {
+        assert!(prompt.contains(heading), "prompt omitted {heading}");
+    }
+    assert!(prompt.contains("Do not implement anything"));
+    assert!(completed);
+    assert!(
+        evidence,
+        "investigation read must become navigable evidence"
+    );
+    assert_eq!(
+        fs::read(root.join("sample.rs")).expect("read fixture after investigation"),
+        before
+    );
+
+    daemon.send(&Request::AskAgent {
+        id: 38,
+        repository: root.clone(),
+        query: "Proceed with the smallest implementation.".into(),
+    });
+    while !matches!(daemon.next(), Event::Settled { id: 38 }) {}
+    let follow_up = fs::read_to_string(driver.join("prompt.json")).expect("read follow-up prompt");
+    assert!(follow_up.contains("Prior read-only investigation"));
+    assert!(follow_up.contains("Read existing flow"));
+    assert!(follow_up.contains("Proceed with the smallest implementation"));
     fs::remove_dir_all(root).expect("remove repository fixture");
     fs::remove_dir_all(driver).expect("remove driver fixture");
 }

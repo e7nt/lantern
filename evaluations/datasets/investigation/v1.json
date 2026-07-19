@@ -1,0 +1,20 @@
+{
+  "dataset": "investigation",
+  "version": 1,
+  "cases": [
+    {
+      "id": "ready-with-evidence",
+      "objective": "Add a health endpoint",
+      "required_facts": ["src/server.ts:12", "tests/server.test.ts:8"],
+      "forbidden": ["implemented", "tests passed", "no risks"],
+      "human_rubric": "Separate observed routing and test facts from inferences, cite both repository locations, and make readiness explicit without claiming work occurred."
+    },
+    {
+      "id": "blocked-product-decision",
+      "objective": "Add per-workbench model selection",
+      "required_facts": ["scripts/launch-lantern.sh:128", "open question"],
+      "forbidden": ["implementation is ready", "verified", "edited"],
+      "human_rubric": "Mark the brief blocked when the configuration authority is undecided and retain the inspected launch evidence."
+    }
+  ]
+}

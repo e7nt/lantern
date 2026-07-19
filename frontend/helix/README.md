@@ -105,6 +105,9 @@ when the terminal emulator's native text selection is needed.
 Diagnostic commands remain available:
 
 - `/git` opens Lantern's focused Git review rail.
+- `/investigate <feature objective>` performs a read-only repository
+  investigation and returns an evidence-linked Ready or Blocked brief without
+  changing files.
 - `/preview <one-line replacement>` shows a transient unified diff for the
   selected text; closing it leaves the repository unchanged.
 - `/show <literal text>` streams bounded local evidence and selects its exact
