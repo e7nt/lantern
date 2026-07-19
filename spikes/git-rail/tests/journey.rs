@@ -61,6 +61,11 @@ fn focused_git_journey_preserves_review_state() {
             .expect("diff")
             .starts_with(b"diff --git")
     );
+    let untracked_diff = rail
+        .untracked_diff(Path::new("new.txt"))
+        .expect("untracked diff");
+    assert!(untracked_diff.starts_with(b"diff --git"));
+    assert!(untracked_diff.windows(5).any(|window| window == b"+new\n"));
     rail.stage(Path::new("tracked.txt")).expect("stage");
     assert_eq!(
         rail.status().expect("staged status").staged,
