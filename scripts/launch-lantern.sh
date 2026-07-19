@@ -22,7 +22,9 @@ cleanup_failed_launch() {
 		tmux kill-session -t "$session"
 	fi
 	if [[ -n $runtime_dir && -d $runtime_dir ]]; then
-		rm -f "$runtime_dir/selection.json" "$runtime_dir/selection.tmp" "$runtime_dir/control.sock" \
+		rm -f "$runtime_dir/selection.json" "$runtime_dir/selection.tmp" \
+			"$runtime_dir/review.json" "$runtime_dir/review.tmp" \
+			"$runtime_dir/git-resume.json" "$runtime_dir/git-resume.tmp" "$runtime_dir/control.sock" \
 			"$runtime_dir/proposal.before" "$runtime_dir/proposal.after"
 		rmdir "$runtime_dir" 2>/dev/null || true
 	fi
@@ -89,6 +91,8 @@ fi
 session="lantern-$$"
 runtime_dir=$(mktemp -d "${TMPDIR:-/tmp}/lantern.XXXXXXXX")
 selection_path="$runtime_dir/selection.json"
+review_path="$runtime_dir/review.json"
+git_resume_path="$runtime_dir/git-resume.json"
 control_socket="$runtime_dir/control.sock"
 path="$FRONTEND_DIR/bin:$PATH"
 editor_command=(env
@@ -97,6 +101,8 @@ editor_command=(env
 	"HELIX_RUNTIME=$HELIX_RUNTIME"
 	"LANTERN_REPO=$repo"
 	"LANTERN_SELECTION_PATH=$selection_path"
+	"LANTERN_REVIEW_PATH=$review_path"
+	"LANTERN_GIT_RESUME_PATH=$git_resume_path"
 	"LANTERN_CONTROL_SOCKET=$control_socket"
 	"LANTERN_SUBMIT_BIN=$SUBMIT_BIN"
 	"LANTERN_GIT_BIN=$GIT_BIN"
@@ -117,6 +123,8 @@ agent_command=(env
 	"LANTERN_EDITOR_PANE=$editor_pane"
 	"LANTERN_REPO=$repo"
 	"LANTERN_SELECTION_PATH=$selection_path"
+	"LANTERN_REVIEW_PATH=$review_path"
+	"LANTERN_GIT_RESUME_PATH=$git_resume_path"
 	"LANTERN_CONTROL_SOCKET=$control_socket"
 	"LANTERN_GIT_BIN=$GIT_BIN"
 	"LANTERN_DAEMON_BIN=$DAEMON_BIN"

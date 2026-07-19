@@ -254,6 +254,13 @@ been removed together. See the
 [performance report](acceptance/2026-07-19-git-surface-performance.md) and
 [promotion decision](decisions/006-promote-focused-git-rail.md).
 
+Git review now connects directly to the one conversational path. `Ctrl-a` on a
+changed file or hunk opens the existing composer with typed, bounded path,
+state, range, and diff evidence. The modal rail closes so the agent pane remains
+interactive; reopening `/git` restores the exact or nearest surviving hunk
+after agent edits. See the
+[review-handoff report](acceptance/2026-07-19-git-agent-review-handoff.md).
+
 ## Not next
 
 - SQLite or durable chat history.

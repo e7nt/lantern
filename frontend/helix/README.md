@@ -84,6 +84,8 @@ focuses Lantern, while Esc dismisses the composer. Pi can inspect, edit, and run
 development commands in the repository. Press `F2` from Helix or Lantern to
 toggle the response pane between its compact 20% height and the full terminal;
 the same key restores the editor layout. `Space-g` opens the 10% Git rail.
+Within a changed file or hunk, `Ctrl-a` hands that bounded review to the same
+agent composer; reopening Git restores the exact or nearest surviving hunk.
 
 The initial Helix explorer is mouse-aware too. Click or wheel over the left
 result list to choose a file, drag across source in the right preview, and

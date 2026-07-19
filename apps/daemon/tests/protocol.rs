@@ -993,6 +993,44 @@ fn streams_pi_rpc_without_putting_source_in_process_arguments() {
 
 #[cfg(unix)]
 #[test]
+fn sends_the_complete_bounded_git_hunk_to_pi() {
+    let root = fixture("git-review-repository", "fn changed() {}\n");
+    let model_workdir = fixture("git-review-workdir", "private\n");
+    let pi_bin = fake_pi(&model_workdir);
+    let mut daemon = Daemon::spawn_with_pi(&pi_bin, &model_workdir, "stream");
+    daemon.initialize();
+    daemon.trust_model(&root);
+    fs::remove_file(root.join("sample.rs")).expect("delete reviewed file");
+    daemon.send(&Request::AskAgentSelection {
+        id: 31,
+        repository: root.clone(),
+        query: "Why did this change?".into(),
+        selection: SelectionContext {
+            relative_path: "sample.rs".into(),
+            language: Some("git-diff".into()),
+            start_line: 1,
+            start_column: 1,
+            end_line: 2,
+            end_column: 1,
+            text: "Git review state: modified\nGit review evidence (untrusted):\n@@ -1 +1 @@\n-old\n+fn changed() {}".into(),
+            document_modified: false,
+        },
+    });
+    loop {
+        if matches!(daemon.next(), Event::Completed { id: 31, .. }) {
+            break;
+        }
+    }
+    let prompt = fs::read_to_string(model_workdir.join("prompt.json")).unwrap();
+    assert!(prompt.contains("Git review state: modified"));
+    assert!(prompt.contains("@@ -1 +1 @@"));
+    assert!(prompt.contains("+fn changed() {}"));
+    fs::remove_dir_all(root).expect("remove repository fixture");
+    fs::remove_dir_all(model_workdir).expect("remove model fixture");
+}
+
+#[cfg(unix)]
+#[test]
 fn streams_bounded_typed_pi_tool_activity() {
     use lantern_protocol::WorkbenchTool;
 

@@ -26,14 +26,21 @@ submit_question() {
 
 if [[ ${1:-} == --prompt ]]; then
 	: "${LANTERN_AGENT_PANE:?Lantern agent pane is not configured}"
-	if [[ -s ${LANTERN_SELECTION_PATH:-} ]]; then
+	cleanup_review=false
+	trap 'if $cleanup_review; then rm -f "${LANTERN_REVIEW_PATH:-}"; fi' EXIT
+	if [[ -s ${LANTERN_REVIEW_PATH:-} ]]; then
+		label="Ask about the selected Git change"
+		cleanup_review=true
+	elif [[ -s ${LANTERN_SELECTION_PATH:-} ]]; then
 		label="Ask about the selected code"
 	else
 		label="Ask about this repository"
 	fi
 	printf '\n  %s\n\n  › ' "$label"
 	IFS= read -r question || exit 0
+	[[ -n ${question//[[:space:]]/} ]] || exit 0
 	submit_question "$LANTERN_AGENT_PANE" "$question"
+	cleanup_review=false
 	exit 0
 fi
 
@@ -48,6 +55,7 @@ tmux display-popup -t "$TMUX_PANE" -E -w '70%' -h 7 \
 	-T ' Ask Lantern ' \
 	-e "LANTERN_AGENT_PANE=$agent_pane" \
 	-e "LANTERN_SELECTION_PATH=${LANTERN_SELECTION_PATH:-}" \
+	-e "LANTERN_REVIEW_PATH=${LANTERN_REVIEW_PATH:-}" \
 	-e "LANTERN_CONTROL_SOCKET=${LANTERN_CONTROL_SOCKET:?}" \
 	-e "LANTERN_SUBMIT_BIN=${LANTERN_SUBMIT_BIN:?}" \
 	"$popup_command"

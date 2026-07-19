@@ -9,6 +9,8 @@ fi
 
 : "${LANTERN_REPO:?Lantern repository is not configured}"
 : "${LANTERN_GIT_BIN:?Lantern Git binary is not configured}"
+: "${LANTERN_REVIEW_PATH:?Lantern review context is not configured}"
+: "${LANTERN_GIT_RESUME_PATH:?Lantern Git resume context is not configured}"
 
 if [[ ! -x $LANTERN_GIT_BIN ]]; then
 	echo "Lantern Git binary is not executable: $LANTERN_GIT_BIN" >&2
@@ -29,6 +31,7 @@ fi
 # Git is a narrow rail over the left edge of the upper Helix region. The
 # 80% height preserves list navigation without covering the full-width agent
 # terminal below. It exits back to the unchanged editor process.
+status=0
 tmux display-popup \
 	-E \
 	-w '10%' \
@@ -36,4 +39,11 @@ tmux display-popup \
 	-x 0 \
 	-y 0 \
 	-d "$LANTERN_REPO" \
-	env LANTERN_REPO="$LANTERN_REPO" "$LANTERN_GIT_BIN"
+env LANTERN_REPO="$LANTERN_REPO" LANTERN_REVIEW_PATH="$LANTERN_REVIEW_PATH" \
+	LANTERN_GIT_RESUME_PATH="$LANTERN_GIT_RESUME_PATH" \
+	"$LANTERN_GIT_BIN" || status=$?
+
+if ((status == 20)); then
+	exec lantern-agent-composer
+fi
+exit "$status"

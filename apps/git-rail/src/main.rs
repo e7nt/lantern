@@ -10,7 +10,11 @@ use crossterm::terminal::{
 };
 use crossterm::{execute, queue};
 use lantern_git_rail::{Cancellation, Commit, DiffHunk, GitRail, GitResult, Status, SyncState};
+use lantern_protocol::{
+    GitReviewContext, GitReviewScope, GitReviewState, MAX_SELECTION_BYTES, validate_git_review,
+};
 use std::env;
+use std::fs;
 use std::io::{self, Stdout, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -46,6 +50,7 @@ const SELECTED: Color = Color::Rgb {
 const ACTIONS: [&str; 5] = ["Commit", "Branches", "Fetch", "Pull", "History"];
 const HISTORY_LIMIT: usize = 20;
 const REFRESH_INTERVAL: Duration = Duration::from_millis(750);
+const ASK_AGENT_EXIT_CODE: i32 = 20;
 
 #[derive(Clone, Copy)]
 enum InputKind {
@@ -73,6 +78,15 @@ impl ChangeKind {
 
     fn staged(self) -> bool {
         self == Self::Staged
+    }
+
+    fn review_state(self) -> GitReviewState {
+        match self {
+            Self::Conflicted => GitReviewState::Conflict,
+            Self::Staged => GitReviewState::Staged,
+            Self::Unstaged => GitReviewState::Modified,
+            Self::Untracked => GitReviewState::Untracked,
+        }
     }
 }
 
@@ -610,6 +624,172 @@ impl State {
         }
     }
 
+    fn review_context(&self, rail: &GitRail) -> Result<GitReviewContext, String> {
+        let scope = if matches!(&self.view, View::Diff { .. }) {
+            GitReviewScope::Hunk
+        } else {
+            GitReviewScope::File
+        };
+        let (change, hunks) = match &self.view {
+            View::Changes => {
+                let change = self
+                    .changes
+                    .get(self.selected)
+                    .cloned()
+                    .ok_or("Select a Git change before asking Lantern.")?;
+                let hunks = if change.kind == ChangeKind::Conflicted {
+                    Vec::new()
+                } else {
+                    rail.diff_hunks(&change.path, change.kind.staged())
+                        .map_err(|error| error.to_string())?
+                };
+                (change, hunks)
+            }
+            View::Diff {
+                change,
+                hunks,
+                selected,
+                ..
+            } => {
+                let hunk = hunks
+                    .get(*selected)
+                    .cloned()
+                    .ok_or("Select a Git hunk before asking Lantern.")?;
+                (change.clone(), vec![hunk])
+            }
+            _ => return Err("Open a changed file or hunk before asking Lantern.".into()),
+        };
+        let (start_line, end_line, diff) = if hunks.is_empty() {
+            (
+                1,
+                2,
+                "This file is conflicted. Inspect the working tree and Git stages before answering."
+                    .into(),
+            )
+        } else {
+            let mut start_line = usize::MAX;
+            let mut end_line = 0;
+            let mut diff = String::new();
+            for hunk in hunks {
+                if let Some((start, end)) = hunk.navigation_lines() {
+                    start_line = start_line.min(start);
+                    end_line = end_line.max(end);
+                }
+                if !diff.is_empty() {
+                    diff.push('\n');
+                }
+                diff.push_str(&String::from_utf8_lossy(hunk.display()));
+            }
+            if start_line == usize::MAX {
+                start_line = 1;
+                end_line = 2;
+            }
+            (start_line, end_line.max(start_line + 1), diff)
+        };
+        let context = GitReviewContext {
+            relative_path: change.path,
+            state: change.kind.review_state(),
+            scope,
+            start_line,
+            end_line,
+            diff,
+        };
+        validate_git_review(&context).map_err(|message| {
+            if message.contains("exceeds") && matches!(&self.view, View::Changes) {
+                "This file review is too large. Open the exact hunk, then press Ctrl-a.".into()
+            } else {
+                message
+            }
+        })?;
+        Ok(context)
+    }
+
+    fn export_review_context(&self, rail: &GitRail) -> Result<(), String> {
+        let context = self.review_context(rail)?;
+        let destination = env::var_os("LANTERN_REVIEW_PATH")
+            .map(PathBuf::from)
+            .ok_or("Lantern review context path is not configured.")?;
+        let resume = env::var_os("LANTERN_GIT_RESUME_PATH")
+            .map(PathBuf::from)
+            .ok_or("Lantern Git resume path is not configured.")?;
+        let payload = serde_json::to_vec(&context)
+            .map_err(|error| format!("Cannot encode Git review context: {error}"))?;
+        publish_context(&resume, &payload)?;
+        if let Err(message) = publish_context(&destination, &payload) {
+            let _ = fs::remove_file(resume);
+            return Err(message);
+        }
+        Ok(())
+    }
+
+    fn restore_review_context(&mut self, rail: &GitRail, path: &Path) {
+        let Ok(bytes) = fs::read(path) else {
+            return;
+        };
+        let _ = fs::remove_file(path);
+        if bytes.len() > MAX_SELECTION_BYTES + 4 * 1024 {
+            self.notice = Some("Saved Git review context exceeded its bound.".into());
+            return;
+        }
+        let Ok(context) = serde_json::from_slice::<GitReviewContext>(&bytes) else {
+            self.notice = Some("Saved Git review context was invalid.".into());
+            return;
+        };
+        if let Err(message) = validate_git_review(&context) {
+            self.notice = Some(message);
+            return;
+        }
+        let selected = self
+            .changes
+            .iter()
+            .position(|change| {
+                change.path == context.relative_path && change.kind.review_state() == context.state
+            })
+            .or_else(|| {
+                self.changes
+                    .iter()
+                    .position(|change| change.path == context.relative_path)
+            });
+        let Some(selected) = selected else {
+            self.notice = Some(format!("{} is now clean.", context.relative_path.display()));
+            return;
+        };
+        self.selected = selected;
+        if context.scope != GitReviewScope::Hunk
+            || self.changes[selected].kind == ChangeKind::Conflicted
+        {
+            return;
+        }
+        let change = self.changes[selected].clone();
+        match rail.diff_hunks(&change.path, change.kind.staged()) {
+            Ok(hunks) if !hunks.is_empty() => {
+                let selected = hunks
+                    .iter()
+                    .position(|hunk| hunk.display() == context.diff.as_bytes())
+                    .or_else(|| {
+                        hunks
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(index, hunk)| {
+                                hunk.navigation_lines()
+                                    .map(|(start, _)| (index, start.abs_diff(context.start_line)))
+                            })
+                            .min_by_key(|(_, distance)| *distance)
+                            .map(|(index, _)| index)
+                    })
+                    .unwrap_or(0);
+                self.view = View::Diff {
+                    change,
+                    hunks,
+                    selected,
+                    offset: 0,
+                };
+            }
+            Ok(_) => self.notice = Some(format!("{} is now clean.", change.path.display())),
+            Err(error) => self.notice = Some(error.to_string()),
+        }
+    }
+
     fn fail_action(&mut self, message: String) {
         self.view = View::Changes;
         self.notice = Some(message);
@@ -765,6 +945,14 @@ fn changes(status: Status) -> Vec<Change> {
         }
     }
     changes
+}
+
+fn publish_context(destination: &Path, payload: &[u8]) -> Result<(), String> {
+    let temporary = destination.with_extension("tmp");
+    fs::write(&temporary, payload)
+        .map_err(|error| format!("Cannot write Git review context: {error}"))?;
+    fs::rename(&temporary, destination)
+        .map_err(|error| format!("Cannot publish Git review context: {error}"))
 }
 
 fn clipped(value: &str, width: usize) -> String {
@@ -938,6 +1126,7 @@ fn draw_help(stdout: &mut Stdout, view: &View, width: u16, height: u16) -> io::R
                 "↵/d  review diff",
                 "space  stage / unstage",
                 "o  open in Helix",
+                "Ctrl-a  ask Lantern",
                 "a  Git actions",
                 "r  refresh",
                 "mouse: left review",
@@ -953,6 +1142,7 @@ fn draw_help(stdout: &mut Stdout, view: &View, width: u16, height: u16) -> io::R
                 "PgUp/PgDn  scroll",
                 "space  stage / unstage",
                 "↵/o  open in Helix",
+                "Ctrl-a  ask Lantern",
                 "mouse wheel  scroll",
                 "mouse: right stage",
                 "mouse: middle open",
@@ -1213,12 +1403,20 @@ fn draw_diff(
     )
 }
 
-fn run() -> Result<(), String> {
+enum RunOutcome {
+    Closed,
+    AskAgent,
+}
+
+fn run() -> Result<RunOutcome, String> {
     let repository = env::var_os("LANTERN_REPO").map(PathBuf::from).unwrap_or(
         env::current_dir().map_err(|cause| format!("cannot read current directory: {cause}"))?,
     );
     let rail = GitRail::open(&repository).map_err(|error| error.to_string())?;
     let mut state = State::load(&rail)?;
+    if let Some(path) = env::var_os("LANTERN_GIT_RESUME_PATH").map(PathBuf::from) {
+        state.restore_review_context(&rail, &path);
+    }
     let (network_sender, network_receiver): (Sender<NetworkResult>, Receiver<NetworkResult>) =
         mpsc::channel();
     let (refresh_sender, refresh_receiver): (Sender<RefreshResult>, Receiver<RefreshResult>) =
@@ -1230,7 +1428,7 @@ fn run() -> Result<(), String> {
         .map_err(|cause| format!("cannot enter Git rail: {cause}"))?;
     let mut dirty = true;
 
-    loop {
+    let outcome = loop {
         while let Ok(completed) = network_receiver.try_recv() {
             state.finish_network(&rail, completed);
             next_refresh = Instant::now() + REFRESH_INTERVAL;
@@ -1282,7 +1480,7 @@ fn run() -> Result<(), String> {
                 }
                 match &mut state.view {
                     View::Changes => match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => break,
+                        KeyCode::Char('q') | KeyCode::Esc => break RunOutcome::Closed,
                         KeyCode::Up | KeyCode::Char('k') => state.move_selection(-1),
                         KeyCode::Down | KeyCode::Char('j') => state.move_selection(1),
                         KeyCode::Char(' ') => state.toggle_stage(&rail),
@@ -1297,6 +1495,12 @@ fn run() -> Result<(), String> {
                         KeyCode::Enter | KeyCode::Char('d') => state.open_diff(&rail),
                         KeyCode::Char('o') => state.open_selected_in_helix(),
                         KeyCode::Char('r') => state.refresh(&rail),
+                        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            match state.export_review_context(&rail) {
+                                Ok(()) => break RunOutcome::AskAgent,
+                                Err(message) => state.notice = Some(message),
+                            }
+                        }
                         KeyCode::Char('a') => state.open_actions(),
                         _ => {}
                     },
@@ -1308,6 +1512,12 @@ fn run() -> Result<(), String> {
                         KeyCode::PageDown => state.scroll_hunk(10),
                         KeyCode::Char(' ') => state.toggle_hunk(&rail),
                         KeyCode::Enter | KeyCode::Char('o') => state.open_selected_in_helix(),
+                        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            match state.export_review_context(&rail) {
+                                Ok(()) => break RunOutcome::AskAgent,
+                                Err(message) => state.notice = Some(message),
+                            }
+                        }
                         _ => {}
                     },
                     View::Actions { .. } => match key.code {
@@ -1453,14 +1663,18 @@ fn run() -> Result<(), String> {
             Event::Resize(_, _) => {}
             _ => {}
         }
-    }
-    Ok(())
+    };
+    Ok(outcome)
 }
 
 fn main() {
-    if let Err(message) = run() {
-        eprintln!("{message}");
-        std::process::exit(1);
+    match run() {
+        Ok(RunOutcome::Closed) => {}
+        Ok(RunOutcome::AskAgent) => std::process::exit(ASK_AGENT_EXIT_CODE),
+        Err(message) => {
+            eprintln!("{message}");
+            std::process::exit(1);
+        }
     }
 }
 
@@ -1608,9 +1822,19 @@ mod tests {
         )
         .expect("edit two hunks");
         let mut state = State::load(&rail).expect("load refresh state");
+        let file_review = state.review_context(&rail).expect("file review context");
+        assert_eq!(file_review.scope, GitReviewScope::File);
+        assert!(file_review.diff.contains("changed 02"));
+        assert!(file_review.diff.contains("changed 18"));
         state.open_diff(&rail);
         state.move_hunk(1);
         assert!(matches!(state.view, View::Diff { selected: 1, .. }));
+        let review = state.review_context(&rail).expect("typed review context");
+        assert_eq!(review.scope, GitReviewScope::Hunk);
+        assert_eq!(review.state, GitReviewState::Modified);
+        assert_eq!(review.relative_path, Path::new("tracked.txt"));
+        assert!(review.diff.contains("changed 18"));
+        assert!(!review.diff.contains("changed 02"));
         let selected_hunk = state.refresh_focus().expect("selected hunk").hunk_identity;
 
         fs::write(root.join("external.txt"), "external\n").expect("external edit");
@@ -1639,6 +1863,13 @@ mod tests {
             selected_hunk
         );
         assert!(matches!(state.view, View::Diff { selected: 2, .. }));
+
+        let resume = root.join("resume.json");
+        fs::write(&resume, serde_json::to_vec(&review).unwrap()).unwrap();
+        let mut restored = State::load(&rail).expect("reload Git rail");
+        restored.restore_review_context(&rail, &resume);
+        assert!(matches!(restored.view, View::Diff { selected: 2, .. }));
+        assert!(!resume.exists());
 
         fs::write(
             root.join("tracked.txt"),

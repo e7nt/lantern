@@ -18,6 +18,8 @@ while tmux has-session -t "$session" 2>/dev/null; do
 done
 
 rm -f "$runtime_dir/selection.json" "$runtime_dir/selection.tmp" \
+	"$runtime_dir/review.json" "$runtime_dir/review.tmp" \
+	"$runtime_dir/git-resume.json" "$runtime_dir/git-resume.tmp" \
 	"$runtime_dir/control.sock" "$runtime_dir/proposal.before" \
 	"$runtime_dir/proposal.after"
 rmdir "$runtime_dir" 2>/dev/null || true
