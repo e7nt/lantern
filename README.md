@@ -38,7 +38,7 @@ developer is exploring rather than attempting to replace the developer.
 The first implementation uses:
 
 - A pinned Helix editor with a narrow, documented Lantern patch layer, a
-  compact Lazygit rail, and a full-width terminal agent pane.
+  focused Lantern Git rail, and a full-width terminal agent pane.
 - A separate local daemon that connects the Pi agent harness to typed workbench
   tools, repository intelligence, plans, and change narratives.
 - An editor-neutral protocol that keeps agent and model execution out of the
@@ -124,5 +124,5 @@ Live provider evaluation is explicit and credential-dependent; it is not part
 of ordinary contributor CI. See
 [evaluations/README.md](evaluations/README.md) for the separate command.
 
-The reproducible Helix/Lazygit environment and its launch command remain
+The reproducible Helix/Lantern environment and its launch command remain
 documented in [frontend/helix/README.md](frontend/helix/README.md).

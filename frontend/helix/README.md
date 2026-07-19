@@ -6,8 +6,8 @@ ADR 001 accepted the Phase 0 terminal experiment as Lantern's frontend
 direction. This directory contains the maintained Helix patches, configuration,
 bridges, and reproducible upstream preparation contract.
 
-Lantern provides a coherent terminal environment without rebuilding editor and
-Git behavior:
+Lantern provides a coherent terminal environment around Helix and its focused
+Git review surface:
 
 ```text
 +-------------------------------------------------+
@@ -19,12 +19,11 @@ Git behavior:
 +-------------------------------------------------+
 ```
 
-When requested, Lazygit appears as a 10%-wide rail at the left of the upper
+When requested, Lantern Git appears as a 10%-wide rail at the left of the upper
 Helix region. It does not cover the full-width agent terminal.
 
-Helix remains the editing authority. Lazygit owns interactive Git operations.
-Lantern owns agent state, policy, evidence, and the narrow commands that connect
-an agent result to an editor location.
+Helix remains the editing authority. Lantern owns focused Git review, agent
+state, evidence, and the narrow commands that connect results to editor ranges.
 
 ## User outcome under test
 
@@ -33,10 +32,10 @@ A developer can:
 1. Edit normally in Helix while Lantern occupies a persistent, full-width 20%
    pane along the bottom.
 2. Click between all surfaces, position or drag-select code in Helix, scroll
-   each surface with the mouse, and use Lazygit controls directly.
+   each surface with the mouse, and use focused Git controls directly.
 3. See the current branch, staged files, unstaged files, untracked files, and
    recent commits without leaving the coding surface.
-4. Open Lazygit as a narrow 10% Git rail, perform focused Git operations, and
+4. Open Lantern Git as a narrow 10% rail, perform focused Git operations, and
    close it without losing the Helix session.
 5. Ask the local Lantern daemon to locate a literal symbol or phrase, watch
    progress and evidence stream, and have the exact result range selected in
@@ -56,11 +55,9 @@ agent mode.
 Requirements:
 
 - `tmux` 3.2 or newer
-- a terminal at least 120 columns wide for the 10% Lazygit rail
+- a terminal at least 120 columns wide for the 10% Git rail
 - the pinned Helix build at
   `.lantern/upstream/helix/target/release/hx`
-- the pinned Lazygit build at
-  `.lantern/toolchains/lazygit/lazygit`
 - the maintained release runtime at `target/release`
 - Pi `0.80.6`, authenticated privately for OpenAI Codex by starting `pi`,
   running `/login`, and choosing OpenAI Codex
@@ -72,7 +69,7 @@ Launch from the repository to inspect:
 ```
 
 The current development workspace is already prepared. To reproduce the pinned
-builds after checking out the two recorded upstream repositories, run:
+build after checking out the recorded Helix upstream repository, run:
 
 ```bash
 ./frontend/helix/prepare.sh
@@ -86,7 +83,7 @@ context; without one it asks about the repository directly. Enter submits and
 focuses Lantern, while Esc dismisses the composer. Pi can inspect, edit, and run
 development commands in the repository. Press `F2` from Helix or Lantern to
 toggle the response pane between its compact 20% height and the full terminal;
-the same key restores the editor layout. `Space-g` opens the 10% Lazygit rail.
+the same key restores the editor layout. `Space-g` opens the 10% Git rail.
 
 The initial Helix explorer is mouse-aware too. Click or wheel over the left
 result list to choose a file, drag across source in the right preview, and
@@ -102,7 +99,7 @@ when the terminal emulator's native text selection is needed.
 
 Diagnostic commands remain available:
 
-- `/git` opens Lazygit.
+- `/git` opens Lantern's focused Git review rail.
 - `/preview <one-line replacement>` shows a transient unified diff for the
   selected text; closing it leaves the repository unchanged.
 - `/show <literal text>` streams bounded local evidence and selects its exact
@@ -136,7 +133,7 @@ The terminal composition uses Helix's built-in Boo Berry palette across every
 surface: a single deep-plum canvas, muted lilac borders and metadata, mint
 actions, violet evidence links, and one bright text hierarchy. tmux pane titles
 and heavy button brackets are deliberately absent. Two-column Helix pickers,
-the 10% Lazygit rail, and the Lantern pane use the same low-contrast framing so
+the 10% Git rail, and the Lantern pane use the same low-contrast framing so
 code and evidence remain the visual focus.
 
 The palette is intentionally terminal-native and contains no image assets or UI
@@ -148,7 +145,7 @@ and exact hit targets rather than decorative chrome.
 - The initial tmux layout is 80% editor above a full-width 20% Lantern pane,
   within one terminal row of rounding.
 - Git summary sections distinguish staged, unstaged, and untracked paths.
-- Lazygit uses a 10%-wide rail confined to the upper 80% work region, and
+- Lantern Git uses a 10%-wide rail confined to the upper 80% work region, and
   returning from it preserves Helix's open buffers and undo history.
 - A validated `path + range` action selects that exact evidence in the existing
   Helix process without taking input focus from the agent pane.
@@ -157,7 +154,7 @@ and exact hit targets rather than decorative chrome.
 - The daemon is scoped to the tmux session and leaves no process after the
   session closes.
 - Initialization either completes within two seconds or leaves a visible,
-  actionable unavailable state while Helix and Lazygit remain usable.
+  actionable unavailable state while Helix and Git review remain usable.
 - Unexpected daemon exit never disappears behind an automatic restart; the
   pane shows a bounded diagnostic tail and preserves explicit session exit.
 - Cancellation reaches a terminal event within 500 ms locally.
@@ -190,7 +187,7 @@ is introduced.
 ## Deliberate exclusions
 
 - Agent-authored file changes.
-- Git mutation outside Lazygit.
+- Broad or destructive Git controls in the focused rail.
 - Voice input and narration.
 - Broad or unrelated Helix changes.
 - Windows support.

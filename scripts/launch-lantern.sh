@@ -6,9 +6,8 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 FRONTEND_DIR="$ROOT/frontend/helix"
 HELIX_BIN=${LANTERN_HELIX_BIN:-"$ROOT/.lantern/upstream/helix/target/release/hx"}
 HELIX_RUNTIME=${LANTERN_HELIX_RUNTIME:-"$ROOT/.lantern/upstream/helix/runtime"}
-LAZYGIT_BIN=${LANTERN_LAZYGIT_BIN:-"$ROOT/.lantern/toolchains/lazygit/lazygit"}
-LAZYGIT_CONFIG="$FRONTEND_DIR/config/lazygit/config.yml"
 RUNTIME_DIR="$ROOT/target/release"
+GIT_BIN=${LANTERN_GIT_BIN:-"$RUNTIME_DIR/lantern-git-rail"}
 DAEMON_BIN=${LANTERN_DAEMON_BIN:-"$RUNTIME_DIR/lantern-daemon"}
 PANE_BIN=${LANTERN_PANE_BIN:-"$RUNTIME_DIR/lantern-terminal"}
 SUBMIT_BIN=${LANTERN_SUBMIT_BIN:-"$RUNTIME_DIR/lantern-submit"}
@@ -75,17 +74,7 @@ if [[ ! -d $HELIX_RUNTIME ]]; then
 	exit 1
 fi
 
-if [[ ! -x $LAZYGIT_BIN ]]; then
-	echo "Pinned Lazygit build is missing: $LAZYGIT_BIN" >&2
-	exit 1
-fi
-
-if [[ ! -f $LAZYGIT_CONFIG ]]; then
-	echo "Lantern Lazygit configuration is missing: $LAZYGIT_CONFIG" >&2
-	exit 1
-fi
-
-if [[ ! -x $DAEMON_BIN || ! -x $PANE_BIN || ! -x $SUBMIT_BIN ]]; then
+if [[ ! -x $DAEMON_BIN || ! -x $PANE_BIN || ! -x $SUBMIT_BIN || ! -x $GIT_BIN ]]; then
 	echo "Lantern runtime is not built." >&2
 	echo "Run: cargo build --release --locked --manifest-path '$ROOT/Cargo.toml'" >&2
 	exit 1
@@ -110,8 +99,7 @@ editor_command=(env
 	"LANTERN_SELECTION_PATH=$selection_path"
 	"LANTERN_CONTROL_SOCKET=$control_socket"
 	"LANTERN_SUBMIT_BIN=$SUBMIT_BIN"
-	"LANTERN_LAZYGIT_BIN=$LAZYGIT_BIN"
-	"LANTERN_LAZYGIT_CONFIG=$LAZYGIT_CONFIG"
+	"LANTERN_GIT_BIN=$GIT_BIN"
 	"$HELIX_BIN"
 	.)
 printf -v editor_shell '%q ' "${editor_command[@]}"
@@ -130,8 +118,7 @@ agent_command=(env
 	"LANTERN_REPO=$repo"
 	"LANTERN_SELECTION_PATH=$selection_path"
 	"LANTERN_CONTROL_SOCKET=$control_socket"
-	"LANTERN_LAZYGIT_BIN=$LAZYGIT_BIN"
-	"LANTERN_LAZYGIT_CONFIG=$LAZYGIT_CONFIG"
+	"LANTERN_GIT_BIN=$GIT_BIN"
 	"LANTERN_DAEMON_BIN=$DAEMON_BIN"
 	"LANTERN_PI_BIN=$PI_BIN"
 	"LANTERN_PI_MODEL=${LANTERN_PI_MODEL:-gpt-5.4}"

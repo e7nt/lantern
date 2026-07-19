@@ -1,14 +1,14 @@
-# Focused Git rail spike
+# Lantern focused Git rail
 
-This isolated Rust crate tests the smallest Git command and renderer boundary
-proposed by ADR 005. Its only runtime dependency is the same pinned Crossterm
-version used by Lantern's terminal, and it does not replace Lazygit.
+This maintained Rust application implements the bounded Git command and
+renderer boundary promoted by ADR 006. Its only runtime dependency is the same
+pinned Crossterm version used by Lantern's terminal.
 
 ```bash
-cargo fmt --manifest-path spikes/git-rail/Cargo.toml --check
-cargo test --manifest-path spikes/git-rail/Cargo.toml
-cargo clippy --manifest-path spikes/git-rail/Cargo.toml --all-targets -- -D warnings
-cargo build --release --manifest-path spikes/git-rail/Cargo.toml
+cargo fmt --manifest-path apps/git-rail/Cargo.toml --check
+cargo test --manifest-path apps/git-rail/Cargo.toml
+cargo clippy --manifest-path apps/git-rail/Cargo.toml --all-targets -- -D warnings
+cargo build --release --manifest-path apps/git-rail/Cargo.toml
 node scripts/benchmark-git-surfaces.mjs
 ```
 
@@ -43,14 +43,13 @@ reset, stash, rebase, amend, or remote-administration action.
 Try the renderer from a repository in a separate terminal:
 
 ```bash
-cargo run --manifest-path /path/to/lantern/spikes/git-rail/Cargo.toml
+cargo run --manifest-path /path/to/lantern/apps/git-rail/Cargo.toml
 ```
 
-The renderer is deliberately not production-ready or wired to `/git`. Its
-functional scope is complete. Commands now have bounded output, typed private
+The renderer is wired to `/git`. Its functional scope is intentionally closed.
+Commands have bounded output, typed private
 errors, noninteractive credentials, and local/network deadlines; fetch and
 fast-forward pull remain responsive and support `Esc` cancellation. One
 coalesced background scan detects external edits while preserving the selected
-path and hunk. Accessibility and performance promotion gates pass. The next
-checkpoint must wire this rail to `/git` and remove the pinned Lazygit path
-together; no permanent fallback remains.
+path and hunk. Accessibility and performance promotion gates pass, and no
+parallel Git fallback is maintained.

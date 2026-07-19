@@ -6,7 +6,7 @@
   [CURRENT_STATE.md](CURRENT_STATE.md)
 - **Target:** Open-source-quality `v0.1`
 - **Primary user:** One experienced developer onboarding into unfamiliar code
-- **Initial frontend:** Pinned Helix, a narrow Lazygit rail, and a full-width
+- **Initial frontend:** Pinned Helix, a narrow focused Git rail, and a full-width
   terminal agent pane
 - **Core runtime:** Local editor-independent daemon
 - **Reference ecosystems:** TypeScript and Rust
@@ -49,7 +49,8 @@ local by default.
 ## Planning assumptions
 
 - One experienced engineer is working full-time with AI-assisted development.
-- Helix and Lazygit revisions and every Lantern patch are pinned and auditable.
+- Helix and every Lantern patch are pinned and auditable; the focused Git rail
+  is built from this workspace.
 - Linux is release-blocking for `v0.1`; macOS is validated before the public
   release gate. Windows is deferred while the tmux composition is primary.
 - TypeScript and Rust fixtures receive full end-to-end coverage.

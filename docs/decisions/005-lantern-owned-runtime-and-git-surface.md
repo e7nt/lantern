@@ -4,6 +4,9 @@
 - **Date:** 2026-07-18
 - **Decision owner:** Lantern project
 
+The Git-rail branch of this proposal was promoted by accepted ADR 006 on
+2026-07-19. The agent-runtime branch remains a separate decision.
+
 ## Context
 
 ADR 004 retained Pi until it failed a measured requirement. Guided Build now

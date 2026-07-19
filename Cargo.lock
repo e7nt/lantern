@@ -73,6 +73,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "lantern-git-rail"
+version = "0.1.0"
+dependencies = [
+ "crossterm",
+]
+
+[[package]]
 name = "lantern-protocol"
 version = "0.1.0"
 dependencies = [

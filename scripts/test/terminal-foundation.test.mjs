@@ -80,20 +80,17 @@ test('navigation rejects a repository escape before contacting tmux', async () =
 	assert.match(result.stderr, /outside the repository/);
 });
 
-test('Lazygit is constrained to a 10 percent rail above the agent', async () => {
+test('focused Git is constrained to a 10 percent rail above the agent', async () => {
 	const context = await fixture();
-	const lazygit = path.join(context.directory, 'lazygit');
-	const lazygitConfig = path.join(context.directory, 'lazygit.yml');
-	await writeFile(lazygit, '#!/bin/sh\nexit 0\n');
-	await writeFile(lazygitConfig, 'gui:\n  mouseEvents: true\n');
-	await chmod(lazygit, 0o755);
+	const gitRail = path.join(context.directory, 'lantern-git-rail');
+	await writeFile(gitRail, '#!/bin/sh\nexit 0\n');
+	await chmod(gitRail, 0o755);
 
-	const result = spawnSync(path.join(frontendBin, 'lantern-lazygit'), [], {
+	const result = spawnSync(path.join(frontendBin, 'lantern-git'), [], {
 		encoding: 'utf8',
 		env: {
 			...environment(context),
-			LANTERN_LAZYGIT_BIN: lazygit,
-			LANTERN_LAZYGIT_CONFIG: lazygitConfig
+			LANTERN_GIT_BIN: gitRail
 		}
 	});
 
@@ -101,23 +98,20 @@ test('Lazygit is constrained to a 10 percent rail above the agent', async () => 
 	const calls = await readFile(context.tmuxLog, 'utf8');
 	assert.match(calls, /display-popup -E -w 10% -h 80% -x 0 -y 0/);
 	assert.ok(calls.includes(context.repository));
-	assert.ok(calls.includes(`--use-config-file ${lazygitConfig}`));
+	assert.ok(calls.includes(gitRail));
 });
 
-test('Lazygit rejects a terminal too narrow for the 10 percent rail', async () => {
+test('focused Git rejects a terminal too narrow for the 10 percent rail', async () => {
 	const context = await fixture();
-	const lazygit = path.join(context.directory, 'lazygit');
-	const lazygitConfig = path.join(context.directory, 'lazygit.yml');
-	await writeFile(lazygit, '#!/bin/sh\nexit 0\n');
-	await writeFile(lazygitConfig, 'gui:\n  mouseEvents: true\n');
-	await chmod(lazygit, 0o755);
+	const gitRail = path.join(context.directory, 'lantern-git-rail');
+	await writeFile(gitRail, '#!/bin/sh\nexit 0\n');
+	await chmod(gitRail, 0o755);
 
-	const result = spawnSync(path.join(frontendBin, 'lantern-lazygit'), [], {
+	const result = spawnSync(path.join(frontendBin, 'lantern-git'), [], {
 		encoding: 'utf8',
 		env: {
 			...environment(context),
-			LANTERN_LAZYGIT_BIN: lazygit,
-			LANTERN_LAZYGIT_CONFIG: lazygitConfig,
+			LANTERN_GIT_BIN: gitRail,
 			TMUX_CLIENT_WIDTH: '119'
 		}
 	});
@@ -191,8 +185,8 @@ test('terminal surfaces declare one mouse-enabled interaction contract', async (
 		path.join(root, 'frontend/helix/config/helix/config.toml'),
 		'utf8'
 	);
-	const lazygitConfig = await readFile(
-		path.join(root, 'frontend/helix/config/lazygit/config.yml'),
+	const gitRail = await readFile(
+		path.join(root, 'apps/git-rail/src/main.rs'),
 		'utf8'
 	);
 	const launcher = await readFile(path.join(root, 'scripts/launch-lantern.sh'), 'utf8');
@@ -201,9 +195,9 @@ test('terminal surfaces declare one mouse-enabled interaction contract', async (
 	assert.match(helixConfig, /theme = "lantern"/);
 	assert.match(helixConfig, /C-a = \[":lantern-export-symbol-context", ":run-shell-command lantern-agent-composer"\]/);
 	assert.match(helixConfig, /F2 = ":run-shell-command lantern-toggle-agent"/);
-	assert.match(lazygitConfig, /mouseEvents: true/);
-	assert.match(lazygitConfig, /activeBorderColor:\s+[^#]*"#C7B8E0"/s);
-	assert.match(lazygitConfig, /selectedLineBgColor:\s+[^#]*"#47345E"/s);
+	assert.match(gitRail, /EnableMouseCapture/);
+	assert.match(gitRail, /"conflict"/);
+	assert.match(gitRail, /"modified"/);
 	assert.match(launcher, /set-option -t "\$session" mouse on/);
 	assert.match(launcher, /set-option -t "\$session" status off/);
 	assert.match(launcher, /pane-border-status off/);
