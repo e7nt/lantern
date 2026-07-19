@@ -1,9 +1,10 @@
 use lantern_diagnostics::{Code as DiagnosticCode, Component, Level, Record, emit as diagnose};
 use lantern_protocol::{
-    ChangeProposal, Event, Evidence, EvidenceSource, FrameError, GroundingState, MAX_EVENT_BYTES,
-    MAX_EVIDENCE, MAX_FILE_BYTES, MAX_FILES, MAX_QUESTION_BYTES, MAX_SELECTION_BYTES,
-    PROTOCOL_VERSION, Request, SelectionContext, SymbolContext, SymbolLocation, WorkbenchTool,
-    read_frame, validate_relative_path, validate_selection, validate_symbol_context,
+    AgentIntent, ChangeProposal, Event, Evidence, EvidenceSource, FrameError, GroundingState,
+    MAX_EVENT_BYTES, MAX_EVIDENCE, MAX_FILE_BYTES, MAX_FILES, MAX_QUESTION_BYTES,
+    MAX_SELECTION_BYTES, PROTOCOL_VERSION, Request, SelectionContext, SymbolContext,
+    SymbolLocation, WorkbenchTool, read_frame, validate_relative_path, validate_selection,
+    validate_symbol_context,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -70,14 +71,14 @@ struct PiDriver {
 #[derive(Clone, Copy)]
 enum PiProfile {
     Coding,
-    Investigation,
+    ReadOnly,
 }
 
 impl PiProfile {
     const fn tools(self) -> &'static str {
         match self {
             Self::Coding => "read,grep,find,ls,edit,write,bash",
-            Self::Investigation => "read,grep,find,ls",
+            Self::ReadOnly => "read,grep,find,ls",
         }
     }
 
@@ -86,8 +87,8 @@ impl PiProfile {
             Self::Coding => {
                 "You are Lantern's coding agent inside a trusted repository. Help the developer understand and write code. Lantern may supply source already resolved and inspected by Helix/LSP. When that evidence fully answers the question, answer immediately without tools; search only for a specific missing fact. Otherwise inspect before making claims and use the fewest useful tool calls: do not repeat equivalent discovery, and prefer a targeted read or search over broad exploration. Make focused edits, run the narrowest useful verification, and use Git deliberately. Lantern already shows tool activity, so do not narrate routine tool steps. After the work, give one concise result with verification and any real caveat. Never expose credentials or unrelated private data."
             }
-            Self::Investigation => {
-                "You are Lantern's read-only feature investigator inside a trusted repository. Inspect before making claims and use the fewest useful read-only tools. Never propose that work is ready while a material product or repository unknown remains. Separate observed facts from inferences. Do not edit files, run commands, or claim implementation or verification occurred. Never expose credentials or unrelated private data."
+            Self::ReadOnly => {
+                "You are Lantern's read-only coding collaborator inside a trusted repository. Help the developer understand, investigate, and plan from inspected evidence. Use the fewest useful read-only tools. Separate observed facts from inferences, never imply that implementation or verification occurred, and never expose credentials or unrelated private data."
             }
         }
     }
@@ -923,12 +924,6 @@ enum AgentContext {
     Symbol(SymbolContext),
 }
 
-#[derive(Clone, Copy)]
-enum AgentMode {
-    Coding,
-    Investigation,
-}
-
 struct PiOperation {
     id: u64,
     driver: Arc<PiDriver>,
@@ -937,7 +932,7 @@ struct PiOperation {
     cancellation: Arc<Cancellation>,
     operations: Operations,
     writer: SharedWriter,
-    mode: AgentMode,
+    intent: AgentIntent,
     investigation_capture: Option<Arc<Mutex<Option<String>>>>,
 }
 
@@ -950,7 +945,7 @@ fn run_pi_operation(operation: PiOperation) {
         cancellation,
         operations,
         writer,
-        mode,
+        intent,
         investigation_capture,
     } = operation;
     let (selection, symbol_context, repository_semantic) = match agent_context {
@@ -1158,10 +1153,16 @@ fn run_pi_operation(operation: PiOperation) {
                 symbol_prompt,
             ),
         );
-        let request = match mode {
-            AgentMode::Coding => format!("Developer question: {query}"),
-            AgentMode::Investigation => format!(
+        let request = match intent {
+            AgentIntent::Implement => format!("Developer implementation request: {query}"),
+            AgentIntent::Understand => format!(
+                "Developer question: {query}\n\nExplain naturally and concisely from inspected evidence. Do not change files."
+            ),
+            AgentIntent::Investigate => format!(
                 "Feature objective: {query}\n\nReturn a concise readiness brief with exactly these headings: Goal, Observed, Affected flow, Likely changes, Open questions, Acceptance criteria, Exclusions, Risks, Readiness. Under Observed, state only facts supported by inspected repository evidence and cite repository-relative paths with line numbers. Put uncertain conclusions under Open questions or label them as inferences. Readiness must be either Ready or Blocked with a concrete reason. Do not implement anything."
+            ),
+            AgentIntent::Plan => format!(
+                "Planning request: {query}\n\nPropose a concise implementation plan in the conversation. Include Objective, Acceptance criteria, Exclusions, Decisions, Tasks, Risks and unknowns, and Verification. Ground it in inspected repository evidence. Do not edit or create files; the developer must explicitly approve a future durable plan artifact."
             ),
         };
         let prompt = format!("{editor_context}\n\n{request}");
@@ -1278,7 +1279,7 @@ fn run_pi_operation(operation: PiOperation) {
                             },
                         )
                         .map_err(|cause| format!("cannot stream tool result: {cause}"))?;
-                        if matches!(mode, AgentMode::Investigation)
+                        if intent != AgentIntent::Implement
                             && success
                             && tool == WorkbenchTool::Read
                             && let Some(relative_path) = relative_path
@@ -1404,6 +1405,7 @@ fn persistent_pi(
     repository: &Path,
     writer: &SharedWriter,
     id: u64,
+    profile: PiProfile,
 ) -> Option<Arc<PiDriver>> {
     if let Some(driver) = current {
         if driver.root == repository {
@@ -1417,7 +1419,7 @@ fn persistent_pi(
         );
         return None;
     }
-    match PiDriver::spawn(repository.to_owned(), PiProfile::Coding) {
+    match PiDriver::spawn(repository.to_owned(), profile) {
         Ok(driver) => {
             let driver = Arc::new(driver);
             *current = Some(driver.clone());
@@ -1463,6 +1465,7 @@ fn main() -> io::Result<()> {
     let mut initialized = false;
     let mut workbench = None;
     let mut pi_driver: Option<Arc<PiDriver>> = None;
+    let mut read_only_pi_driver: Option<Arc<PiDriver>> = None;
     let mut semantic_driver: Option<Arc<SemanticDriver>> = None;
     let last_investigation = Arc::new(Mutex::new(None));
 
@@ -1548,6 +1551,11 @@ fn main() -> io::Result<()> {
                 };
                 if workbench.as_ref().is_some_and(|current| current != &root)
                     && let Some(driver) = pi_driver.take()
+                {
+                    driver.stop();
+                }
+                if workbench.as_ref().is_some_and(|current| current != &root)
+                    && let Some(driver) = read_only_pi_driver.take()
                 {
                     driver.stop();
                 }
@@ -1660,6 +1668,7 @@ fn main() -> io::Result<()> {
                 repository,
                 query,
                 selection,
+                intent,
             } => {
                 if query.trim().is_empty() {
                     error(
@@ -1686,11 +1695,27 @@ fn main() -> io::Result<()> {
                 let Some(cancellation) = admit(id, &operations, &writer) else {
                     continue;
                 };
-                let Some(driver) = persistent_pi(&mut pi_driver, &repository, &writer, id) else {
+                let (slot, profile) = if intent == AgentIntent::Implement {
+                    (&mut pi_driver, PiProfile::Coding)
+                } else {
+                    (&mut read_only_pi_driver, PiProfile::ReadOnly)
+                };
+                let Some(driver) = persistent_pi(slot, &repository, &writer, id, profile) else {
                     settle(id, &operations, &writer);
                     continue;
                 };
-                let query = with_investigation_context(query, &last_investigation);
+                let query = if intent == AgentIntent::Implement {
+                    with_investigation_context(query, &last_investigation)
+                } else {
+                    query
+                };
+                let capture =
+                    matches!(intent, AgentIntent::Investigate | AgentIntent::Plan).then(|| {
+                        *last_investigation
+                            .lock()
+                            .expect("investigation context lock") = None;
+                        last_investigation.clone()
+                    });
                 let operation_writer = writer.clone();
                 let active_operations = operations.clone();
                 workers.push(thread::spawn(move || {
@@ -1702,72 +1727,8 @@ fn main() -> io::Result<()> {
                         cancellation,
                         operations: active_operations,
                         writer: operation_writer,
-                        mode: AgentMode::Coding,
-                        investigation_capture: None,
-                    });
-                }));
-            }
-            Request::InvestigateAgent {
-                id,
-                repository,
-                objective,
-            } => {
-                if objective.trim().is_empty() {
-                    error(
-                        &writer,
-                        Some(id),
-                        "investigation objective is empty",
-                        "enter `/investigate <feature objective>`",
-                    );
-                    continue;
-                }
-                let Some(repository) = opened_repository(&workbench, &repository, &writer, id)
-                else {
-                    continue;
-                };
-                let Some(cancellation) = admit(id, &operations, &writer) else {
-                    continue;
-                };
-                emit(
-                    &writer,
-                    &Event::GroundingState {
-                        id,
-                        state: GroundingState::RepositorySearchOnly,
-                    },
-                )?;
-                let driver = match PiDriver::spawn(repository.clone(), PiProfile::Investigation) {
-                    Ok(driver) => Arc::new(driver),
-                    Err(message) => {
-                        error(
-                            &writer,
-                            Some(id),
-                            message,
-                            "run Pi interactively to inspect provider status, then retry the investigation",
-                        );
-                        settle(id, &operations, &writer);
-                        continue;
-                    }
-                };
-                *last_investigation
-                    .lock()
-                    .expect("investigation context lock") = None;
-                let capture = last_investigation.clone();
-                let operation_writer = writer.clone();
-                let active_operations = operations.clone();
-                workers.push(thread::spawn(move || {
-                    run_pi_operation(PiOperation {
-                        id,
-                        driver,
-                        query: objective,
-                        context: AgentContext::Repository {
-                            semantic_state: "unavailable".into(),
-                            semantic: Vec::new(),
-                        },
-                        cancellation,
-                        operations: active_operations,
-                        writer: operation_writer,
-                        mode: AgentMode::Investigation,
-                        investigation_capture: Some(capture),
+                        intent,
+                        investigation_capture: capture,
                     });
                 }));
             }
@@ -1775,6 +1736,7 @@ fn main() -> io::Result<()> {
                 id,
                 repository,
                 query,
+                intent,
             } => {
                 if query.trim().is_empty() {
                     error(
@@ -1830,11 +1792,27 @@ fn main() -> io::Result<()> {
                 if let Some(state) = grounding_state {
                     emit(&writer, &Event::GroundingState { id, state })?;
                 }
-                let Some(driver) = persistent_pi(&mut pi_driver, &repository, &writer, id) else {
+                let (slot, profile) = if intent == AgentIntent::Implement {
+                    (&mut pi_driver, PiProfile::Coding)
+                } else {
+                    (&mut read_only_pi_driver, PiProfile::ReadOnly)
+                };
+                let Some(driver) = persistent_pi(slot, &repository, &writer, id, profile) else {
                     settle(id, &operations, &writer);
                     continue;
                 };
-                let query = with_investigation_context(query, &last_investigation);
+                let query = if intent == AgentIntent::Implement {
+                    with_investigation_context(query, &last_investigation)
+                } else {
+                    query
+                };
+                let capture =
+                    matches!(intent, AgentIntent::Investigate | AgentIntent::Plan).then(|| {
+                        *last_investigation
+                            .lock()
+                            .expect("investigation context lock") = None;
+                        last_investigation.clone()
+                    });
                 let operation_writer = writer.clone();
                 let active_operations = operations.clone();
                 workers.push(thread::spawn(move || {
@@ -1849,8 +1827,8 @@ fn main() -> io::Result<()> {
                         cancellation,
                         operations: active_operations,
                         writer: operation_writer,
-                        mode: AgentMode::Coding,
-                        investigation_capture: None,
+                        intent,
+                        investigation_capture: capture,
                     });
                 }));
             }
@@ -1859,6 +1837,7 @@ fn main() -> io::Result<()> {
                 repository,
                 query,
                 context,
+                intent,
             } => {
                 if query.trim().is_empty() {
                     error(
@@ -1885,11 +1864,27 @@ fn main() -> io::Result<()> {
                 let Some(cancellation) = admit(id, &operations, &writer) else {
                     continue;
                 };
-                let Some(driver) = persistent_pi(&mut pi_driver, &repository, &writer, id) else {
+                let (slot, profile) = if intent == AgentIntent::Implement {
+                    (&mut pi_driver, PiProfile::Coding)
+                } else {
+                    (&mut read_only_pi_driver, PiProfile::ReadOnly)
+                };
+                let Some(driver) = persistent_pi(slot, &repository, &writer, id, profile) else {
                     settle(id, &operations, &writer);
                     continue;
                 };
-                let query = with_investigation_context(query, &last_investigation);
+                let query = if intent == AgentIntent::Implement {
+                    with_investigation_context(query, &last_investigation)
+                } else {
+                    query
+                };
+                let capture =
+                    matches!(intent, AgentIntent::Investigate | AgentIntent::Plan).then(|| {
+                        *last_investigation
+                            .lock()
+                            .expect("investigation context lock") = None;
+                        last_investigation.clone()
+                    });
                 let operation_writer = writer.clone();
                 let active_operations = operations.clone();
                 workers.push(thread::spawn(move || {
@@ -1901,8 +1896,8 @@ fn main() -> io::Result<()> {
                         cancellation,
                         operations: active_operations,
                         writer: operation_writer,
-                        mode: AgentMode::Coding,
-                        investigation_capture: None,
+                        intent,
+                        investigation_capture: capture,
                     });
                 }));
             }
@@ -2013,6 +2008,9 @@ fn main() -> io::Result<()> {
         let _ = worker.join();
     }
     if let Some(driver) = pi_driver {
+        driver.stop();
+    }
+    if let Some(driver) = read_only_pi_driver {
         driver.stop();
     }
     if let Some(driver) = semantic_driver {

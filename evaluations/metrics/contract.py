@@ -108,6 +108,42 @@ class InvestigationBriefContractMetric(BaseMetric):
         return self.success
 
 
+class IntentRoutingContractMetric(BaseMetric):
+    """Checks one inferred turn intent against the versioned language contract."""
+
+    threshold = 1.0
+    evaluation_model = None
+    strict_mode = True
+    async_mode = False
+    verbose_mode = False
+    error = None
+
+    def __init__(self, expected: str) -> None:
+        self.expected = expected
+        self.score = 0.0
+        self.reason = "not measured"
+        self.success = False
+
+    @property
+    def __name__(self) -> str:
+        return "Intent routing contract"
+
+    def measure(self, test_case: LLMTestCase, *args, **kwargs) -> float:
+        actual = test_case.actual_output.strip().casefold()
+        self.success = actual == self.expected.casefold()
+        self.score = 1.0 if self.success else 0.0
+        self.reason = (
+            "intent matched" if self.success else f"expected {self.expected!r}, received {actual!r}"
+        )
+        return self.score
+
+    async def a_measure(self, test_case: LLMTestCase, *args, **kwargs) -> float:
+        return self.measure(test_case, *args, **kwargs)
+
+    def is_successful(self) -> bool:
+        return self.success
+
+
 class ToolJourneyContractMetric(BaseMetric):
     """Checks an agent trace for ordered intent and unnecessary mutations."""
 

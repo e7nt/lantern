@@ -102,12 +102,15 @@ instead of permanent chrome. The response area scrolls with the wheel and
 definition or exact-match locations are clickable. Hold `Shift` while dragging
 when the terminal emulator's native text selection is needed.
 
+Workflow intent is natural language, not a command palette. Questions and
+ambiguous requests stay read-only; “look into” produces a readiness brief,
+“turn this into a plan” proposes a plan without writing files, and clear
+language such as “implement,” “fix,” or “proceed” enables coding tools. The same
+rule applies when code or a Git hunk is selected.
+
 Diagnostic commands remain available:
 
 - `/git` opens Lantern's focused Git review rail.
-- `/investigate <feature objective>` performs a read-only repository
-  investigation and returns an evidence-linked Ready or Blocked brief without
-  changing files.
 - `/preview <one-line replacement>` shows a transient unified diff for the
   selected text; closing it leaves the repository unchanged.
 - `/show <literal text>` streams bounded local evidence and selects its exact

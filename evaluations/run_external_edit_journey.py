@@ -104,6 +104,7 @@ def symbol_request(repository: Path, operation_id: int, question: str, context: 
         "repository": str(repository),
         "query": question,
         "context": context,
+        "intent": "implement",
     }
 
 

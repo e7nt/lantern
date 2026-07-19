@@ -76,6 +76,7 @@ def main() -> int:
                     "id": 1,
                     "repository": str(repository),
                     "query": case["question"],
+                    "intent": "understand",
                 },
             )
             deadline = started + MAX_VISIBLE_STATE_MS / 1000

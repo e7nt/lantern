@@ -179,6 +179,7 @@ def run_isolated_mode(
             "id": 1,
             "repository": str(repository),
             "query": case["question"],
+            "intent": "understand",
         }
         if mode == "lsp":
             request["context"] = case["context"]

@@ -26,7 +26,7 @@ and tool vocabulary should not become user-facing ceremony.
   reading mode for the persistent agent pane.
 - Bounded, typed composer submission over a private session-local Unix socket;
   tmux owns presentation and focus but never transports questions.
-- Maintained Rust terminal, daemon, diagnostics, and Protocol v10 crates.
+- Maintained Rust terminal, daemon, diagnostics, and Protocol v11 crates.
 - Selection capture, exact navigation, bounded local literal search, and
   Helix-provided definition/reference context.
 - Bounded two-hop outgoing-call context from Helix's active language server,
@@ -40,8 +40,9 @@ and tool vocabulary should not become user-facing ceremony.
   authentication.
 - Repository-grounded Pi questions from the empty prompt; editor context is an
   optional accelerator and never a prerequisite for talking to the agent.
-- One lazily started Pi RPC process per workbench, with in-memory conversational
-  continuity across sequential and multi-step turns and no Pi session file.
+- Lazily started read-only and coding Pi RPC profiles per workbench, with
+  in-memory conversational continuity, explicit tool separation, and no Pi
+  session files.
 - Pi's pinned `read`, `grep`, `find`, `ls`, `edit`, `write`, and `bash` tools,
   launched inside the repository with typed activity in Lantern.
 - Successful edit/write activity opens the changed file in Helix; `Space-g` or
@@ -52,16 +53,16 @@ and tool vocabulary should not become user-facing ceremony.
 
 ## Current boundary
 
-Protocol v10 and the terminal open one trusted repository directly. The old
+Protocol v11 and the terminal open one trusted repository directly. The old
 policy engine, capability fields, and `/trust` commands have been removed. Pi
 runs its explicit built-in coding-tool allowlist in that repository. Raw tool
 arguments, command output, and provider stderr are not copied into Lantern's
 bounded UI protocol or diagnostics.
 
-The persistent Pi driver remains workbench-local and sequential. Cancellation
-uses RPC abort and preserves a healthy driver. A crashed or malformed driver is
-stopped and reported; Lantern does not silently restart it. Closing the daemon
-terminates and reaps Pi.
+Both persistent Pi profiles remain workbench-local and operations stay
+sequential. Cancellation uses RPC abort and preserves a healthy driver. A
+crashed or malformed driver is stopped and reported; Lantern does not silently
+restart it. Closing the daemon terminates and reaps both profiles.
 
 SQLite remains deferred by
 [ADR 002](decisions/002-defer-sqlite-until-needed.md). There is no durable
@@ -271,14 +272,15 @@ The rail remains the authority for current Git state and continues to show all
 repository changes. See the
 [agent-change review report](acceptance/2026-07-19-agent-change-review-handoff.md).
 
-`/investigate <feature objective>` runs one explicitly read-only Pi turn with
-only `read`, `grep`, `find`, and `ls`. It streams a concise readiness brief
-through the existing pane, separates observations from unknowns, requires an
-explicit Ready or Blocked result, and exposes inspected files as navigable
-investigation evidence. Its bounded brief is handed once to the warm coding
-session when the developer follows up, so “proceed” retains context without
-durable chat storage. It does not persist a plan or create another UI. See
-the [investigation report](acceptance/2026-07-19-read-only-feature-investigation.md).
+Natural-language turns are classified before tools are selected as understand,
+investigate, plan, or implement. Understand, investigate, plan, and ambiguous
+requests use one warm read-only Pi profile with only `read`, `grep`, `find`, and
+`ls`; only clear implementation language receives coding tools. Investigation
+streams the existing readiness brief, while planning proposes a grounded plan
+in conversation without creating files. A bounded investigation or planning
+brief is handed once to the coding session when the developer says “proceed.”
+The exposed `/investigate` command has been removed rather than retained as a
+fallback. See the [intent-routing report](acceptance/2026-07-19-natural-language-intent-routing.md).
 
 ## Not next
 

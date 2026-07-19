@@ -1,0 +1,12 @@
+{"method":"initialize","protocol_version":11}
+{"method":"open_workbench","repository":"/workspace/project"}
+{"method":"ask_agent","id":1,"repository":"/workspace/project","query":"Where is request admission implemented?","intent":"understand"}
+{"method":"ask_agent","id":2,"repository":"/workspace/project","query":"Look into per-workbench model selection without changing anything","intent":"investigate"}
+{"method":"ask_agent","id":3,"repository":"/workspace/project","query":"Turn this into a plan","intent":"plan"}
+{"method":"ask_agent","id":4,"repository":"/workspace/project","query":"Proceed with the first task","intent":"implement"}
+{"method":"ask","id":5,"repository":"/workspace/project","query":"AgentDriver"}
+{"method":"ask_selection","id":6,"repository":"/workspace/project","query":"What does this do?","selection":{"relative_path":"src/lib.rs","language":"rust","start_line":4,"start_column":1,"end_line":4,"end_column":13,"text":"fn answer()","document_modified":false}}
+{"method":"ask_agent_selection","id":7,"repository":"/workspace/project","query":"Explain this boundary","selection":{"relative_path":"src/lib.rs","language":"rust","start_line":4,"start_column":1,"end_line":4,"end_column":13,"text":"fn answer()","document_modified":false},"intent":"understand"}
+{"method":"ask_agent_symbol","id":8,"repository":"/workspace/project","query":"Where does this call lead?","context":{"selection":{"relative_path":"src/main.rs","language":"rust","start_line":8,"start_column":5,"end_line":8,"end_column":11,"text":"answer","document_modified":false},"definition":{"relative_path":"src/lib.rs","start_line":4,"start_column":4,"end_line":4,"end_column":10},"references":[],"calls":[]},"intent":"understand"}
+{"method":"cancel","id":8}
+{"method":"shutdown"}
