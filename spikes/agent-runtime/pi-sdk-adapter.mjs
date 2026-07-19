@@ -91,7 +91,7 @@ function piPackageRoot() {
 	return dirname(dirname(realpathSync(binary)));
 }
 
-export async function createPiSdkAdapter({ cwd, tools = ['read'], systemPrompt }) {
+export async function createPiSdkAdapter({ cwd, tools = ['read'], systemPrompt, model: requestedModel }) {
 	const version = execFileSync('pi', ['--version'], { encoding: 'utf8' }).trim();
 	if (version !== EXPECTED_PI_VERSION) {
 		throw new Error(`Pi ${EXPECTED_PI_VERSION} is required; found ${version}`);
@@ -106,9 +106,27 @@ export async function createPiSdkAdapter({ cwd, tools = ['read'], systemPrompt }
 		systemPromptOverride: () => systemPrompt,
 	});
 	await resourceLoader.reload();
+	let modelRegistry;
+	let model;
+	if (requestedModel) {
+		const agentDir = sdk.getAgentDir();
+		const authStorage = sdk.AuthStorage.create(join(agentDir, 'auth.json'));
+		modelRegistry = sdk.ModelRegistry.create(authStorage, join(agentDir, 'models.json'));
+		const resolved = sdk.resolveCliModel({
+			cliProvider: requestedModel.provider,
+			cliModel: requestedModel.id,
+			modelRegistry,
+		});
+		if (!resolved.model) {
+			throw new Error(resolved.error ?? `Pi model ${requestedModel.provider}/${requestedModel.id} is unavailable`);
+		}
+		model = resolved.model;
+	}
 	const { session } = await sdk.createAgentSession({
 		cwd,
 		tools,
+		model,
+		modelRegistry,
 		thinkingLevel: 'off',
 		resourceLoader,
 		sessionManager: sdk.SessionManager.inMemory(cwd),
@@ -117,5 +135,9 @@ export async function createPiSdkAdapter({ cwd, tools = ['read'], systemPrompt }
 			retry: { enabled: false },
 		}),
 	});
-	return { adapter: new PiSdkAdapter(session), version };
+	return {
+		adapter: new PiSdkAdapter(session),
+		version,
+		model: session.model ? { provider: session.model.provider, id: session.model.id } : undefined,
+	};
 }
