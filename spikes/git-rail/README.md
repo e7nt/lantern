@@ -16,14 +16,20 @@ recent history, conflict visibility, and detached HEAD. Every path operation is
 bound to the exact canonical workbench root and rejects traversal.
 
 The first 10% renderer shows the active branch and one compact, conflict-first
-list using `!`, `+`, `~`, and `?` markers. Arrow keys or `j`/`k` and the mouse
-select a path; Enter or `d` opens its bounded staged, unstaged, or untracked
-diff; and Space stages or unstages the selected file. In diff view, `j`/`k`
+list using readable `conflict`, `staged`, `modified`, and `untracked` states.
+The focused row has a textual `>` marker, so neither state nor focus depends on
+color. Arrow keys or `j`/`k` and the mouse select a path; Enter or `d` opens its
+bounded staged, unstaged, or untracked diff; and Space stages or unstages the
+selected file. In diff view, `j`/`k`
 moves between independently applicable hunks, Page Up/Down or the mouse wheel
 scrolls a tall hunk, Space stages or unstages only that hunk, and Enter opens
 its changed-line range in the existing Helix process. Conflicts open directly
 in Helix. `r` refreshes and `q` exits. A file with both staged and unstaged
 changes intentionally has two independently reviewable rows.
+
+Press `?` for shortcuts specific to the current view. Long paths retain their
+filename in narrow rails. With the mouse, left click selects and reviews, right
+click stages or unstages, middle click opens in Helix, and the wheel scrolls.
 
 Press `a` for the temporary action overlay: commit the staged set, create or
 switch a local branch, fetch, fast-forward pull, or inspect twenty recent
@@ -43,5 +49,6 @@ functional scope is complete. Commands now have bounded output, typed private
 errors, noninteractive credentials, and local/network deadlines; fetch and
 fast-forward pull remain responsive and support `Esc` cancellation. One
 coalesced background scan detects external edits while preserving the selected
-path and hunk. Accessibility checks and a performance comparison remain.
+path and hunk. The accessibility and interaction-quality gate passes; only the
+performance comparison remains.
 Failure of those promotion gates deletes this crate and retains pinned Lazygit.
