@@ -18,8 +18,8 @@ use lantern_protocol::{
     AgentGitFocus, BoundedTail, ChangeProposal, ControlRequest, Event, Evidence, EvidenceSource,
     GitReviewContext, GroundingState, MAX_AGENT_TOUCHED_PATHS, MAX_DIAGNOSTIC_BYTES,
     MAX_QUESTION_BYTES, MAX_SELECTION_BYTES, PROTOCOL_VERSION, Request, SelectionContext,
-    SymbolContext, SymbolContextExport, read_frame, search_term, validate_agent_git_focus,
-    validate_git_review,
+    SymbolContext, SymbolContextExport, infer_agent_intent, read_frame, search_term,
+    validate_agent_git_focus, validate_git_review,
 };
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -929,6 +929,7 @@ fn start_agent_question(
     daemon_stdin: &Arc<Mutex<BufWriter<ChildStdin>>>,
     query: &str,
 ) -> io::Result<()> {
+    let intent = infer_agent_intent(query);
     let query = query.trim();
     if query.is_empty() {
         state.line("Type a question about the selection, then press Enter.");
@@ -961,6 +962,7 @@ fn start_agent_question(
                 repository: repository.to_owned(),
                 query: query.to_owned(),
                 selection,
+                intent,
             },
         )?;
     } else {
@@ -973,6 +975,7 @@ fn start_agent_question(
                         repository: repository.to_owned(),
                         query: query.to_owned(),
                         context,
+                        intent,
                     },
                 )?;
             }
@@ -982,6 +985,7 @@ fn start_agent_question(
                     id,
                     repository: repository.to_owned(),
                     query: query.to_owned(),
+                    intent,
                 },
             )?,
         }
@@ -1147,26 +1151,7 @@ fn handle_line(
         state.line(message);
         return Ok(false);
     }
-    if let Some(objective) = line.strip_prefix("/investigate ") {
-        let objective = objective.trim();
-        if objective.is_empty() {
-            state.line("Enter `/investigate <feature objective>`.");
-            return Ok(false);
-        }
-        let Some(id) = state.begin_operation() else {
-            return Ok(false);
-        };
-        send_request(
-            daemon_stdin,
-            &Request::InvestigateAgent {
-                id,
-                repository: repository.to_owned(),
-                objective: objective.to_owned(),
-            },
-        )?;
-    } else if line == "/investigate" {
-        state.line("Enter `/investigate <feature objective>`.");
-    } else if let Some(replacement) = line.strip_prefix("/preview ") {
+    if let Some(replacement) = line.strip_prefix("/preview ") {
         match selection_for_question(state, selection_path) {
             Ok(selection) => {
                 let Some(id) = state.begin_operation() else {

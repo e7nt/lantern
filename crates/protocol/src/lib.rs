@@ -3,7 +3,7 @@ use std::fmt;
 use std::io::{self, BufRead};
 use std::path::{Component, Path, PathBuf};
 
-pub const PROTOCOL_VERSION: u32 = 10;
+pub const PROTOCOL_VERSION: u32 = 11;
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const MAX_EVENT_BYTES: usize = 256 * 1024;
 pub const MAX_DIAGNOSTIC_BYTES: usize = 8 * 1024;
@@ -126,6 +126,107 @@ pub struct SymbolContext {
     pub calls: Vec<SymbolCall>,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentIntent {
+    Understand,
+    Investigate,
+    Plan,
+    Implement,
+}
+
+pub fn infer_agent_intent(query: &str) -> AgentIntent {
+    let query = query.trim().to_lowercase();
+    let contains_any = |terms: &[&str]| terms.iter().any(|term| query.contains(term));
+    let read_only = contains_any(&[
+        "don't change",
+        "do not change",
+        "don't edit",
+        "do not edit",
+        "don't implement",
+        "do not implement",
+        "don't add",
+        "do not add",
+        "don't remove",
+        "do not remove",
+        "don't write",
+        "do not write",
+        "without changing",
+        "without editing",
+        "without modifying",
+        "read-only",
+        "read only",
+    ]);
+    let exploratory = contains_any(&[
+        "investigate",
+        "look into",
+        "assess",
+        "evaluate",
+        "explore",
+        "can we ",
+        "could we ",
+        "should we ",
+        "is it possible",
+        "how would",
+        "what would",
+        "would it ",
+        "do you think",
+    ]);
+    let informational = contains_any(&[
+        "explain",
+        "where ",
+        "where is",
+        "what is",
+        "what does",
+        "how does",
+        "why ",
+        "why does",
+        "show me",
+    ]);
+    if informational && !exploratory {
+        return AgentIntent::Understand;
+    }
+    if read_only || exploratory {
+        return AgentIntent::Investigate;
+    }
+    if contains_any(&[
+        "turn this into a plan",
+        "make a plan",
+        "create a plan",
+        "write a plan",
+        "plan this",
+        "implementation plan",
+        "roadmap",
+        "break this down",
+        "we should ",
+    ]) {
+        return AgentIntent::Plan;
+    }
+    if contains_any(&[
+        "proceed",
+        "implement",
+        "fix ",
+        "change ",
+        "add ",
+        "remove ",
+        "update ",
+        "refactor ",
+        "create ",
+        "write ",
+        "make ",
+        "apply ",
+        "rename ",
+        "move ",
+        "replace ",
+        "go ahead",
+        "do it",
+        "let's do",
+    ]) {
+        return AgentIntent::Implement;
+    }
+    AgentIntent::Understand
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SymbolContextExport {
@@ -184,22 +285,20 @@ pub enum Request {
         repository: PathBuf,
         query: String,
         selection: SelectionContext,
+        intent: AgentIntent,
     },
     AskAgent {
         id: u64,
         repository: PathBuf,
         query: String,
-    },
-    InvestigateAgent {
-        id: u64,
-        repository: PathBuf,
-        objective: String,
+        intent: AgentIntent,
     },
     AskAgentSymbol {
         id: u64,
         repository: PathBuf,
         query: String,
         context: SymbolContext,
+        intent: AgentIntent,
     },
     PreviewSelection {
         id: u64,
@@ -804,6 +903,59 @@ mod tests {
             relative_paths: vec!["x".repeat(MAX_AGENT_GIT_FOCUS_BYTES + 1).into()],
         };
         assert!(validate_agent_git_focus(&oversized).is_err());
+    }
+
+    #[test]
+    fn natural_language_intent_defaults_to_read_only_and_respects_negation() {
+        for query in [
+            "What does this parser do?",
+            "Where is add_request implemented?",
+            "Explain this selection without changing it",
+            "Tell me about the repository",
+        ] {
+            assert_eq!(
+                infer_agent_intent(query),
+                AgentIntent::Understand,
+                "{query}"
+            );
+        }
+        for query in [
+            "Look into adding authentication; don't implement it yet",
+            "Can we support multiple workbench folders?",
+            "Should we add a cache here?",
+            "Assess whether this change is safe",
+        ] {
+            assert_eq!(
+                infer_agent_intent(query),
+                AgentIntent::Investigate,
+                "{query}"
+            );
+        }
+        assert_eq!(
+            infer_agent_intent("Turn this into a plan"),
+            AgentIntent::Plan
+        );
+        assert_eq!(
+            infer_agent_intent("We should preserve this decision"),
+            AgentIntent::Plan
+        );
+        for query in [
+            "Proceed with the first task",
+            "Implement the accepted plan",
+            "Fix the failing parser test",
+            "Go ahead and apply the change",
+        ] {
+            assert_eq!(infer_agent_intent(query), AgentIntent::Implement, "{query}");
+        }
+    }
+
+    #[test]
+    fn agent_turns_require_one_known_intent() {
+        let missing =
+            r#"{"method":"ask_agent","id":1,"repository":"/repo","query":"Explain this"}"#;
+        assert!(serde_json::from_str::<Request>(missing).is_err());
+        let unknown = r#"{"method":"ask_agent","id":1,"repository":"/repo","query":"Explain this","intent":"auto"}"#;
+        assert!(serde_json::from_str::<Request>(unknown).is_err());
     }
 
     #[test]

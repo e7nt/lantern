@@ -1,7 +1,8 @@
 use lantern_diagnostics::{Code as DiagnosticCode, Record as DiagnosticRecord};
 use lantern_protocol::{
-    Event, Evidence, EvidenceSource, GroundingState, MAX_FILES, MAX_FRAME_BYTES, PROTOCOL_VERSION,
-    Request, SelectionContext, SymbolCall, SymbolContext, SymbolLocation, WorkbenchTool,
+    AgentIntent, Event, Evidence, EvidenceSource, GroundingState, MAX_FILES, MAX_FRAME_BYTES,
+    PROTOCOL_VERSION, Request, SelectionContext, SymbolCall, SymbolContext, SymbolLocation,
+    WorkbenchTool,
 };
 use std::fs;
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
@@ -101,11 +102,11 @@ impl Daemon {
 }
 
 #[test]
-fn golden_wire_fixtures_match_the_v10_types() {
-    for line in include_str!("../../../protocol/v10/requests.jsonl").lines() {
+fn golden_wire_fixtures_match_the_v11_types() {
+    for line in include_str!("../../../protocol/v11/requests.jsonl").lines() {
         serde_json::from_str::<Request>(line).expect("golden request must deserialize");
     }
-    for line in include_str!("../../../protocol/v10/events.jsonl").lines() {
+    for line in include_str!("../../../protocol/v11/events.jsonl").lines() {
         serde_json::from_str::<Event>(line).expect("golden event must deserialize");
     }
 }
@@ -730,6 +731,7 @@ fn reuses_one_pi_process_for_sequential_agent_turns() {
             id,
             repository: root.clone(),
             query: query.into(),
+            intent: AgentIntent::Implement,
         });
         let mut answer = String::new();
         loop {
@@ -779,6 +781,7 @@ fn reuses_the_pi_process_after_cancelling_a_turn() {
         id: 72,
         repository: root.clone(),
         query: "start inspection".into(),
+        intent: AgentIntent::Implement,
     });
     while !matches!(daemon.next(), Event::ToolStarted { id: 72, .. }) {}
     daemon.send(&Request::Cancel { id: 72 });
@@ -788,6 +791,7 @@ fn reuses_the_pi_process_after_cancelling_a_turn() {
         id: 73,
         repository: root.clone(),
         query: "continue safely".into(),
+        intent: AgentIntent::Implement,
     });
     let mut answer = String::new();
     loop {
@@ -959,6 +963,7 @@ fn streams_pi_rpc_without_putting_source_in_process_arguments() {
         id: 11,
         repository: root.clone(),
         query: "Explain the handoff".into(),
+        intent: AgentIntent::Implement,
         selection: SelectionContext {
             relative_path: "sample.rs".into(),
             language: Some("rust".into()),
@@ -1009,6 +1014,7 @@ fn sends_the_complete_bounded_git_hunk_to_pi() {
         id: 31,
         repository: root.clone(),
         query: "Why did this change?".into(),
+        intent: AgentIntent::Implement,
         selection: SelectionContext {
             relative_path: "sample.rs".into(),
             language: Some("git-diff".into()),
@@ -1048,6 +1054,7 @@ fn streams_bounded_typed_pi_tool_activity() {
         id: 34,
         repository: root.clone(),
         query: "Inspect and update this".into(),
+        intent: AgentIntent::Implement,
         selection: SelectionContext {
             relative_path: "sample.rs".into(),
             language: Some("rust".into()),
@@ -1102,6 +1109,7 @@ fn repository_question_reaches_pi_without_editor_context() {
         id: 35,
         repository: root.clone(),
         query: "What does this project do?".into(),
+        intent: AgentIntent::Understand,
     });
 
     let mut search_only_visible = false;
@@ -1134,10 +1142,11 @@ fn investigation_uses_a_read_only_pi_profile_and_structured_brief_prompt() {
     let mut daemon = Daemon::spawn_with_pi(&pi_bin, &driver, "investigation");
     daemon.initialize();
     daemon.open(&root);
-    daemon.send(&Request::InvestigateAgent {
+    daemon.send(&Request::AskAgent {
         id: 37,
         repository: root.clone(),
-        objective: "Add per-workbench model selection".into(),
+        query: "Add per-workbench model selection".into(),
+        intent: AgentIntent::Investigate,
     });
 
     let mut completed = false;
@@ -1193,6 +1202,7 @@ fn investigation_uses_a_read_only_pi_profile_and_structured_brief_prompt() {
         id: 38,
         repository: root.clone(),
         query: "Proceed with the smallest implementation.".into(),
+        intent: AgentIntent::Implement,
     });
     while !matches!(daemon.next(), Event::Settled { id: 38 }) {}
     let follow_up = fs::read_to_string(driver.join("prompt.json")).expect("read follow-up prompt");
@@ -1257,6 +1267,7 @@ fn external_repository_journey_edits_tests_and_leaves_a_reviewable_diff() {
         id: 36,
         repository: root.clone(),
         query: "Change the greeting from old to new and run the focused test.".into(),
+        intent: AgentIntent::Implement,
     });
 
     let mut tools = Vec::new();
@@ -1322,6 +1333,7 @@ fn continuously_drains_and_bounds_pi_stderr() {
         id: 27,
         repository: root.clone(),
         query: "Explain this".into(),
+        intent: AgentIntent::Implement,
         selection: SelectionContext {
             relative_path: "sample.rs".into(),
             language: Some("rust".into()),
@@ -1352,6 +1364,7 @@ fn provider_stderr_is_not_copied_into_user_visible_errors() {
         id: 34,
         repository: root.clone(),
         query: "Explain this".into(),
+        intent: AgentIntent::Implement,
         selection: SelectionContext {
             relative_path: "sample.rs".into(),
             language: Some("rust".into()),
@@ -1394,6 +1407,7 @@ fn provider_rejection_detail_is_not_copied_into_user_visible_errors() {
         id: 35,
         repository: root.clone(),
         query: "Explain this".into(),
+        intent: AgentIntent::Implement,
         selection: SelectionContext {
             relative_path: "sample.rs".into(),
             language: Some("rust".into()),
@@ -1441,6 +1455,7 @@ fn reaps_pi_after_a_malformed_stream_event() {
         id: 28,
         repository: root.clone(),
         query: "Explain this".into(),
+        intent: AgentIntent::Implement,
         selection: SelectionContext {
             relative_path: "sample.rs".into(),
             language: Some("rust".into()),
@@ -1481,6 +1496,7 @@ fn reaps_pi_after_a_malformed_stream_event() {
         id: 29,
         repository: root.clone(),
         query: "Do not restart silently".into(),
+        intent: AgentIntent::Implement,
     });
     let mut failed_visibly = false;
     loop {
@@ -1545,6 +1561,7 @@ fn streams_definition_and_references_before_a_symbol_grounded_answer() {
         id: 13,
         repository: root.clone(),
         query: "Where is this defined and used?".into(),
+        intent: AgentIntent::Implement,
         context: SymbolContext {
             selection: SelectionContext {
                 relative_path: "sample.rs".into(),
@@ -1640,6 +1657,7 @@ fn symbol_reasoning_starts_without_reasoning_and_escalates_before_tool_results()
         id: 74,
         repository: root.clone(),
         query: "Follow the missing handoff".into(),
+        intent: AgentIntent::Implement,
         context: SymbolContext {
             selection: SelectionContext {
                 relative_path: "sample.rs".into(),
@@ -1685,6 +1703,7 @@ fn aborts_an_active_pi_rpc_turn_within_budget() {
         id: 12,
         repository: root.clone(),
         query: "Explain this".into(),
+        intent: AgentIntent::Implement,
         selection: SelectionContext {
             relative_path: "sample.rs".into(),
             language: Some("rust".into()),

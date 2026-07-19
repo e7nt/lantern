@@ -1,5 +1,9 @@
 # Read-only feature investigation
 
+> Superseded at the interaction boundary by Protocol v11 natural-language
+> intent routing. The read-only Pi profile and readiness contract remain; the
+> `/investigate` command and scoped-process lifecycle do not.
+
 ## Outcome
 
 `/investigate <feature objective>` produces a concise readiness brief in
