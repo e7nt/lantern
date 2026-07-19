@@ -231,6 +231,13 @@ startup/RSS superiority. See the
 The command and concurrency proof is recorded in the
 [hardening report](acceptance/2026-07-19-git-command-hardening.md).
 
+One coalesced background scan now detects edits and Git operations performed by
+Helix, the agent, or another terminal without blocking the rail. Selection is
+preserved by exact path and unified-hunk identity rather than row number; stale
+results cannot overwrite newer local actions, and a cleaned file returns to the
+list with an explanation. See the
+[external-refresh report](acceptance/2026-07-19-git-external-refresh.md).
+
 ## Not next
 
 - SQLite or durable chat history.
