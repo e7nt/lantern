@@ -9,11 +9,15 @@ use crossterm::terminal::{
     enable_raw_mode,
 };
 use crossterm::{execute, queue};
-use lantern_git_rail_spike::{Commit, DiffHunk, GitRail, Status, SyncState};
+use lantern_git_rail_spike::{
+    Cancellation, Commit, DiffHunk, GitRail, GitResult, Status, SyncState,
+};
 use std::env;
 use std::io::{self, Stdout, Write};
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::thread;
 use std::time::Duration;
 
 const CANVAS: Color = Color::Rgb {
@@ -117,17 +121,44 @@ struct State {
     selected: usize,
     view: View,
     notice: Option<String>,
+    network: Option<NetworkOperation>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NetworkAction {
+    Fetch,
+    Pull { commits: usize },
+}
+
+impl NetworkAction {
+    fn progress(self) -> &'static str {
+        match self {
+            Self::Fetch => "Fetching…  Esc cancel",
+            Self::Pull { .. } => "Pulling…  Esc cancel",
+        }
+    }
+}
+
+struct NetworkOperation {
+    action: NetworkAction,
+    cancellation: Cancellation,
+}
+
+struct NetworkResult {
+    action: NetworkAction,
+    result: GitResult<()>,
 }
 
 impl State {
     fn load(rail: &GitRail) -> Result<Self, String> {
-        let status = rail.status()?;
+        let status = rail.status().map_err(|error| error.to_string())?;
         Ok(Self {
             branch: status.branch.clone(),
             changes: changes(status),
             selected: 0,
             view: View::Changes,
             notice: None,
+            network: None,
         })
     }
 
@@ -139,7 +170,7 @@ impl State {
                 self.selected = self.selected.min(self.changes.len().saturating_sub(1));
                 self.notice = None;
             }
-            Err(message) => self.notice = Some(message),
+            Err(message) => self.notice = Some(message.to_string()),
         }
     }
 
@@ -168,7 +199,7 @@ impl State {
         };
         match result {
             Ok(()) => self.refresh(rail),
-            Err(message) => self.notice = Some(message),
+            Err(message) => self.notice = Some(message.to_string()),
         }
     }
 
@@ -186,7 +217,7 @@ impl State {
                 };
                 self.notice = None;
             }
-            Err(message) => self.notice = Some(message),
+            Err(message) => self.notice = Some(message.to_string()),
         }
     }
 
@@ -261,7 +292,7 @@ impl State {
                 }
                 self.notice = Some(action.into());
             }
-            Err(message) => self.notice = Some(message),
+            Err(message) => self.notice = Some(message.to_string()),
         }
     }
 
@@ -330,7 +361,7 @@ impl State {
             .min(length.saturating_sub(1));
     }
 
-    fn choose_action(&mut self, rail: &GitRail) {
+    fn choose_action(&mut self, rail: &GitRail, sender: &Sender<NetworkResult>) {
         let View::Actions { selected } = self.view else {
             return;
         };
@@ -348,7 +379,7 @@ impl State {
                         value: String::new(),
                     };
                 }
-                Err(message) => self.fail_action(message),
+                Err(message) => self.fail_action(message.to_string()),
             },
             1 => match rail.local_branches() {
                 Ok(branches) => {
@@ -357,17 +388,10 @@ impl State {
                         selected: 0,
                     };
                 }
-                Err(message) => self.fail_action(message),
+                Err(message) => self.fail_action(message.to_string()),
             },
-            2 => match rail.fetch() {
-                Ok(()) => {
-                    self.view = View::Changes;
-                    self.refresh(rail);
-                    self.notice = Some("Fetched remote state.".into());
-                }
-                Err(message) => self.fail_action(message),
-            },
-            3 => self.pull(rail),
+            2 => self.start_network(rail, sender, NetworkAction::Fetch),
+            3 => self.pull(rail, sender),
             4 => match rail.recent_commits(HISTORY_LIMIT) {
                 Ok(commits) => {
                     self.view = View::History {
@@ -375,38 +399,92 @@ impl State {
                         selected: 0,
                     };
                 }
-                Err(message) => self.fail_action(message),
+                Err(message) => self.fail_action(message.to_string()),
             },
             _ => {}
         }
     }
 
-    fn pull(&mut self, rail: &GitRail) {
+    fn pull(&mut self, rail: &GitRail, sender: &Sender<NetworkResult>) {
         let state = match rail.sync_state() {
             Ok(state) => state,
             Err(message) => {
-                self.fail_action(message);
+                self.fail_action(message.to_string());
                 return;
             }
         };
-        let result = match state {
-            SyncState::Behind { commits } => rail
-                .pull_fast_forward()
-                .map(|()| format!("Fast-forwarded {commits} commit(s).")),
-            SyncState::UpToDate => Ok("Already up to date.".into()),
-            SyncState::Ahead { commits } => Ok(format!("Ahead by {commits}; nothing to pull.")),
-            SyncState::Diverged { ahead, behind } => Ok(format!(
-                "Diverged: {ahead} ahead, {behind} behind. Resolve explicitly."
-            )),
-            SyncState::NoUpstream => Ok("No upstream branch is configured.".into()),
-        };
-        match result {
-            Ok(notice) => {
-                self.view = View::Changes;
-                self.refresh(rail);
-                self.notice = Some(notice);
+        let notice = match state {
+            SyncState::Behind { commits } => {
+                self.start_network(rail, sender, NetworkAction::Pull { commits });
+                return;
             }
-            Err(message) => self.fail_action(message),
+            SyncState::UpToDate => "Already up to date.".into(),
+            SyncState::Ahead { commits } => format!("Ahead by {commits}; nothing to pull."),
+            SyncState::Diverged { ahead, behind } => {
+                format!("Diverged: {ahead} ahead, {behind} behind. Resolve explicitly.")
+            }
+            SyncState::NoUpstream => "No upstream branch is configured.".into(),
+        };
+        self.view = View::Changes;
+        self.refresh(rail);
+        self.notice = Some(notice);
+    }
+
+    fn start_network(
+        &mut self,
+        rail: &GitRail,
+        sender: &Sender<NetworkResult>,
+        action: NetworkAction,
+    ) {
+        if self.network.is_some() {
+            return;
+        }
+        let cancellation = Cancellation::default();
+        let worker_cancellation = cancellation.clone();
+        let worker_rail = rail.clone();
+        let sender = sender.clone();
+        thread::spawn(move || {
+            let result = match action {
+                NetworkAction::Fetch => worker_rail.fetch_with_cancellation(worker_cancellation),
+                NetworkAction::Pull { .. } => {
+                    worker_rail.pull_fast_forward_with_cancellation(worker_cancellation)
+                }
+            };
+            let _ = sender.send(NetworkResult { action, result });
+        });
+        self.view = View::Changes;
+        self.notice = Some(action.progress().into());
+        self.network = Some(NetworkOperation {
+            action,
+            cancellation,
+        });
+    }
+
+    fn finish_network(&mut self, rail: &GitRail, completed: NetworkResult) {
+        let Some(active) = self.network.take() else {
+            return;
+        };
+        if active.action != completed.action {
+            return;
+        }
+        match completed.result {
+            Ok(()) => {
+                self.refresh(rail);
+                self.notice = Some(match completed.action {
+                    NetworkAction::Fetch => "Fetched remote state.".into(),
+                    NetworkAction::Pull { commits } => {
+                        format!("Fast-forwarded {commits} commit(s).")
+                    }
+                });
+            }
+            Err(error) => self.notice = Some(error.to_string()),
+        }
+    }
+
+    fn cancel_network(&mut self) {
+        if let Some(operation) = &self.network {
+            operation.cancellation.cancel();
+            self.notice = Some("Cancelling Git operation…".into());
         }
     }
 
@@ -454,7 +532,7 @@ impl State {
                     InputKind::CreateBranch => format!("Created and switched to {value}."),
                 });
             }
-            Err(message) => self.notice = Some(message),
+            Err(message) => self.notice = Some(message.to_string()),
         }
     }
 
@@ -476,7 +554,7 @@ impl State {
                 self.refresh(rail);
                 self.notice = Some(format!("Switched to {branch}."));
             }
-            Err(message) => self.notice = Some(message),
+            Err(message) => self.notice = Some(message.to_string()),
         }
     }
 
@@ -503,17 +581,23 @@ impl State {
                     selected,
                 };
             }
-            Err(message) => self.notice = Some(message),
+            Err(message) => self.notice = Some(message.to_string()),
         }
     }
 
-    fn click_menu(&mut self, row: usize, available: usize, rail: &GitRail) {
+    fn click_menu(
+        &mut self,
+        row: usize,
+        available: usize,
+        rail: &GitRail,
+        sender: &Sender<NetworkResult>,
+    ) {
         match &self.view {
             View::Actions { selected } => {
                 let index = visible_start(*selected, available) + row;
                 if index < ACTIONS.len() {
                     self.view = View::Actions { selected: index };
-                    self.choose_action(rail);
+                    self.choose_action(rail, sender);
                 }
             }
             View::Branches { branches, selected } => {
@@ -876,106 +960,123 @@ fn run() -> Result<(), String> {
     let repository = env::var_os("LANTERN_REPO").map(PathBuf::from).unwrap_or(
         env::current_dir().map_err(|cause| format!("cannot read current directory: {cause}"))?,
     );
-    let rail = GitRail::open(&repository)?;
+    let rail = GitRail::open(&repository).map_err(|error| error.to_string())?;
     let mut state = State::load(&rail)?;
+    let (network_sender, network_receiver): (Sender<NetworkResult>, Receiver<NetworkResult>) =
+        mpsc::channel();
     let mut stdout = io::stdout();
     let _guard = TerminalGuard::enter(&mut stdout)
         .map_err(|cause| format!("cannot enter Git rail: {cause}"))?;
 
     loop {
+        while let Ok(completed) = network_receiver.try_recv() {
+            state.finish_network(&rail, completed);
+        }
         draw(&mut stdout, &state).map_err(|cause| format!("cannot draw Git rail: {cause}"))?;
-        if !event::poll(Duration::from_millis(250))
+        if !event::poll(Duration::from_millis(50))
             .map_err(|cause| format!("cannot poll terminal: {cause}"))?
         {
             continue;
         }
         match event::read().map_err(|cause| format!("cannot read terminal: {cause}"))? {
-            Event::Key(key) if key.kind == KeyEventKind::Press => match &mut state.view {
-                View::Changes => match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => break,
-                    KeyCode::Up | KeyCode::Char('k') => state.move_selection(-1),
-                    KeyCode::Down | KeyCode::Char('j') => state.move_selection(1),
-                    KeyCode::Char(' ') => state.toggle_stage(&rail),
-                    KeyCode::Enter
-                        if state
-                            .changes
-                            .get(state.selected)
-                            .is_some_and(|change| change.kind == ChangeKind::Conflicted) =>
-                    {
-                        state.open_selected_in_helix()
+            Event::Key(key) if key.kind == KeyEventKind::Press => {
+                if state.network.is_some() {
+                    if key.code == KeyCode::Esc {
+                        state.cancel_network();
                     }
-                    KeyCode::Enter | KeyCode::Char('d') => state.open_diff(&rail),
-                    KeyCode::Char('o') => state.open_selected_in_helix(),
-                    KeyCode::Char('r') => state.refresh(&rail),
-                    KeyCode::Char('a') => state.open_actions(),
-                    _ => {}
-                },
-                View::Diff { .. } => match key.code {
-                    KeyCode::Esc | KeyCode::Char('q') => state.view = View::Changes,
-                    KeyCode::Up | KeyCode::Char('k') => state.move_hunk(-1),
-                    KeyCode::Down | KeyCode::Char('j') => state.move_hunk(1),
-                    KeyCode::PageUp => state.scroll_hunk(-10),
-                    KeyCode::PageDown => state.scroll_hunk(10),
-                    KeyCode::Char(' ') => state.toggle_hunk(&rail),
-                    KeyCode::Enter | KeyCode::Char('o') => state.open_selected_in_helix(),
-                    _ => {}
-                },
-                View::Actions { .. } => match key.code {
-                    KeyCode::Esc | KeyCode::Char('q') => state.view = View::Changes,
-                    KeyCode::Up | KeyCode::Char('k') => state.move_menu(-1),
-                    KeyCode::Down | KeyCode::Char('j') => state.move_menu(1),
-                    KeyCode::Enter => state.choose_action(&rail),
-                    _ => {}
-                },
-                View::Input { .. } => match key.code {
-                    KeyCode::Esc => state.view = View::Actions { selected: 0 },
-                    KeyCode::Enter => state.submit_input(&rail),
-                    code if !key
-                        .modifiers
-                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
-                    {
-                        state.edit_input(code)
-                    }
-                    _ => {}
-                },
-                View::Branches { .. } => match key.code {
-                    KeyCode::Esc | KeyCode::Char('q') => state.view = View::Actions { selected: 1 },
-                    KeyCode::Up | KeyCode::Char('k') => state.move_menu(-1),
-                    KeyCode::Down | KeyCode::Char('j') => state.move_menu(1),
-                    KeyCode::Enter => state.choose_branch(&rail),
-                    _ => {}
-                },
-                View::History { .. } => match key.code {
-                    KeyCode::Esc | KeyCode::Char('q') => state.view = View::Actions { selected: 4 },
-                    KeyCode::Up | KeyCode::Char('k') => state.move_menu(-1),
-                    KeyCode::Down | KeyCode::Char('j') => state.move_menu(1),
-                    KeyCode::Enter => state.open_history_diff(&rail),
-                    _ => {}
-                },
-                View::CommitDiff {
-                    lines,
-                    offset,
-                    history,
-                    selected,
-                    ..
-                } => match key.code {
-                    KeyCode::Esc | KeyCode::Char('q') => {
-                        state.view = View::History {
-                            commits: std::mem::take(history),
-                            selected: *selected,
+                    continue;
+                }
+                match &mut state.view {
+                    View::Changes => match key.code {
+                        KeyCode::Char('q') | KeyCode::Esc => break,
+                        KeyCode::Up | KeyCode::Char('k') => state.move_selection(-1),
+                        KeyCode::Down | KeyCode::Char('j') => state.move_selection(1),
+                        KeyCode::Char(' ') => state.toggle_stage(&rail),
+                        KeyCode::Enter
+                            if state
+                                .changes
+                                .get(state.selected)
+                                .is_some_and(|change| change.kind == ChangeKind::Conflicted) =>
+                        {
+                            state.open_selected_in_helix()
                         }
-                    }
-                    KeyCode::Up | KeyCode::Char('k') => *offset = offset.saturating_sub(1),
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        *offset = (*offset + 1).min(lines.len().saturating_sub(1));
-                    }
-                    KeyCode::PageUp => *offset = offset.saturating_sub(10),
-                    KeyCode::PageDown => {
-                        *offset = (*offset + 10).min(lines.len().saturating_sub(1));
-                    }
-                    _ => {}
-                },
-            },
+                        KeyCode::Enter | KeyCode::Char('d') => state.open_diff(&rail),
+                        KeyCode::Char('o') => state.open_selected_in_helix(),
+                        KeyCode::Char('r') => state.refresh(&rail),
+                        KeyCode::Char('a') => state.open_actions(),
+                        _ => {}
+                    },
+                    View::Diff { .. } => match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') => state.view = View::Changes,
+                        KeyCode::Up | KeyCode::Char('k') => state.move_hunk(-1),
+                        KeyCode::Down | KeyCode::Char('j') => state.move_hunk(1),
+                        KeyCode::PageUp => state.scroll_hunk(-10),
+                        KeyCode::PageDown => state.scroll_hunk(10),
+                        KeyCode::Char(' ') => state.toggle_hunk(&rail),
+                        KeyCode::Enter | KeyCode::Char('o') => state.open_selected_in_helix(),
+                        _ => {}
+                    },
+                    View::Actions { .. } => match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') => state.view = View::Changes,
+                        KeyCode::Up | KeyCode::Char('k') => state.move_menu(-1),
+                        KeyCode::Down | KeyCode::Char('j') => state.move_menu(1),
+                        KeyCode::Enter => state.choose_action(&rail, &network_sender),
+                        _ => {}
+                    },
+                    View::Input { .. } => match key.code {
+                        KeyCode::Esc => state.view = View::Actions { selected: 0 },
+                        KeyCode::Enter => state.submit_input(&rail),
+                        code if !key
+                            .modifiers
+                            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                        {
+                            state.edit_input(code)
+                        }
+                        _ => {}
+                    },
+                    View::Branches { .. } => match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') => {
+                            state.view = View::Actions { selected: 1 }
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => state.move_menu(-1),
+                        KeyCode::Down | KeyCode::Char('j') => state.move_menu(1),
+                        KeyCode::Enter => state.choose_branch(&rail),
+                        _ => {}
+                    },
+                    View::History { .. } => match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') => {
+                            state.view = View::Actions { selected: 4 }
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => state.move_menu(-1),
+                        KeyCode::Down | KeyCode::Char('j') => state.move_menu(1),
+                        KeyCode::Enter => state.open_history_diff(&rail),
+                        _ => {}
+                    },
+                    View::CommitDiff {
+                        lines,
+                        offset,
+                        history,
+                        selected,
+                        ..
+                    } => match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') => {
+                            state.view = View::History {
+                                commits: std::mem::take(history),
+                                selected: *selected,
+                            }
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => *offset = offset.saturating_sub(1),
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            *offset = (*offset + 1).min(lines.len().saturating_sub(1));
+                        }
+                        KeyCode::PageUp => *offset = offset.saturating_sub(10),
+                        KeyCode::PageDown => {
+                            *offset = (*offset + 10).min(lines.len().saturating_sub(1));
+                        }
+                        _ => {}
+                    },
+                }
+            }
             Event::Mouse(mouse) => match mouse.kind {
                 MouseEventKind::Down(MouseButton::Left) if matches!(state.view, View::Changes) => {
                     let row = mouse.row.saturating_sub(1) as usize;
@@ -998,7 +1099,7 @@ fn run() -> Result<(), String> {
                         .map_err(|cause| format!("cannot read terminal size: {cause}"))?;
                     let available = height.saturating_sub(4) as usize;
                     if row < available {
-                        state.click_menu(row, available, &rail);
+                        state.click_menu(row, available, &rail, &network_sender);
                     }
                 }
                 MouseEventKind::ScrollUp => match &mut state.view {
@@ -1048,6 +1149,7 @@ mod tests {
             selected: 0,
             view,
             notice: None,
+            network: None,
         }
     }
 
