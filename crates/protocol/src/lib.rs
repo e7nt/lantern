@@ -15,6 +15,8 @@ pub const MAX_QUESTION_BYTES: usize = 64 * 1024;
 pub const MAX_SYMBOL_REFERENCES: usize = 8;
 pub const MAX_SYMBOL_CALLS: usize = 8;
 pub const MAX_SYMBOL_NAME_BYTES: usize = 256;
+pub const MAX_AGENT_TOUCHED_PATHS: usize = 64;
+pub const MAX_AGENT_GIT_FOCUS_BYTES: usize = 16 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -66,6 +68,12 @@ pub struct GitReviewContext {
     pub start_line: usize,
     pub end_line: usize,
     pub diff: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AgentGitFocus {
+    pub relative_paths: Vec<PathBuf>,
 }
 
 impl GitReviewContext {
@@ -524,6 +532,32 @@ pub fn validate_git_review(context: &GitReviewContext) -> Result<(), String> {
     Ok(())
 }
 
+pub fn validate_agent_git_focus(focus: &AgentGitFocus) -> Result<(), String> {
+    if focus.relative_paths.is_empty() {
+        return Err("agent Git focus contains no paths".into());
+    }
+    if focus.relative_paths.len() > MAX_AGENT_TOUCHED_PATHS {
+        return Err(format!(
+            "agent Git focus exceeds the {MAX_AGENT_TOUCHED_PATHS}-path limit"
+        ));
+    }
+    let mut unique = std::collections::HashSet::new();
+    let mut path_bytes = 0;
+    for path in &focus.relative_paths {
+        validate_relative_path(path)?;
+        path_bytes += path.as_os_str().as_encoded_bytes().len();
+        if path_bytes > MAX_AGENT_GIT_FOCUS_BYTES {
+            return Err(format!(
+                "agent Git focus exceeds the {MAX_AGENT_GIT_FOCUS_BYTES}-byte path limit"
+            ));
+        }
+        if !unique.insert(path) {
+            return Err("agent Git focus contains a duplicate path".into());
+        }
+    }
+    Ok(())
+}
+
 pub fn validate_symbol_location(location: &SymbolLocation) -> Result<(), String> {
     validate_relative_path(&location.relative_path)?;
     if location.start_line == 0
@@ -734,6 +768,36 @@ mod tests {
         validate_selection(&selection).unwrap();
         assert!(selection.text.contains("Git review state: staged"));
         assert!(selection.text.contains("@@ -4,2 +4,3 @@"));
+    }
+
+    #[test]
+    fn agent_git_focus_is_bounded_unique_and_repository_relative() {
+        let focus = AgentGitFocus {
+            relative_paths: vec!["src/lib.rs".into(), "tests/flow.rs".into()],
+        };
+        validate_agent_git_focus(&focus).unwrap();
+
+        let duplicate = AgentGitFocus {
+            relative_paths: vec!["src/lib.rs".into(), "src/lib.rs".into()],
+        };
+        assert_eq!(
+            validate_agent_git_focus(&duplicate).unwrap_err(),
+            "agent Git focus contains a duplicate path"
+        );
+        let escape = AgentGitFocus {
+            relative_paths: vec!["../outside".into()],
+        };
+        assert!(validate_agent_git_focus(&escape).is_err());
+        let too_many = AgentGitFocus {
+            relative_paths: (0..=MAX_AGENT_TOUCHED_PATHS)
+                .map(|index| format!("src/{index}.rs").into())
+                .collect(),
+        };
+        assert!(validate_agent_git_focus(&too_many).is_err());
+        let oversized = AgentGitFocus {
+            relative_paths: vec!["x".repeat(MAX_AGENT_GIT_FOCUS_BYTES + 1).into()],
+        };
+        assert!(validate_agent_git_focus(&oversized).is_err());
     }
 
     #[test]

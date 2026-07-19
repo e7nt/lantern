@@ -11,6 +11,7 @@ fi
 : "${LANTERN_GIT_BIN:?Lantern Git binary is not configured}"
 : "${LANTERN_REVIEW_PATH:?Lantern review context is not configured}"
 : "${LANTERN_GIT_RESUME_PATH:?Lantern Git resume context is not configured}"
+: "${LANTERN_GIT_FOCUS_PATH:?Lantern Git focus context is not configured}"
 
 if [[ ! -x $LANTERN_GIT_BIN ]]; then
 	echo "Lantern Git binary is not executable: $LANTERN_GIT_BIN" >&2
@@ -41,6 +42,7 @@ tmux display-popup \
 	-d "$LANTERN_REPO" \
 env LANTERN_REPO="$LANTERN_REPO" LANTERN_REVIEW_PATH="$LANTERN_REVIEW_PATH" \
 	LANTERN_GIT_RESUME_PATH="$LANTERN_GIT_RESUME_PATH" \
+	LANTERN_GIT_FOCUS_PATH="$LANTERN_GIT_FOCUS_PATH" \
 	"$LANTERN_GIT_BIN" || status=$?
 
 if ((status == 20)); then
