@@ -1,7 +1,8 @@
 # Pi SDK tool-control spike — 2026-07-18
 
-Status: first ADR 005 agent-runtime gate passed; production promotion remains
-pending streaming, interruption, latency comparison, and DeepEval parity.
+Status: first ADR 005 agent-runtime gate passed. Streaming and interruption are
+now covered by the 2026-07-19 follow-up; production promotion remains pending a
+like-for-like latency comparison and DeepEval parity.
 
 The reproducible `scripts/spike-pi-sdk-control.mjs` locates the installed pinned
 Pi 0.80.6 package, imports its public SDK, and creates a session with only
