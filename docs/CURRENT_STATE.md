@@ -43,6 +43,10 @@ and tool vocabulary should not become user-facing ceremony.
 - Lazily started read-only and coding Pi RPC profiles per workbench, with
   in-memory conversational continuity, explicit tool separation, and no Pi
   session files.
+- Contextual natural-language follow-ups: concise refinements continue the last
+  completed exploratory turn, while explicit action language carries the
+  refined result into the coding profile. Failed and cancelled turns are not
+  retained.
 - Pi's pinned `read`, `grep`, `find`, `ls`, `edit`, `write`, and `bash` tools,
   launched inside the repository with typed activity in Lantern.
 - Successful edit/write activity opens the changed file in Helix; `Space-g` or

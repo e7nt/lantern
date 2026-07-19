@@ -15,11 +15,11 @@ use lantern_diagnostics::{
     DaemonState as DiagnosticDaemonState, bundle_from_stderr, summarize_stderr,
 };
 use lantern_protocol::{
-    AgentGitFocus, BoundedTail, ChangeProposal, ControlRequest, Event, Evidence, EvidenceSource,
-    GitReviewContext, GroundingState, MAX_AGENT_TOUCHED_PATHS, MAX_DIAGNOSTIC_BYTES,
-    MAX_QUESTION_BYTES, MAX_SELECTION_BYTES, PROTOCOL_VERSION, Request, SelectionContext,
-    SymbolContext, SymbolContextExport, infer_agent_intent, read_frame, search_term,
-    validate_agent_git_focus, validate_git_review,
+    AgentGitFocus, AgentIntent, BoundedTail, ChangeProposal, ControlRequest, Event, Evidence,
+    EvidenceSource, GitReviewContext, GroundingState, MAX_AGENT_TOUCHED_PATHS,
+    MAX_DIAGNOSTIC_BYTES, MAX_QUESTION_BYTES, MAX_SELECTION_BYTES, PROTOCOL_VERSION, Request,
+    SelectionContext, SymbolContext, SymbolContextExport, infer_agent_intent, read_frame,
+    search_term, validate_agent_git_focus, validate_git_review,
 };
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -104,6 +104,8 @@ struct UiState {
     selected_evidence: Option<usize>,
     expanded_semantic_groups: HashSet<(u64, PathBuf)>,
     agent_touched_paths: Vec<PathBuf>,
+    last_agent_intent: Option<AgentIntent>,
+    pending_agent_intent: Option<AgentIntent>,
 }
 
 impl UiState {
@@ -123,6 +125,8 @@ impl UiState {
             selected_evidence: None,
             expanded_semantic_groups: HashSet::new(),
             agent_touched_paths: Vec::new(),
+            last_agent_intent: None,
+            pending_agent_intent: None,
         }
     }
 
@@ -269,6 +273,7 @@ impl UiState {
         self.active_id = None;
         self.accepted_id = None;
         self.navigated_for = None;
+        self.pending_agent_intent = None;
         self.line(format!("Agent unavailable: {reason}"));
         let diagnostics = diagnostic_summary(diagnostics);
         if !diagnostics.is_empty() {
@@ -372,10 +377,7 @@ fn evidence_source_text(source: EvidenceSource) -> (&'static str, &'static str) 
         EvidenceSource::Call => ("Call path", "bounded outgoing call resolved by Helix"),
         EvidenceSource::Semantic => ("Related code", "local semantic match verified from source"),
         EvidenceSource::LiteralMatch => ("Exact match", "local repository text match"),
-        EvidenceSource::Investigation => (
-            "Investigation evidence",
-            "source inspected during the read-only investigation",
-        ),
+        EvidenceSource::Investigation => ("Relevant code", "source inspected for this response"),
     }
 }
 
@@ -929,7 +931,7 @@ fn start_agent_question(
     daemon_stdin: &Arc<Mutex<BufWriter<ChildStdin>>>,
     query: &str,
 ) -> io::Result<()> {
-    let intent = infer_agent_intent(query);
+    let intent = infer_agent_intent(query, state.last_agent_intent);
     let query = query.trim();
     if query.is_empty() {
         state.line("Type a question about the selection, then press Enter.");
@@ -954,6 +956,7 @@ fn start_agent_question(
         state.line("The agent is already working.");
         return Ok(());
     };
+    state.pending_agent_intent = Some(intent);
     if let Some(selection) = review {
         send_request(
             daemon_stdin,
@@ -1485,11 +1488,17 @@ fn handle_daemon_event(
                 }
             }
         }
-        Event::Completed { .. } => state.activity = Some("Finishing…".into()),
+        Event::Completed { id, .. } => {
+            state.activity = Some("Finishing…".into());
+            if state.active_id == Some(id) {
+                state.last_agent_intent = state.pending_agent_intent;
+            }
+        }
         Event::Cancelled {
             id,
             cancellation_latency_ms,
         } => {
+            state.pending_agent_intent = None;
             state.line(format!(
                 "Interrupted operation {id} in {cancellation_latency_ms} ms."
             ));
@@ -1509,6 +1518,7 @@ fn handle_daemon_event(
             if id == state.active_id && id != state.accepted_id {
                 state.active_id = None;
                 state.navigated_for = None;
+                state.pending_agent_intent = None;
             }
         }
         Event::Settled { id } => {
@@ -1533,6 +1543,7 @@ fn handle_daemon_event(
                 state.active_id = None;
                 state.accepted_id = None;
                 state.navigated_for = None;
+                state.pending_agent_intent = None;
             }
         }
     }
@@ -2125,6 +2136,53 @@ mod tests {
         assert_eq!(state.begin_operation(), None);
         assert_eq!(state.active_id, Some(1));
         assert_eq!(state.next_id, 2);
+    }
+
+    #[test]
+    fn only_a_completed_agent_turn_becomes_follow_up_context() {
+        let mut state = UiState::new(Path::new("."));
+        state.daemon = DaemonState::Ready;
+        state.active_id = Some(7);
+        state.pending_agent_intent = Some(AgentIntent::Investigate);
+
+        handle_daemon_event(
+            Event::Completed {
+                id: 7,
+                evidence_count: 0,
+            },
+            &mut state,
+            Path::new("."),
+            Path::new("unused"),
+            Path::new("unused-focus"),
+        )
+        .unwrap();
+        assert_eq!(state.last_agent_intent, Some(AgentIntent::Investigate));
+
+        handle_daemon_event(
+            Event::Settled { id: 7 },
+            &mut state,
+            Path::new("."),
+            Path::new("unused"),
+            Path::new("unused-focus"),
+        )
+        .unwrap();
+        assert_eq!(state.pending_agent_intent, None);
+
+        state.active_id = Some(8);
+        state.pending_agent_intent = Some(AgentIntent::Plan);
+        handle_daemon_event(
+            Event::Cancelled {
+                id: 8,
+                cancellation_latency_ms: 1,
+            },
+            &mut state,
+            Path::new("."),
+            Path::new("unused"),
+            Path::new("unused-focus"),
+        )
+        .unwrap();
+        assert_eq!(state.last_agent_intent, Some(AgentIntent::Investigate));
+        assert_eq!(state.pending_agent_intent, None);
     }
 
     #[test]

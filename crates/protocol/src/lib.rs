@@ -135,7 +135,7 @@ pub enum AgentIntent {
     Implement,
 }
 
-pub fn infer_agent_intent(query: &str) -> AgentIntent {
+pub fn infer_agent_intent(query: &str, previous: Option<AgentIntent>) -> AgentIntent {
     let query = query.trim().to_lowercase();
     let contains_any = |terms: &[&str]| terms.iter().any(|term| query.contains(term));
     let read_only = contains_any(&[
@@ -223,6 +223,21 @@ pub fn infer_agent_intent(query: &str) -> AgentIntent {
         "let's do",
     ]) {
         return AgentIntent::Implement;
+    }
+    let continues_previous = query == "yes"
+        || query.starts_with("yes, ")
+        || query.starts_with("yes but ")
+        || query.starts_with("but ")
+        || query.starts_with("and ")
+        || query.starts_with("also ")
+        || query.starts_with("instead ")
+        || query.starts_with("only ")
+        || query.starts_with("keep ")
+        || query.starts_with("not ");
+    if continues_previous
+        && let Some(intent @ (AgentIntent::Investigate | AgentIntent::Plan)) = previous
+    {
+        return intent;
     }
     AgentIntent::Understand
 }
@@ -914,7 +929,7 @@ mod tests {
             "Tell me about the repository",
         ] {
             assert_eq!(
-                infer_agent_intent(query),
+                infer_agent_intent(query, None),
                 AgentIntent::Understand,
                 "{query}"
             );
@@ -926,17 +941,17 @@ mod tests {
             "Assess whether this change is safe",
         ] {
             assert_eq!(
-                infer_agent_intent(query),
+                infer_agent_intent(query, None),
                 AgentIntent::Investigate,
                 "{query}"
             );
         }
         assert_eq!(
-            infer_agent_intent("Turn this into a plan"),
+            infer_agent_intent("Turn this into a plan", None),
             AgentIntent::Plan
         );
         assert_eq!(
-            infer_agent_intent("We should preserve this decision"),
+            infer_agent_intent("We should preserve this decision", None),
             AgentIntent::Plan
         );
         for query in [
@@ -945,8 +960,39 @@ mod tests {
             "Fix the failing parser test",
             "Go ahead and apply the change",
         ] {
-            assert_eq!(infer_agent_intent(query), AgentIntent::Implement, "{query}");
+            assert_eq!(
+                infer_agent_intent(query, Some(AgentIntent::Investigate)),
+                AgentIntent::Implement,
+                "{query}"
+            );
         }
+    }
+
+    #[test]
+    fn natural_language_refinements_continue_the_previous_read_only_work() {
+        for query in [
+            "Yes, but keep the cache bounded",
+            "Only retain entries in memory",
+            "Instead use the existing invalidation hook",
+        ] {
+            assert_eq!(
+                infer_agent_intent(query, Some(AgentIntent::Investigate)),
+                AgentIntent::Investigate,
+                "{query}"
+            );
+        }
+        assert_eq!(
+            infer_agent_intent("Also include verification", Some(AgentIntent::Plan)),
+            AgentIntent::Plan
+        );
+        assert_eq!(
+            infer_agent_intent("Do it", Some(AgentIntent::Investigate)),
+            AgentIntent::Implement
+        );
+        assert_eq!(
+            infer_agent_intent("Yes", Some(AgentIntent::Understand)),
+            AgentIntent::Understand
+        );
     }
 
     #[test]

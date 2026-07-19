@@ -131,6 +131,13 @@ The 2026-07-16 protocol inspection adds four concrete requirements:
 - Continuously drain child stderr while retaining only a bounded diagnostic
   tail; stopping reads at the retention limit can deadlock the child.
 
+The 2026-07-19 conversational-continuity inspection adopts Pi's stateful turn
+context but not its visible steering queue or session-tree interface. Lantern
+keeps one prompt surface, carries only a successfully completed local routing
+state between turns, and relies on the existing warm Pi session for dialogue.
+Protocol and terminal tests prove that refinements continue the prior topic,
+explicit action language wins, and cancelled turns do not become context.
+
 Pi's `Escape` cancellation, queued-message restoration, and explicit hotkey
 listing are interaction references. Lantern adopts immediate `Escape`
 interruption and discoverable shortcuts, but rejects Pi's extensions, skills,
