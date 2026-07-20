@@ -1,0 +1,14 @@
+{"type":"initialized","protocol_version":12}
+{"type":"workbench_opened","repository":"/workspace/project"}
+{"type":"accepted","id":1}
+{"type":"grounding_state","id":1,"state":"preparing_index"}
+{"type":"grounding_state","id":2,"state":"repository_search_only"}
+{"type":"operation_started","id":1,"search_term":"Pi gpt-5"}
+{"type":"evidence","id":1,"evidence":{"source":"semantic","relative_path":"src/lib.rs","start_line":8,"start_column":1,"end_line":20,"end_column":1,"excerpt":"fn dispatch() {}"}}
+{"type":"evidence","id":2,"evidence":{"source":"investigation","relative_path":"src/config.rs","start_line":1,"start_column":1,"end_line":2,"end_column":1,"excerpt":"pub struct Config;"}}
+{"type":"text_delta","id":1,"delta":"The related implementation is here."}
+{"type":"plan_saved","id":4,"relative_path":".lantern/plans/active.md"}
+{"type":"completed","id":1,"evidence_count":1}
+{"type":"settled","id":1}
+{"type":"cancelled","id":9,"cancellation_latency_ms":12}
+{"type":"error","id":null,"message":"invalid protocol request","recovery":"send one valid JSON request per line"}

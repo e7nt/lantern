@@ -144,6 +144,57 @@ class IntentRoutingContractMetric(BaseMetric):
         return self.success
 
 
+class PlanningArtifactContractMetric(BaseMetric):
+    """Checks that a conversational plan is complete and grounded before persistence."""
+
+    threshold = 1.0
+    evaluation_model = None
+    strict_mode = True
+    async_mode = False
+    verbose_mode = False
+    error = None
+
+    def __init__(self, required_evidence: Sequence[str]) -> None:
+        self.required_evidence = tuple(item.casefold() for item in required_evidence)
+        self.score = 0.0
+        self.reason = "not measured"
+        self.success = False
+
+    @property
+    def __name__(self) -> str:
+        return "Planning artifact contract"
+
+    def measure(self, test_case: LLMTestCase, *args, **kwargs) -> float:
+        output = test_case.actual_output.casefold()
+        headings = (
+            "objective",
+            "repository evidence",
+            "acceptance criteria",
+            "exclusions",
+            "decisions",
+            "tasks",
+            "risks and unknowns",
+            "verification",
+        )
+        missing_headings = [heading for heading in headings if heading not in output]
+        missing_evidence = [item for item in self.required_evidence if item not in output]
+        self.success = not missing_headings and not missing_evidence
+        self.score = 1.0 if self.success else 0.0
+        failures = []
+        if missing_headings:
+            failures.append(f"missing headings: {missing_headings}")
+        if missing_evidence:
+            failures.append(f"missing repository evidence: {missing_evidence}")
+        self.reason = "; ".join(failures) if failures else "planning artifact contract passed"
+        return self.score
+
+    async def a_measure(self, test_case: LLMTestCase, *args, **kwargs) -> float:
+        return self.measure(test_case, *args, **kwargs)
+
+    def is_successful(self) -> bool:
+        return self.success
+
+
 class ToolJourneyContractMetric(BaseMetric):
     """Checks an agent trace for ordered intent and unnecessary mutations."""
 

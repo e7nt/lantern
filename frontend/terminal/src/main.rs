@@ -937,6 +937,23 @@ fn start_agent_question(
         state.line("Type a question about the selection, then press Enter.");
         return Ok(());
     }
+    if intent == AgentIntent::PersistPlan {
+        let Some(id) = state.begin_operation() else {
+            state.line("The agent is already working.");
+            return Ok(());
+        };
+        state.pending_agent_intent = Some(intent);
+        send_request(
+            daemon_stdin,
+            &Request::AskAgent {
+                id,
+                repository: repository.to_owned(),
+                query: query.to_owned(),
+                intent,
+            },
+        )?;
+        return Ok(());
+    }
     let review = if review_path.exists() {
         match read_review_context(review_path) {
             Ok(review) => {
@@ -1444,6 +1461,12 @@ fn handle_daemon_event(
                 state.line(format!("Preview failed: {message}"));
             }
         }
+        Event::PlanSaved { relative_path, .. } => {
+            state.line(format!("Saved plan · {}", relative_path.display()));
+            if let Err(cause) = navigate_range(&relative_path, 1, 1, 1, 1) {
+                state.line(format!("Could not open the saved plan: {cause}"));
+            }
+        }
         Event::TextDelta { id, delta } => {
             state.activity = Some("Responding…".into());
             state.answer_delta(id, &delta);
@@ -1490,7 +1513,9 @@ fn handle_daemon_event(
         }
         Event::Completed { id, .. } => {
             state.activity = Some("Finishing…".into());
-            if state.active_id == Some(id) {
+            if state.active_id == Some(id)
+                && state.pending_agent_intent != Some(AgentIntent::PersistPlan)
+            {
                 state.last_agent_intent = state.pending_agent_intent;
             }
         }
@@ -2183,6 +2208,22 @@ mod tests {
         .unwrap();
         assert_eq!(state.last_agent_intent, Some(AgentIntent::Investigate));
         assert_eq!(state.pending_agent_intent, None);
+
+        state.active_id = Some(9);
+        state.last_agent_intent = Some(AgentIntent::Plan);
+        state.pending_agent_intent = Some(AgentIntent::PersistPlan);
+        handle_daemon_event(
+            Event::Completed {
+                id: 9,
+                evidence_count: 0,
+            },
+            &mut state,
+            Path::new("."),
+            Path::new("unused"),
+            Path::new("unused-focus"),
+        )
+        .unwrap();
+        assert_eq!(state.last_agent_intent, Some(AgentIntent::Plan));
     }
 
     #[test]

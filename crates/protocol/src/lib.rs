@@ -3,7 +3,7 @@ use std::fmt;
 use std::io::{self, BufRead};
 use std::path::{Component, Path, PathBuf};
 
-pub const PROTOCOL_VERSION: u32 = 11;
+pub const PROTOCOL_VERSION: u32 = 12;
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const MAX_EVENT_BYTES: usize = 256 * 1024;
 pub const MAX_DIAGNOSTIC_BYTES: usize = 8 * 1024;
@@ -132,6 +132,7 @@ pub enum AgentIntent {
     Understand,
     Investigate,
     Plan,
+    PersistPlan,
     Implement,
 }
 
@@ -183,6 +184,15 @@ pub fn infer_agent_intent(query: &str, previous: Option<AgentIntent>) -> AgentIn
         "why does",
         "show me",
     ]);
+    if contains_any(&[
+        "write this down",
+        "save this plan",
+        "save the plan",
+        "keep this as our plan",
+        "persist the plan",
+    ]) {
+        return AgentIntent::PersistPlan;
+    }
     if informational && !exploratory {
         return AgentIntent::Understand;
     }
@@ -432,6 +442,10 @@ pub enum Event {
     ChangeProposal {
         id: u64,
         proposal: ChangeProposal,
+    },
+    PlanSaved {
+        id: u64,
+        relative_path: PathBuf,
     },
     TextDelta {
         id: u64,
@@ -953,6 +967,20 @@ mod tests {
         assert_eq!(
             infer_agent_intent("We should preserve this decision", None),
             AgentIntent::Plan
+        );
+        for query in ["Write this down", "Save this plan", "Keep this as our plan"] {
+            assert_eq!(
+                infer_agent_intent(query, Some(AgentIntent::Plan)),
+                AgentIntent::PersistPlan,
+                "{query}"
+            );
+        }
+        assert_eq!(
+            infer_agent_intent(
+                "Write this down, but do not implement it yet",
+                Some(AgentIntent::Plan)
+            ),
+            AgentIntent::PersistPlan
         );
         for query in [
             "Proceed with the first task",

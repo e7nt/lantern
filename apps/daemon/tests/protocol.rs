@@ -102,11 +102,11 @@ impl Daemon {
 }
 
 #[test]
-fn golden_wire_fixtures_match_the_v11_types() {
-    for line in include_str!("../../../protocol/v11/requests.jsonl").lines() {
+fn golden_wire_fixtures_match_the_v12_types() {
+    for line in include_str!("../../../protocol/v12/requests.jsonl").lines() {
         serde_json::from_str::<Request>(line).expect("golden request must deserialize");
     }
-    for line in include_str!("../../../protocol/v11/events.jsonl").lines() {
+    for line in include_str!("../../../protocol/v12/events.jsonl").lines() {
         serde_json::from_str::<Event>(line).expect("golden event must deserialize");
     }
 }
@@ -653,6 +653,8 @@ elif [[ ${LANTERN_FAKE_PI_MODE:?} == investigation ]]; then
     printf '%s\n' '{"type":"tool_execution_start","toolCallId":"call-read","toolName":"read","args":{"path":"sample.rs"}}'
     printf '%s\n' '{"type":"tool_execution_end","toolCallId":"call-read","toolName":"read","result":{"content":[]},"isError":false}'
     printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Goal\nObserved\nRead existing flow.\nAffected flow\nrequest\nLikely changes\nnone yet\nOpen questions\nconfiguration\nAcceptance criteria\nexplicit behavior\nExclusions\nimplementation\nRisks\nstale configuration\nReadiness\nBlocked"}}'
+elif [[ ${LANTERN_FAKE_PI_MODE:?} == plan ]]; then
+    printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Objective\nPersist the accepted plan.\nRepository evidence\n- apps/daemon/src/main.rs\nAcceptance criteria\n- Create one editable Markdown file.\nExclusions\n- Task dashboard.\nDecisions\n- Use create-new semantics.\nTasks\n1. Serialize the plan.\nRisks and unknowns\n- Existing active plan.\nVerification\n- Prove byte-identical duplicate rejection."}}'
 elif [[ ${LANTERN_FAKE_PI_MODE:?} == tools ]]; then
     printf '%s\n' '{"type":"tool_execution_start","toolCallId":"call-read","toolName":"read","args":{"path":"sample.rs"}}'
     printf '%s\n' '{"type":"tool_execution_end","toolCallId":"call-read","toolName":"read","result":{"content":[]},"isError":false}'
@@ -1209,6 +1211,97 @@ fn investigation_uses_a_read_only_pi_profile_and_structured_brief_prompt() {
     assert!(follow_up.contains("Prior read-only investigation"));
     assert!(follow_up.contains("Read existing flow"));
     assert!(follow_up.contains("Proceed with the smallest implementation"));
+    fs::remove_dir_all(root).expect("remove repository fixture");
+    fs::remove_dir_all(driver).expect("remove driver fixture");
+}
+
+#[cfg(unix)]
+#[test]
+fn completed_plan_is_saved_once_without_a_second_model_turn() {
+    let root = fixture("persist-plan", "fn existing_flow() {}\n");
+    let driver = fixture("persist-plan-driver", "private\n");
+    let pi_bin = fake_pi(&driver);
+    let mut daemon = Daemon::spawn_with_pi(&pi_bin, &driver, "plan");
+    daemon.initialize();
+    daemon.open(&root);
+    daemon.send(&Request::AskAgent {
+        id: 39,
+        repository: root.clone(),
+        query: "Turn this into a plan".into(),
+        intent: AgentIntent::Plan,
+    });
+    while !matches!(daemon.next(), Event::Settled { id: 39 }) {}
+
+    daemon.send(&Request::AskAgent {
+        id: 40,
+        repository: root.clone(),
+        query: "Write this down".into(),
+        intent: AgentIntent::PersistPlan,
+    });
+    let mut saved = None;
+    loop {
+        match daemon.next() {
+            Event::PlanSaved {
+                id: 40,
+                relative_path,
+            } => saved = Some(relative_path),
+            Event::Settled { id: 40 } => break,
+            _ => {}
+        }
+    }
+    assert_eq!(
+        saved.as_deref(),
+        Some(Path::new(".lantern/plans/active.md"))
+    );
+    let plan_path = root.join(".lantern/plans/active.md");
+    let plan = fs::read_to_string(&plan_path).expect("read saved plan");
+    assert!(plan.starts_with(
+        "---\nlantern_plan: 1\nstatus: active\n---\n\n# Active implementation plan\n\nObjective\n"
+    ));
+    let captured_prompt =
+        fs::read_to_string(driver.join("prompt.json")).expect("read the only model prompt");
+    assert!(captured_prompt.contains("Turn this into a plan"));
+    assert!(!captured_prompt.contains("Write this down"));
+    let before = fs::read(&plan_path).expect("read plan before duplicate save");
+
+    daemon.send(&Request::AskAgent {
+        id: 41,
+        repository: root.clone(),
+        query: "Save this plan".into(),
+        intent: AgentIntent::PersistPlan,
+    });
+    let mut rejected = false;
+    loop {
+        match daemon.next() {
+            Event::Error {
+                id: Some(41),
+                message,
+                ..
+            } => rejected = message.contains("cannot create .lantern/plans/active.md"),
+            Event::Settled { id: 41 } => break,
+            _ => {}
+        }
+    }
+    assert!(rejected, "duplicate save must retain the existing plan");
+    assert_eq!(fs::read(&plan_path).expect("read retained plan"), before);
+
+    let edited = plan.replace(
+        "Persist the accepted plan.",
+        "Persist the developer-edited plan.",
+    );
+    fs::write(&plan_path, edited).expect("edit the plan as the developer");
+    daemon.send(&Request::AskAgent {
+        id: 42,
+        repository: root.clone(),
+        query: "Proceed with the first task".into(),
+        intent: AgentIntent::Implement,
+    });
+    while !matches!(daemon.next(), Event::Settled { id: 42 }) {}
+    let implementation_prompt =
+        fs::read_to_string(driver.join("prompt.json")).expect("read implementation prompt");
+    assert!(implementation_prompt.contains("Current developer-editable plan"));
+    assert!(implementation_prompt.contains("Persist the developer-edited plan"));
+    assert!(!implementation_prompt.contains("Persist the accepted plan."));
     fs::remove_dir_all(root).expect("remove repository fixture");
     fs::remove_dir_all(driver).expect("remove driver fixture");
 }

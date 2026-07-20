@@ -26,7 +26,7 @@ and tool vocabulary should not become user-facing ceremony.
   reading mode for the persistent agent pane.
 - Bounded, typed composer submission over a private session-local Unix socket;
   tmux owns presentation and focus but never transports questions.
-- Maintained Rust terminal, daemon, diagnostics, and Protocol v11 crates.
+- Maintained Rust terminal, daemon, diagnostics, and Protocol v12 crates.
 - Selection capture, exact navigation, bounded local literal search, and
   Helix-provided definition/reference context.
 - Bounded two-hop outgoing-call context from Helix's active language server,
@@ -47,6 +47,9 @@ and tool vocabulary should not become user-facing ceremony.
   completed exploratory turn, while explicit action language carries the
   refined result into the coding profile. Failed and cancelled turns are not
   retained.
+- One durable active plan: after a complete conversational plan, `Write this
+  down` creates `.lantern/plans/active.md` with a minimal versioned Markdown
+  schema and opens it in Helix. Existing plans are never overwritten.
 - Pi's pinned `read`, `grep`, `find`, `ls`, `edit`, `write`, and `bash` tools,
   launched inside the repository with typed activity in Lantern.
 - Successful edit/write activity opens the changed file in Helix; `Space-g` or
@@ -57,7 +60,7 @@ and tool vocabulary should not become user-facing ceremony.
 
 ## Current boundary
 
-Protocol v11 and the terminal open one trusted repository directly. The old
+Protocol v12 and the terminal open one trusted repository directly. The old
 policy engine, capability fields, and `/trust` commands have been removed. Pi
 runs its explicit built-in coding-tool allowlist in that repository. Raw tool
 arguments, command output, and provider stderr are not copied into Lantern's
@@ -285,6 +288,16 @@ in conversation without creating files. A bounded investigation or planning
 brief is handed once to the coding session when the developer says “proceed.”
 The exposed `/investigate` command has been removed rather than retained as a
 fallback. See the [intent-routing report](acceptance/2026-07-19-natural-language-intent-routing.md).
+
+A complete conversational plan can now become one local, developer-editable
+artifact without another provider turn. Natural phrases such as `Write this
+down` are inferred internally; Lantern validates the required headings, writes
+versioned front matter with create-new semantics, opens the file in Helix, and
+retains an existing plan byte-for-byte on duplicate save. Implementation
+reopens the current file, so developer edits are authoritative even after a
+restart. Structured revision history and implementation-chapter tracking remain
+deliberately unimplemented. See the
+[durable-plan report](acceptance/2026-07-20-durable-active-plan.md).
 
 ## Not next
 
