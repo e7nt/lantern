@@ -7,14 +7,14 @@ from deepeval.test_case import LLMTestCase
 from metrics.contract import IntentRoutingContractMetric
 
 
-DATASET_PATH = Path(__file__).parents[1] / "datasets" / "intent_routing" / "v2.json"
+DATASET_PATH = Path(__file__).parents[1] / "datasets" / "intent_routing" / "v3.json"
 
 
 @pytest.fixture(scope="module")
 def cases() -> list[dict]:
     dataset = json.loads(DATASET_PATH.read_text(encoding="utf-8"))
     assert dataset["dataset"] == "intent_routing"
-    assert dataset["version"] == 2
+    assert dataset["version"] == 3
     return dataset["cases"]
 
 

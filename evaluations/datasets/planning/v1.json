@@ -1,0 +1,15 @@
+{
+  "dataset": "planning",
+  "version": 1,
+  "cases": [
+    {
+      "id": "durable-active-plan",
+      "objective": "Persist a conversational implementation plan and open it in Helix",
+      "required_evidence": [
+        "crates/protocol/src/lib.rs",
+        "apps/daemon/src/main.rs",
+        "frontend/terminal/src/main.rs"
+      ]
+    }
+  ]
+}

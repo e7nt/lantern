@@ -114,6 +114,12 @@ hook” refine the current direction. “Do it” carries the refined result int
 coding turn. The pane shows concrete file and tool activity rather than naming
 these internal routing states.
 
+After Lantern has proposed a complete plan, `Write this down`, `Save this
+plan`, or equivalent natural language creates `.lantern/plans/active.md` and
+opens it in Helix. The file is ordinary editable Markdown with small versioned
+front matter. Lantern refuses to replace an existing active plan; rename or
+remove it only when you deliberately want to start another.
+
 Diagnostic commands remain available:
 
 - `/git` opens Lantern's focused Git review rail.

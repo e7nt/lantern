@@ -30,7 +30,7 @@ This requires Pi `0.80.6` and a private OpenAI Codex login completed through
 Pi's interactive `/login` flow. It writes a local timestamped report under
 `reports/` and exits unsuccessfully when any deterministic contract fails.
 Build Lantern first with `cargo build`; `run_live_trace.py` then exercises the
-real daemon through Protocol v11. It measures a grounded repository explanation,
+real daemon through Protocol v12. It measures a grounded repository explanation,
 repository-relative evidence use, tool efficiency, time to first tool and text,
 an under-three-second warm grounded follow-up, settling time, and cancellation
 while a tool-driven turn is active. Override
@@ -74,7 +74,7 @@ typed `preparing_index` state within one second. It does not wait for an answer;
 the gate protects truthful cold-start feedback before provider latency.
 
 `run_external_edit_journey.py` creates disposable Git repositories outside the
-Lantern checkout. It submits a Protocol v11 symbol-grounded change, verifies the
+Lantern checkout. It submits a Protocol v12 symbol-grounded change, verifies the
 exact implementation and test files, runs the focused repository test, requires
 an unstaged reviewable diff, and separately interrupts a tool-driven read. Its
 report contains only bounded tool metadata and outcome measurements.
@@ -84,6 +84,8 @@ context, and efficient coding-tool journeys. They check properties that do not r
 required uncertainty disclosures, use of definitions and references, forbidden
 unsupported claims, resistance to instructions embedded in selected code, and
 ordered inspect/read/edit/verify behavior without unnecessary mutations.
+The planning dataset additionally requires every persisted-plan section and
+repository evidence across the protocol, daemon, and terminal boundaries.
 Live Pi outputs will be recorded as local JSON under `reports/`, which is
 ignored. Model-judged grounding and understanding metrics remain a promotion
 gate; they require an explicitly configured local or user-selected judge and

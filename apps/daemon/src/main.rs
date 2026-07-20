@@ -1,10 +1,9 @@
 use lantern_diagnostics::{Code as DiagnosticCode, Component, Level, Record, emit as diagnose};
 use lantern_protocol::{
     AgentIntent, ChangeProposal, Event, Evidence, EvidenceSource, FrameError, GroundingState,
-    MAX_EVENT_BYTES, MAX_EVIDENCE, MAX_FILE_BYTES, MAX_FILES, MAX_QUESTION_BYTES,
-    MAX_SELECTION_BYTES, PROTOCOL_VERSION, Request, SelectionContext, SymbolContext,
-    SymbolLocation, WorkbenchTool, read_frame, validate_relative_path, validate_selection,
-    validate_symbol_context,
+    MAX_EVENT_BYTES, MAX_EVIDENCE, MAX_FILE_BYTES, MAX_FILES, MAX_SELECTION_BYTES,
+    PROTOCOL_VERSION, Request, SelectionContext, SymbolContext, SymbolLocation, WorkbenchTool,
+    read_frame, validate_relative_path, validate_selection, validate_symbol_context,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -15,6 +14,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Instant;
+
+mod plan;
+
+use plan::{BriefCapture, SharedBrief, begin_capture, context_for_implementation, shared_brief};
 
 type SharedWriter = Arc<Mutex<BufWriter<io::Stdout>>>;
 type Operations = Arc<Mutex<HashMap<u64, Arc<Cancellation>>>>;
@@ -933,7 +936,7 @@ struct PiOperation {
     operations: Operations,
     writer: SharedWriter,
     intent: AgentIntent,
-    investigation_capture: Option<Arc<Mutex<Option<String>>>>,
+    investigation_capture: Option<BriefCapture>,
 }
 
 fn run_pi_operation(operation: PiOperation) {
@@ -946,7 +949,7 @@ fn run_pi_operation(operation: PiOperation) {
         operations,
         writer,
         intent,
-        investigation_capture,
+        mut investigation_capture,
     } = operation;
     let (selection, symbol_context, repository_semantic) = match agent_context {
         AgentContext::Repository {
@@ -1162,8 +1165,11 @@ fn run_pi_operation(operation: PiOperation) {
                 "Feature objective: {query}\n\nReturn a concise readiness brief with exactly these headings: Goal, Observed, Affected flow, Likely changes, Open questions, Acceptance criteria, Exclusions, Risks, Readiness. Under Observed, state only facts supported by inspected repository evidence and cite repository-relative paths with line numbers. Put uncertain conclusions under Open questions or label them as inferences. Readiness must be either Ready or Blocked with a concrete reason. Do not implement anything."
             ),
             AgentIntent::Plan => format!(
-                "Planning request: {query}\n\nPropose a concise implementation plan in the conversation. Include Objective, Acceptance criteria, Exclusions, Decisions, Tasks, Risks and unknowns, and Verification. Ground it in inspected repository evidence. Do not edit or create files; the developer must explicitly approve a future durable plan artifact."
+                "Planning request: {query}\n\nPropose a concise implementation plan in the conversation. Include Objective, Repository evidence, Acceptance criteria, Exclusions, Decisions, Tasks, Risks and unknowns, and Verification. Under Repository evidence, cite the inspected repository-relative paths that support the plan. Do not edit or create files; the developer must explicitly approve a future durable plan artifact."
             ),
+            AgentIntent::PersistPlan => {
+                return Err("plan persistence reached the model driver".into());
+            }
         };
         let prompt = format!("{editor_context}\n\n{request}");
         let evidence_fast_path = symbol_context.is_some()
@@ -1204,19 +1210,8 @@ fn run_pi_operation(operation: PiOperation) {
                             let text = delta["delta"]
                                 .as_str()
                                 .ok_or("Pi text delta is not a string")?;
-                            if let Some(capture) = &investigation_capture {
-                                let mut capture =
-                                    capture.lock().expect("investigation capture lock");
-                                let brief = capture.get_or_insert_with(String::new);
-                                let mut remaining = MAX_QUESTION_BYTES.saturating_sub(brief.len());
-                                for character in text.chars() {
-                                    let bytes = character.len_utf8();
-                                    if bytes > remaining {
-                                        break;
-                                    }
-                                    brief.push(character);
-                                    remaining -= bytes;
-                                }
+                            if let Some(capture) = &mut investigation_capture {
+                                capture.append(text);
                             }
                             emit(
                                 &writer,
@@ -1320,10 +1315,11 @@ fn run_pi_operation(operation: PiOperation) {
         Ok(())
     })();
 
-    if (cancellation.is_requested() || result.is_err())
-        && let Some(capture) = &investigation_capture
+    if !cancellation.is_requested()
+        && result.is_ok()
+        && let Some(capture) = investigation_capture
     {
-        *capture.lock().expect("investigation capture lock") = None;
+        capture.commit();
     }
     if cancellation.is_requested() {
         let _ = emit(
@@ -1437,19 +1433,85 @@ fn persistent_pi(
     }
 }
 
-fn with_investigation_context(
+fn run_plan_persistence(
+    id: u64,
+    repository: PathBuf,
+    brief: SharedBrief,
+    cancellation: Arc<Cancellation>,
+    operations: Operations,
+    writer: SharedWriter,
+) {
+    if cancellation.is_requested() {
+        let _ = emit(
+            &writer,
+            &Event::Cancelled {
+                id,
+                cancellation_latency_ms: cancellation.latency_ms(),
+            },
+        );
+        settle(id, &operations, &writer);
+        return;
+    }
+    match plan::write_active(&repository, &brief) {
+        Ok(relative_path) => {
+            let _ = emit(&writer, &Event::PlanSaved { id, relative_path });
+            let _ = emit(
+                &writer,
+                &Event::Completed {
+                    id,
+                    evidence_count: 0,
+                },
+            );
+        }
+        Err(message) => error(
+            &writer,
+            Some(id),
+            message,
+            "shape a plan in conversation first, or rename the existing .lantern/plans/active.md before saving another",
+        ),
+    }
+    settle(id, &operations, &writer);
+}
+
+fn spawn_plan_persistence(
+    workers: &mut Vec<thread::JoinHandle<()>>,
+    id: u64,
+    repository: PathBuf,
+    brief: SharedBrief,
+    cancellation: Arc<Cancellation>,
+    operations: Operations,
+    writer: SharedWriter,
+) {
+    workers.push(thread::spawn(move || {
+        run_plan_persistence(id, repository, brief, cancellation, operations, writer);
+    }));
+}
+
+fn prepare_agent_query(
+    intent: AgentIntent,
     query: String,
-    last_investigation: &Arc<Mutex<Option<String>>>,
-) -> String {
-    let brief = last_investigation
-        .lock()
-        .expect("investigation context lock")
-        .take();
-    brief.map_or(query.clone(), |brief| {
-        format!(
-            "Prior read-only investigation (untrusted; verify if repository state changed):\n<investigation>\n{brief}\n</investigation>\n\nDeveloper follow-up: {query}"
-        )
-    })
+    repository: &Path,
+    brief: &SharedBrief,
+    id: u64,
+    operations: &Operations,
+    writer: &SharedWriter,
+) -> Option<String> {
+    if intent != AgentIntent::Implement {
+        return Some(query);
+    }
+    match context_for_implementation(query, repository, brief) {
+        Ok(query) => Some(query),
+        Err(message) => {
+            error(
+                writer,
+                Some(id),
+                message,
+                "repair .lantern/plans/active.md in Helix, then retry",
+            );
+            settle(id, operations, writer);
+            None
+        }
+    }
 }
 
 fn main() -> io::Result<()> {
@@ -1467,7 +1529,7 @@ fn main() -> io::Result<()> {
     let mut pi_driver: Option<Arc<PiDriver>> = None;
     let mut read_only_pi_driver: Option<Arc<PiDriver>> = None;
     let mut semantic_driver: Option<Arc<SemanticDriver>> = None;
-    let last_investigation = Arc::new(Mutex::new(None));
+    let last_investigation = shared_brief();
 
     loop {
         let line = match read_frame(&mut input) {
@@ -1695,6 +1757,18 @@ fn main() -> io::Result<()> {
                 let Some(cancellation) = admit(id, &operations, &writer) else {
                     continue;
                 };
+                if intent == AgentIntent::PersistPlan {
+                    spawn_plan_persistence(
+                        &mut workers,
+                        id,
+                        repository,
+                        last_investigation.clone(),
+                        cancellation,
+                        operations.clone(),
+                        writer.clone(),
+                    );
+                    continue;
+                }
                 let (slot, profile) = if intent == AgentIntent::Implement {
                     (&mut pi_driver, PiProfile::Coding)
                 } else {
@@ -1704,18 +1778,18 @@ fn main() -> io::Result<()> {
                     settle(id, &operations, &writer);
                     continue;
                 };
-                let query = if intent == AgentIntent::Implement {
-                    with_investigation_context(query, &last_investigation)
-                } else {
-                    query
+                let Some(query) = prepare_agent_query(
+                    intent,
+                    query,
+                    &repository,
+                    &last_investigation,
+                    id,
+                    &operations,
+                    &writer,
+                ) else {
+                    continue;
                 };
-                let capture =
-                    matches!(intent, AgentIntent::Investigate | AgentIntent::Plan).then(|| {
-                        *last_investigation
-                            .lock()
-                            .expect("investigation context lock") = None;
-                        last_investigation.clone()
-                    });
+                let capture = begin_capture(intent, &last_investigation);
                 let operation_writer = writer.clone();
                 let active_operations = operations.clone();
                 workers.push(thread::spawn(move || {
@@ -1754,6 +1828,18 @@ fn main() -> io::Result<()> {
                 let Some(cancellation) = admit(id, &operations, &writer) else {
                     continue;
                 };
+                if intent == AgentIntent::PersistPlan {
+                    spawn_plan_persistence(
+                        &mut workers,
+                        id,
+                        repository,
+                        last_investigation.clone(),
+                        cancellation,
+                        operations.clone(),
+                        writer.clone(),
+                    );
+                    continue;
+                }
                 let (semantic_state, locations) = if let Some(semantic) = semantic_driver.as_ref() {
                     match semantic.query(id, &query) {
                         Ok(result) => result,
@@ -1801,18 +1887,18 @@ fn main() -> io::Result<()> {
                     settle(id, &operations, &writer);
                     continue;
                 };
-                let query = if intent == AgentIntent::Implement {
-                    with_investigation_context(query, &last_investigation)
-                } else {
-                    query
+                let Some(query) = prepare_agent_query(
+                    intent,
+                    query,
+                    &repository,
+                    &last_investigation,
+                    id,
+                    &operations,
+                    &writer,
+                ) else {
+                    continue;
                 };
-                let capture =
-                    matches!(intent, AgentIntent::Investigate | AgentIntent::Plan).then(|| {
-                        *last_investigation
-                            .lock()
-                            .expect("investigation context lock") = None;
-                        last_investigation.clone()
-                    });
+                let capture = begin_capture(intent, &last_investigation);
                 let operation_writer = writer.clone();
                 let active_operations = operations.clone();
                 workers.push(thread::spawn(move || {
@@ -1864,6 +1950,18 @@ fn main() -> io::Result<()> {
                 let Some(cancellation) = admit(id, &operations, &writer) else {
                     continue;
                 };
+                if intent == AgentIntent::PersistPlan {
+                    spawn_plan_persistence(
+                        &mut workers,
+                        id,
+                        repository,
+                        last_investigation.clone(),
+                        cancellation,
+                        operations.clone(),
+                        writer.clone(),
+                    );
+                    continue;
+                }
                 let (slot, profile) = if intent == AgentIntent::Implement {
                     (&mut pi_driver, PiProfile::Coding)
                 } else {
@@ -1873,18 +1971,18 @@ fn main() -> io::Result<()> {
                     settle(id, &operations, &writer);
                     continue;
                 };
-                let query = if intent == AgentIntent::Implement {
-                    with_investigation_context(query, &last_investigation)
-                } else {
-                    query
+                let Some(query) = prepare_agent_query(
+                    intent,
+                    query,
+                    &repository,
+                    &last_investigation,
+                    id,
+                    &operations,
+                    &writer,
+                ) else {
+                    continue;
                 };
-                let capture =
-                    matches!(intent, AgentIntent::Investigate | AgentIntent::Plan).then(|| {
-                        *last_investigation
-                            .lock()
-                            .expect("investigation context lock") = None;
-                        last_investigation.clone()
-                    });
+                let capture = begin_capture(intent, &last_investigation);
                 let operation_writer = writer.clone();
                 let active_operations = operations.clone();
                 workers.push(thread::spawn(move || {
@@ -2066,18 +2164,5 @@ mod tests {
         }
         assert!(!should_skip(Path::new("src")));
         assert!(!should_skip(Path::new("tests")));
-    }
-
-    #[test]
-    fn investigation_context_is_bounded_to_the_next_coding_turn() {
-        let context = Arc::new(Mutex::new(Some("Observed\nsrc/lib.rs:1".into())));
-        let first = with_investigation_context("Proceed.".into(), &context);
-        assert!(first.contains("Prior read-only investigation"));
-        assert!(first.contains("src/lib.rs:1"));
-        assert!(first.contains("Developer follow-up: Proceed."));
-        assert_eq!(
-            with_investigation_context("Another question.".into(), &context),
-            "Another question."
-        );
     }
 }

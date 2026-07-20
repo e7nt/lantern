@@ -189,7 +189,7 @@ def main() -> int:
         "dataset_version": dataset["version"],
         "dataset_sha256": hashlib.sha256(dataset_bytes).hexdigest(),
         "lantern_revision": git_revision(),
-        "driver": "lantern-protocol-v11-hybrid-retrieval",
+        "driver": "lantern-protocol-v12-hybrid-retrieval",
         "pi_version": PI_VERSION,
         "provider": "openai-codex",
         "model": MODEL,
