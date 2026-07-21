@@ -88,6 +88,15 @@ test('installed launch path has explicit version and semantic overrides', async 
 	}
 });
 
+test('help explains Lantern before requiring a repository or runtime', async () => {
+	const { stdout } = await exec(path.join(root, 'scripts/launch-lantern.sh'), ['help']);
+	assert.match(stdout, /developers who love to understand and write code/);
+	assert.match(stdout, /lantern \[repository\]/);
+	assert.match(stdout, /Ctrl-a/);
+	assert.match(stdout, /Space-g/);
+	assert.match(stdout, /Ctrl-d/);
+});
+
 test('release package locks Pi and replaces only its known vulnerable nested copies', async () => {
 	const manifest = JSON.parse(
 		await readFile(path.join(root, 'packaging/pi/package.json'), 'utf8'),

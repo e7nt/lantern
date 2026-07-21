@@ -40,6 +40,7 @@ The supported macOS install and upgrade path is:
 
 ```bash
 brew install e7nt/tap/lantern
+lantern help
 brew upgrade lantern
 ```
 
