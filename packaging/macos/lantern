@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+PACKAGE_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+ROOT="$PACKAGE_ROOT/libexec/lantern"
+export LANTERN_VERSION_FILE="$ROOT/VERSION"
+export LANTERN_HELIX_BIN="$ROOT/helix/hx"
+export LANTERN_HELIX_RUNTIME="$ROOT/helix/runtime"
+export LANTERN_GIT_BIN="$ROOT/bin/lantern-git-rail"
+export LANTERN_DAEMON_BIN="$ROOT/bin/lantern-daemon"
+export LANTERN_PANE_BIN="$ROOT/bin/lantern-terminal"
+export LANTERN_SUBMIT_BIN="$ROOT/bin/lantern-submit"
+export LANTERN_PI_BIN="$ROOT/bin/pi"
+export LANTERN_SEMANTIC_WORKER="$ROOT/scripts-run-semantic-worker"
+export LANTERN_SEMANTIC_PYTHON="${HOMEBREW_PREFIX:?}/opt/python@3.12/bin/python3.12"
+export LANTERN_SEMANTIC_SERVICE="$ROOT/semantic/service"
+export LANTERN_SEMANTIC_VENDOR="$ROOT/semantic/vendor"
+export LANTERN_SEMANTIC_MODEL_CACHE="$ROOT/semantic/models"
+export LANTERN_SEMANTIC_STORAGE="${XDG_CACHE_HOME:-$HOME/Library/Caches}/lantern/semantic"
+export PATH="$ROOT/frontend/helix/bin:$ROOT/bin:$PATH"
+exec "$ROOT/scripts-launch-lantern" "$@"

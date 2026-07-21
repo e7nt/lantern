@@ -3,6 +3,7 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+VERSION_FILE=${LANTERN_VERSION_FILE:-"$ROOT/VERSION"}
 FRONTEND_DIR="$ROOT/frontend/helix"
 HELIX_BIN=${LANTERN_HELIX_BIN:-"$ROOT/.lantern/upstream/helix/target/release/hx"}
 HELIX_RUNTIME=${LANTERN_HELIX_RUNTIME:-"$ROOT/.lantern/upstream/helix/runtime"}
@@ -16,6 +17,15 @@ PI_VERSION=0.80.6
 detached=false
 session=
 runtime_dir=
+
+if [[ ${1:-} == --version ]]; then
+	if [[ ! -f $VERSION_FILE ]]; then
+		echo "Lantern version metadata is missing: $VERSION_FILE" >&2
+		exit 1
+	fi
+	printf 'lantern %s\n' "$(<"$VERSION_FILE")"
+	exit 0
+fi
 
 cleanup_failed_launch() {
 	if [[ -n $session ]] && tmux has-session -t "$session" 2>/dev/null; then

@@ -5,6 +5,7 @@
 /evaluations/reports/
 /evaluations/.venv/
 **/__pycache__/
+**/node_modules/
 
 # Rust workspace and isolated fixture build output.
 /target/
