@@ -81,6 +81,13 @@ Keep commits reviewable. Do not include credentials, source captured from a
 private workbench, machine-specific paths, generated caches, or unrelated
 formatting changes.
 
+## Contribution license
+
+Lantern is licensed under AGPL-3.0-only. By submitting a contribution, you agree
+to license that contribution under the same terms and confirm that you have the
+right to do so. The project does not require copyright assignment or grant a
+separate proprietary license through contribution.
+
 ## Reporting problems
 
 Use a GitHub issue for reproducible bugs and focused product proposals. Use the

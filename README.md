@@ -106,6 +106,18 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) for the supported environment, clean
 checkout setup, pull-request expectations, and safe reporting guidance. Report
 vulnerabilities privately according to [SECURITY.md](SECURITY.md).
 
+## License
+
+Lantern is licensed under the
+[GNU Affero General Public License v3.0 only](LICENSE). Commercial use is
+permitted, but distribution and modified network services must satisfy the
+license's corresponding-source requirements. Contributions are accepted under
+the same license without copyright assignment.
+
+The code license does not grant permission to imply endorsement by the Lantern
+project or its maintainers. `Lantern` remains a working codename that has not
+undergone trademark clearance.
+
 ## Contributor verification
 
 Lantern's maintained Rust code is one workspace with four explicit owners:
