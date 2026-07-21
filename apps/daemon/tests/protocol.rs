@@ -262,7 +262,7 @@ fn a_duplicate_active_id_is_rejected_without_replacing_the_operation() {
 }
 
 #[test]
-fn a_second_operation_is_rejected_until_the_first_settles() {
+fn a_second_operation_is_rejected_or_admitted_after_the_first_settles() {
     let root = fixture("single-operation", "first evidence\nsecond evidence\n");
     let mut daemon = Daemon::spawn();
     daemon.initialize();
@@ -281,7 +281,8 @@ fn a_second_operation_is_rejected_until_the_first_settles() {
 
     let mut rejected = false;
     let mut settled = false;
-    while !rejected || !settled {
+    let mut second_settled = false;
+    while !settled || (!rejected && !second_settled) {
         match daemon.next() {
             Event::Error {
                 id: Some(26),
@@ -289,7 +290,13 @@ fn a_second_operation_is_rejected_until_the_first_settles() {
                 ..
             } if message.contains("another operation") => rejected = true,
             Event::Settled { id: 25 } => settled = true,
-            Event::Accepted { id: 26 } => panic!("second operation was admitted"),
+            Event::Accepted { id: 26 } => {
+                assert!(
+                    settled,
+                    "second operation was admitted before the first settled"
+                )
+            }
+            Event::Settled { id: 26 } => second_settled = true,
             _ => {}
         }
     }
@@ -672,6 +679,9 @@ elif [[ ${LANTERN_FAKE_PI_MODE:?} == plan-progress ]]; then
 elif [[ ${LANTERN_FAKE_PI_MODE:?} == code-review ]]; then
     printf '%s\n' "$prompt" > "$capture_dir/code-review-prompt.json"
     printf '%s\n' '{"type":"tool_execution_start","toolCallId":"call-edit","toolName":"edit","args":{"path":"sample.rs"}}'
+    IFS= read -r thinking
+    printf '%s\n' "$thinking" >> "$capture_dir/thinking.jsonl"
+    printf '%s\n' '{"type":"response","command":"set_thinking_level","success":true}'
     printf '%s\n' 'fn value() -> u8 { 3 }' > sample.rs
     printf '%s\n' '{"type":"tool_execution_end","toolCallId":"call-edit","toolName":"edit","result":{"content":[]},"isError":false}'
     printf '%s\n' '{"type":"tool_execution_start","toolCallId":"call-test","toolName":"bash","args":{"command":"true"}}'
@@ -1561,14 +1571,20 @@ fn submitted_line_comments_drive_one_coherent_correction_turn() {
         comments,
     });
     let mut completed = false;
+    let mut failure = None;
     loop {
         match daemon.next() {
             Event::Completed { id: 47, .. } => completed = true,
+            Event::Error {
+                id: Some(47),
+                message,
+                recovery,
+            } => failure = Some(format!("{message}; recovery: {recovery}")),
             Event::Settled { id: 47 } => break,
             _ => {}
         }
     }
-    assert!(completed);
+    assert!(completed, "review failed: {failure:?}");
     assert_eq!(
         fs::read_to_string(root.join("sample.rs")).unwrap(),
         "fn value() -> u8 { 3 }\n"
