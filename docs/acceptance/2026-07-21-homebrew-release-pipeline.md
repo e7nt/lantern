@@ -48,6 +48,13 @@ three maintained environments: Linux, Apple Silicon macOS, and Intel macOS.
 - The complete canonical local gate passes.
 - One hundred consecutive serialized daemon protocol-suite runs pass after the
   lifecycle fixes discovered by the first clean GitHub runs.
+- Private workflow run
+  [`29847615493`](https://github.com/e7nt/lantern/actions/runs/29847615493)
+  packages and smoke-tests both architectures successfully: Apple Silicon in
+  10m25s and Intel in 12m53s. Its publish job is skipped by design.
+- The downloaded 482,048,273-byte arm64 and 484,980,447-byte x86_64 archives
+  match their generated SHA-256 digests and contain one architecture-specific
+  top-level directory each.
 
 ## Required evidence before the first tag
 

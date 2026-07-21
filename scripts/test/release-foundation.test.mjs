@@ -80,4 +80,5 @@ test('release package locks Pi and replaces only its known vulnerable nested cop
 	assert.match(packager, /== 5\.0\.7/);
 	assert.match(packager, /== 7\.6\.5/);
 	assert.match(packager, /onnxruntime==1\.23\.2/);
+	assert.match(packager, /shasum -a 256 \"\$\(basename \"\$ARCHIVE\"\)\"/);
 });
