@@ -11,7 +11,9 @@ usage() {
 run_rust() {
 	cd "$ROOT"
 	cargo fmt --all --check
-	cargo test --workspace --all-targets
+	# Process-level protocol journeys coordinate child lifecycles and bounded
+	# deadlines. Serialize them so machine load cannot change their contract.
+	cargo test --workspace --all-targets -- --test-threads=1
 	cargo clippy --workspace --all-targets -- -D warnings
 	cargo build --workspace --release --locked
 }

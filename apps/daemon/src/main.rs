@@ -525,8 +525,10 @@ fn admit(id: u64, operations: &Operations, writer: &SharedWriter) -> Option<Arc<
 }
 
 fn settle(id: u64, operations: &Operations, writer: &SharedWriter) {
-    operations.lock().expect("operations lock").remove(&id);
+    let mut active = operations.lock().expect("operations lock");
+    active.remove(&id);
     let _ = emit(writer, &Event::Settled { id });
+    drop(active);
     let _ = diagnose(
         &Record::new(
             Level::Info,
