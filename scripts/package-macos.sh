@@ -62,6 +62,20 @@ install -m 0755 "$ROOT/scripts/run-semantic-worker.sh" "$INSTALL_ROOT/scripts-ru
 install -m 0755 "$HELIX_ROOT/target/release/hx" "$INSTALL_ROOT/helix/hx"
 HELIX_RUNTIME="$INSTALL_ROOT/helix/runtime"
 mkdir -p "$HELIX_RUNTIME"
+mkdir -p "$HELIX_RUNTIME/grammars"
+while IFS= read -r grammar; do
+	[[ -z $grammar || $grammar == \#* ]] && continue
+	if [[ ! $grammar =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
+		echo "Invalid Helix grammar name: $grammar" >&2
+		exit 1
+	fi
+	compiled_grammar="$HELIX_ROOT/runtime/grammars/$grammar.dylib"
+	if [[ ! -f $compiled_grammar ]]; then
+		echo "Compiled Helix grammar is missing: $grammar" >&2
+		exit 1
+	fi
+	install -m 0755 "$compiled_grammar" "$HELIX_RUNTIME/grammars/$grammar.dylib"
+done <"$ROOT/packaging/helix-grammars.txt"
 while IFS= read -r relative_path; do
 	[[ -z $relative_path || $relative_path == \#* ]] && continue
 	source_path="$HELIX_ROOT/runtime/$relative_path"

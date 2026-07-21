@@ -8,6 +8,7 @@ HELIX_DIR="$ROOT/.lantern/upstream/helix"
 SEMANTIC_SERVICE="$ROOT/services/semantic-index"
 SEMANTIC_ENV="$ROOT/.lantern/toolchains/semantic-index"
 SEMANTIC_MODEL_CACHE="$ROOT/.lantern/toolchains/semantic-models"
+GRAMMAR_MANIFEST="$ROOT/packaging/helix-grammars.txt"
 HELIX_REVISION=14d6bc0febed9c692048271a8ae2362ac969c6e0
 HELIX_REPOSITORY=https://github.com/helix-editor/helix.git
 HELIX_PATCHES=(
@@ -98,6 +99,32 @@ else
 fi
 
 cargo build --release --locked --manifest-path "$HELIX_DIR/Cargo.toml"
+
+GRAMMAR_CONFIG=$(mktemp -d "${TMPDIR:-/tmp}/lantern-helix-grammars.XXXXXXXX")
+cleanup_grammar_config() {
+	rm -rf "$GRAMMAR_CONFIG"
+}
+trap cleanup_grammar_config EXIT
+mkdir -p "$GRAMMAR_CONFIG/helix"
+{
+	printf 'use-grammars = { only = [\n'
+	while IFS= read -r grammar; do
+		[[ -z $grammar || $grammar == \#* ]] && continue
+		if [[ ! $grammar =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
+			echo "Invalid Helix grammar name: $grammar" >&2
+			exit 1
+		fi
+		printf '\t"%s",\n' "$grammar"
+	done <"$GRAMMAR_MANIFEST"
+	printf '] }\n'
+} >"$GRAMMAR_CONFIG/helix/languages.toml"
+env XDG_CONFIG_HOME="$GRAMMAR_CONFIG" HELIX_RUNTIME="$HELIX_DIR/runtime" \
+	"$HELIX_DIR/target/release/hx" --grammar fetch
+env XDG_CONFIG_HOME="$GRAMMAR_CONFIG" HELIX_RUNTIME="$HELIX_DIR/runtime" \
+	"$HELIX_DIR/target/release/hx" --grammar build
+cleanup_grammar_config
+trap - EXIT
+
 cargo build --release --locked --manifest-path "$ROOT/Cargo.toml"
 
 UV_PROJECT_ENVIRONMENT="$SEMANTIC_ENV" uv sync --locked --project "$SEMANTIC_SERVICE"

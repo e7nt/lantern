@@ -103,18 +103,30 @@ test('release package locks Pi and replaces only its known vulnerable nested cop
 	assert.match(packager, /onnxruntime==1\.23\.2/);
 	assert.match(packager, /shasum -a 256 \"\$\(basename \"\$ARCHIVE\"\)\"/);
 	assert.match(packager, /packaging\/helix-runtime-manifest\.txt/);
+	assert.match(packager, /packaging\/helix-grammars\.txt/);
 	assert.doesNotMatch(packager, /cp -R \"\$HELIX_ROOT\/runtime\"/);
 });
 
 test('packaged Helix runtime is an explicit supported-language allowlist', async () => {
+	const preparer = await readFile(
+		path.join(root, 'frontend/helix/prepare.sh'),
+		'utf8',
+	);
+	const grammars = await readFile(
+		path.join(root, 'packaging/helix-grammars.txt'),
+		'utf8',
+	);
 	const manifest = await readFile(
 		path.join(root, 'packaging/helix-runtime-manifest.txt'),
 		'utf8',
 	);
-	assert.match(manifest, /grammars\/python\.so/);
-	assert.match(manifest, /grammars\/javascript\.so/);
-	assert.match(manifest, /grammars\/typescript\.so/);
-	assert.match(manifest, /grammars\/tsx\.so/);
+	assert.match(grammars, /^python$/m);
+	assert.match(grammars, /^javascript$/m);
+	assert.match(grammars, /^typescript$/m);
+	assert.match(grammars, /^tsx$/m);
 	assert.match(manifest, /queries\/_javascript/);
-	assert.doesNotMatch(manifest, /grammars\/sources/);
+	assert.doesNotMatch(`${grammars}\n${manifest}`, /grammars\/sources|\.so|\.dylib/);
+	assert.match(preparer, /helix-grammars\.txt/);
+	assert.match(preparer, /--grammar fetch/);
+	assert.match(preparer, /--grammar build/);
 });
