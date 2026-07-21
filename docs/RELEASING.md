@@ -72,6 +72,10 @@ lantern --version
 lantern /path/to/a/git/repository
 ```
 
+Maintainers must also run the `Homebrew install acceptance` workflow. It
+installs the public formula and launches the shipped workbench against a fresh
+Git repository on both supported macOS architectures.
+
 After a later release:
 
 ```bash
