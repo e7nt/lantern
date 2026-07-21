@@ -367,9 +367,10 @@ A legal open-source license is now explicit: Lantern uses AGPL-3.0-only so
 commercial use remains possible while modified network services retain a
 corresponding-source obligation. A tag-only release pipeline now builds
 checksum-pinned Apple Silicon and Intel workbench archives, attests them, and
-updates `e7nt/homebrew-tap`. It refuses to publish while the source repository
-is private. Fresh-machine macOS installation, Linux artifacts,
-dependency-license auditing, and real upgrade behavior remain unverified. See the
+updates `e7nt/homebrew-tap`. Public `v0.1.0` is installed and launched from that
+tap on clean Apple Silicon and Intel runners. Linux artifacts,
+dependency-license auditing, and real cross-version upgrade behavior remain
+unverified. See the
 [foundation report](acceptance/2026-07-21-open-source-foundation.md).
 The focused legal decision and verification are recorded in the
 [AGPL licensing checkpoint](acceptance/2026-07-21-agpl-license.md).
