@@ -2,10 +2,11 @@
 name = "lantern-semantic-index"
 version = "0.1.0"
 license = "AGPL-3.0-only"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 dependencies = [
   "fastembed==0.8.0",
   "numpy==2.4.3",
+  "onnxruntime==1.23.2",
   "tree-sitter-language-pack==1.12.5",
 ]
 
