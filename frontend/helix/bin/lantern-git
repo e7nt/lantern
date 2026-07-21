@@ -30,24 +30,36 @@ if ((client_width < 120)); then
 	exit 1
 fi
 
-# Git is a narrow rail over the left edge of the upper Helix region. The
-# 80% height preserves list navigation without covering the full-width agent
-# terminal below. It exits back to the unchanged editor process.
-status=0
-tmux display-popup \
-	-E \
-	-w '10%' \
-	-h '80%' \
-	-x 0 \
-	-y 0 \
-	-d "$LANTERN_REPO" \
-env LANTERN_REPO="$LANTERN_REPO" LANTERN_REVIEW_PATH="$LANTERN_REVIEW_PATH" \
-	LANTERN_GIT_RESUME_PATH="$LANTERN_GIT_RESUME_PATH" \
-	LANTERN_GIT_FOCUS_PATH="$LANTERN_GIT_FOCUS_PATH" \
-	LANTERN_CONTROL_SOCKET="$LANTERN_CONTROL_SOCKET" \
-	"$LANTERN_GIT_BIN" || status=$?
+# Browse in the narrow rail; review in the editor-sized canvas. Both modes stay
+# above the full-width agent terminal and exchange only bounded resume state.
+layout=compact
+while true; do
+	status=0
+	if [[ $layout == compact ]]; then
+		width='10%'
+		x=0
+	else
+		width='80%'
+		x='10%'
+	fi
+	tmux display-popup \
+		-E \
+		-w "$width" \
+		-h '80%' \
+		-x "$x" \
+		-y 0 \
+		-d "$LANTERN_REPO" \
+	env LANTERN_REPO="$LANTERN_REPO" LANTERN_REVIEW_PATH="$LANTERN_REVIEW_PATH" \
+		LANTERN_GIT_RESUME_PATH="$LANTERN_GIT_RESUME_PATH" \
+		LANTERN_GIT_FOCUS_PATH="$LANTERN_GIT_FOCUS_PATH" \
+		LANTERN_CONTROL_SOCKET="$LANTERN_CONTROL_SOCKET" \
+		LANTERN_GIT_LAYOUT="$layout" \
+		"$LANTERN_GIT_BIN" || status=$?
 
-if ((status == 20)); then
-	exec lantern-agent-composer
-fi
-exit "$status"
+	case $status in
+	20) exec lantern-agent-composer ;;
+	21) layout=review ;;
+	22) layout=compact ;;
+	*) exit "$status" ;;
+	esac
+done

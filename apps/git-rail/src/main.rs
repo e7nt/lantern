@@ -13,8 +13,10 @@ use lantern_git_rail::{Cancellation, Commit, DiffHunk, GitRail, GitResult, Statu
 use lantern_protocol::{
     AgentGitFocus, CodeReviewAnchor, CodeReviewComment, ControlRequest, GitReviewContext,
     GitReviewScope, GitReviewState, MAX_AGENT_GIT_FOCUS_BYTES, MAX_CODE_REVIEW_COMMENT_BYTES,
-    MAX_SELECTION_BYTES, validate_agent_git_focus, validate_code_review, validate_git_review,
+    MAX_CODE_REVIEW_COMMENTS, MAX_SELECTION_BYTES, validate_agent_git_focus, validate_code_review,
+    validate_git_review,
 };
+use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
 use std::io::{self, Stdout, Write};
@@ -55,6 +57,34 @@ const ACTIONS: [&str; 5] = ["Commit", "Branches", "Fetch", "Pull", "History"];
 const HISTORY_LIMIT: usize = 20;
 const REFRESH_INTERVAL: Duration = Duration::from_millis(750);
 const ASK_AGENT_EXIT_CODE: i32 = 20;
+const EXPAND_REVIEW_EXIT_CODE: i32 = 21;
+const COLLAPSE_REVIEW_EXIT_CODE: i32 = 22;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Layout {
+    Compact,
+    Review,
+}
+
+impl Layout {
+    fn from_environment() -> Result<Self, String> {
+        match env::var("LANTERN_GIT_LAYOUT").as_deref() {
+            Ok("compact") => Ok(Self::Compact),
+            Ok("review") => Ok(Self::Review),
+            Ok(value) => Err(format!("Unknown Lantern Git layout: {value}")),
+            Err(_) => Err("Lantern Git layout is not configured.".into()),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct GitResume {
+    review: GitReviewContext,
+    diff_line: usize,
+    offset: usize,
+    pending_review_comments: usize,
+}
 
 #[derive(Clone, Copy)]
 enum InputKind {
@@ -338,6 +368,27 @@ impl State {
             .selected
             .saturating_add_signed(amount)
             .min(self.changes.len() - 1);
+    }
+
+    fn move_review_file(&mut self, rail: &GitRail, amount: isize) {
+        if self.changes.is_empty() {
+            return;
+        }
+        let mut candidate = self.selected;
+        loop {
+            let next = candidate
+                .saturating_add_signed(amount)
+                .min(self.changes.len() - 1);
+            if next == candidate {
+                return;
+            }
+            candidate = next;
+            if self.changes[candidate].kind != ChangeKind::Conflicted {
+                self.selected = candidate;
+                self.open_diff(rail);
+                return;
+            }
+        }
     }
 
     fn toggle_stage(&mut self, rail: &GitRail) {
@@ -746,12 +797,29 @@ impl State {
             .ok_or("Lantern Git resume path is not configured.")?;
         let payload = serde_json::to_vec(&context)
             .map_err(|error| format!("Cannot encode Git review context: {error}"))?;
-        publish_context(&resume, &payload)?;
+        self.publish_resume_context(rail, &resume)?;
         if let Err(message) = publish_context(&destination, &payload) {
             let _ = fs::remove_file(resume);
             return Err(message);
         }
         Ok(())
+    }
+
+    fn publish_resume_context(&self, rail: &GitRail, destination: &Path) -> Result<(), String> {
+        let review = self.review_context(rail)?;
+        let (diff_line, offset) = match &self.view {
+            View::Diff { cursor, offset, .. } => (*cursor, *offset),
+            _ => (0, 0),
+        };
+        let resume = GitResume {
+            review,
+            diff_line,
+            offset,
+            pending_review_comments: self.pending_review_comments,
+        };
+        let payload = serde_json::to_vec(&resume)
+            .map_err(|error| format!("Cannot encode Git review position: {error}"))?;
+        publish_context(destination, &payload)
     }
 
     fn code_review_anchor(&self, rail: &GitRail) -> Result<CodeReviewAnchor, String> {
@@ -826,7 +894,7 @@ impl State {
         send_control_request(&ControlRequest::SubmitCodeReview)
     }
 
-    fn restore_review_context(&mut self, rail: &GitRail, path: &Path) {
+    fn restore_review_context(&mut self, rail: &GitRail, path: &Path, open_diff: bool) {
         let Ok(bytes) = fs::read(path) else {
             return;
         };
@@ -835,15 +903,39 @@ impl State {
             self.notice = Some("Saved Git review context exceeded its bound.".into());
             return;
         }
-        let Ok(context) = serde_json::from_slice::<GitReviewContext>(&bytes) else {
+        let Ok(resume) = serde_json::from_slice::<GitResume>(&bytes) else {
             self.notice = Some("Saved Git review context was invalid.".into());
             return;
         };
-        if let Err(message) = validate_git_review(&context) {
+        if let Err(message) = validate_git_review(&resume.review) {
             self.notice = Some(message);
             return;
         }
-        self.restore_review(rail, &context);
+        if resume.pending_review_comments > MAX_CODE_REVIEW_COMMENTS {
+            self.notice = Some("Saved Git review count was invalid.".into());
+            return;
+        }
+        self.restore_review(rail, &resume.review);
+        self.pending_review_comments = resume.pending_review_comments;
+        if open_diff {
+            if let View::Diff {
+                hunks,
+                selected,
+                cursor,
+                offset,
+                ..
+            } = &mut self.view
+            {
+                let line_count = hunks
+                    .get(*selected)
+                    .map(|hunk| String::from_utf8_lossy(hunk.display()).lines().count())
+                    .unwrap_or(0);
+                *cursor = resume.diff_line.min(line_count.saturating_sub(1));
+                *offset = resume.offset.min(line_count.saturating_sub(1));
+            }
+        } else {
+            self.view = View::Changes;
+        }
     }
 
     fn restore_review(&mut self, rail: &GitRail, context: &GitReviewContext) {
@@ -1328,6 +1420,7 @@ fn draw_help(stdout: &mut Stdout, view: &View, width: u16, height: u16) -> io::R
             "Diff help",
             &[
                 "↑/k ↓/j  select line",
+                "p/n  previous/next file",
                 "[/]  previous/next hunk",
                 "c/right click  comment",
                 "R  submit review",
@@ -1336,7 +1429,7 @@ fn draw_help(stdout: &mut Stdout, view: &View, width: u16, height: u16) -> io::R
                 "Ctrl-a  ask Lantern",
                 "mouse wheel  scroll",
                 "mouse: middle open",
-                "Esc  changes",
+                "Esc  collapse review",
             ],
         ),
         View::Actions { .. } => (
@@ -1692,16 +1785,22 @@ fn reviewable_diff_line(display: &[u8]) -> usize {
 enum RunOutcome {
     Closed,
     AskAgent,
+    ExpandReview,
+    CollapseReview,
 }
 
 fn run() -> Result<RunOutcome, String> {
+    let layout = Layout::from_environment()?;
     let repository = env::var_os("LANTERN_REPO").map(PathBuf::from).unwrap_or(
         env::current_dir().map_err(|cause| format!("cannot read current directory: {cause}"))?,
     );
     let rail = GitRail::open(&repository).map_err(|error| error.to_string())?;
     let mut state = State::load(&rail)?;
-    if let Some(path) = env::var_os("LANTERN_GIT_RESUME_PATH").map(PathBuf::from) {
-        state.restore_review_context(&rail, &path);
+    let resume_path = env::var_os("LANTERN_GIT_RESUME_PATH")
+        .map(PathBuf::from)
+        .ok_or("Lantern Git resume path is not configured.")?;
+    if resume_path.exists() {
+        state.restore_review_context(&rail, &resume_path, layout == Layout::Review);
     }
     if let Some(path) = env::var_os("LANTERN_GIT_FOCUS_PATH").map(PathBuf::from) {
         state.focus_agent_changes(&path);
@@ -1783,7 +1882,16 @@ fn run() -> Result<RunOutcome, String> {
                         {
                             state.open_selected_in_helix()
                         }
-                        KeyCode::Enter | KeyCode::Char('d') => state.open_diff(&rail),
+                        KeyCode::Enter | KeyCode::Char('d') => {
+                            state.open_diff(&rail);
+                            if layout == Layout::Compact && matches!(state.view, View::Diff { .. })
+                            {
+                                match state.publish_resume_context(&rail, &resume_path) {
+                                    Ok(()) => break RunOutcome::ExpandReview,
+                                    Err(message) => state.notice = Some(message),
+                                }
+                            }
+                        }
                         KeyCode::Char('o') => state.open_selected_in_helix(),
                         KeyCode::Char('r') => state.refresh(&rail),
                         KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -1796,6 +1904,12 @@ fn run() -> Result<RunOutcome, String> {
                         _ => {}
                     },
                     View::Diff { .. } => match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') if layout == Layout::Review => {
+                            match state.publish_resume_context(&rail, &resume_path) {
+                                Ok(()) => break RunOutcome::CollapseReview,
+                                Err(message) => state.notice = Some(message),
+                            }
+                        }
                         KeyCode::Esc | KeyCode::Char('q') => state.view = View::Changes,
                         KeyCode::Up | KeyCode::Char('k') => state.move_diff_line(-1),
                         KeyCode::Down | KeyCode::Char('j') => state.move_diff_line(1),
@@ -1803,6 +1917,8 @@ fn run() -> Result<RunOutcome, String> {
                         KeyCode::PageDown => state.move_diff_line(10),
                         KeyCode::Char('[') => state.move_hunk(-1),
                         KeyCode::Char(']') => state.move_hunk(1),
+                        KeyCode::Char('p') => state.move_review_file(&rail, -1),
+                        KeyCode::Char('n') => state.move_review_file(&rail, 1),
                         KeyCode::Char('c') => state.start_code_review_comment(&rail),
                         KeyCode::Char('R') => match state.submit_code_review() {
                             Ok(()) => break RunOutcome::Closed,
@@ -1912,6 +2028,14 @@ fn run() -> Result<RunOutcome, String> {
                                 state.open_selected_in_helix();
                             } else {
                                 state.open_diff(&rail);
+                                if layout == Layout::Compact
+                                    && matches!(state.view, View::Diff { .. })
+                                {
+                                    match state.publish_resume_context(&rail, &resume_path) {
+                                        Ok(()) => break RunOutcome::ExpandReview,
+                                        Err(message) => state.notice = Some(message),
+                                    }
+                                }
                             }
                         } else {
                             state.selected = index;
@@ -2017,6 +2141,8 @@ fn main() {
     match run() {
         Ok(RunOutcome::Closed) => {}
         Ok(RunOutcome::AskAgent) => std::process::exit(ASK_AGENT_EXIT_CODE),
+        Ok(RunOutcome::ExpandReview) => std::process::exit(EXPAND_REVIEW_EXIT_CODE),
+        Ok(RunOutcome::CollapseReview) => std::process::exit(COLLAPSE_REVIEW_EXIT_CODE),
         Err(message) => {
             eprintln!("{message}");
             std::process::exit(1);
@@ -2240,11 +2366,50 @@ mod tests {
         assert!(matches!(state.view, View::Diff { selected: 2, .. }));
 
         let resume = root.join("resume.json");
-        fs::write(&resume, serde_json::to_vec(&review).unwrap()).unwrap();
+        fs::write(
+            &resume,
+            serde_json::to_vec(&GitResume {
+                review: review.clone(),
+                diff_line: 1,
+                offset: 1,
+                pending_review_comments: 4,
+            })
+            .unwrap(),
+        )
+        .unwrap();
         let mut restored = State::load(&rail).expect("reload Git rail");
-        restored.restore_review_context(&rail, &resume);
-        assert!(matches!(restored.view, View::Diff { selected: 2, .. }));
+        restored.restore_review_context(&rail, &resume, true);
+        assert!(matches!(
+            restored.view,
+            View::Diff {
+                selected: 2,
+                cursor: 1,
+                offset: 1,
+                ..
+            }
+        ));
+        assert_eq!(restored.pending_review_comments, 4);
         assert!(!resume.exists());
+
+        fs::write(
+            &resume,
+            serde_json::to_vec(&GitResume {
+                review,
+                diff_line: 1,
+                offset: 1,
+                pending_review_comments: 4,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let mut collapsed = State::load(&rail).expect("reload compact Git rail");
+        collapsed.restore_review_context(&rail, &resume, false);
+        assert!(matches!(collapsed.view, View::Changes));
+        assert_eq!(
+            collapsed.changes[collapsed.selected].path,
+            Path::new("tracked.txt")
+        );
+        assert_eq!(collapsed.pending_review_comments, 4);
 
         fs::write(
             root.join("tracked.txt"),

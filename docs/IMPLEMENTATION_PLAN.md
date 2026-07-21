@@ -531,6 +531,10 @@ The detailed interaction contract is in
 - `P7-03` Add exact-line, batched review comments over modified and staged Git
   hunks. Protocol v15 implements one explicit submission and coherent
   correction turn; real-journey validation remains.
+- `P7-03a` Expand the compact Git rail into an editor-sized review canvas when a
+  diff opens, then collapse without losing the file, hunk, line, scroll
+  position, or pending review count. Implemented in the focused Git surface;
+  live visual validation remains.
 - `P7-03` Link changed behavior to tests and command results.
 - `P7-04` Record commands, exit status, duration, and redacted output summaries.
 - `P7-05` Distinguish passed, failed, skipped, and unverified criteria.
