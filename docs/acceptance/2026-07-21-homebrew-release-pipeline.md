@@ -67,6 +67,10 @@ three maintained environments: Linux, Apple Silicon macOS, and Intel macOS.
 - The first successful installed launch then exposed that the wrapper omitted
   its declared Homebrew Git dependency from the sanitized runtime `PATH`. The
   formula now provides Git's stable `opt_bin` alongside its other dependencies.
+- GitHub's Intel runner preloads python.org 3.12 symlinks into Homebrew's
+  `/usr/local/bin`, which is not a clean Homebrew prefix and prevents the
+  declared Python dependency from linking. Acceptance removes only symlinks
+  targeting that exact runner-managed framework before testing installation.
 
 ## Required evidence before the first tag
 
