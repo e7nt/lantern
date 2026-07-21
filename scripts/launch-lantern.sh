@@ -18,6 +18,33 @@ detached=false
 session=
 runtime_dir=
 
+print_help() {
+	cat <<'EOF'
+Lantern is an AI coding environment for developers who love to understand and write code.
+It keeps you in the editor while you ask questions, shape changes, and review the result.
+
+Usage:
+  lantern [repository]   Open a Git repository (defaults to the current directory)
+  lantern help           Show this guide
+  lantern --version      Show the installed version
+
+Inside Lantern:
+  Ctrl-a    Ask about the repository or selected code
+  F2        Expand or restore the agent conversation
+  Space-g   Open changes for review and staging
+  Esc       Interrupt the active agent turn
+  Ctrl-d    Quit from an empty, idle agent prompt
+
+Use natural language. Ask what code does, request a change, or comment directly
+on a diff; Lantern keeps the code and your review at the center of the work.
+EOF
+}
+
+if [[ ${1:-} == help || ${1:-} == -h || ${1:-} == --help ]]; then
+	print_help
+	exit 0
+fi
+
 if [[ ${1:-} == --version ]]; then
 	if [[ ! -f $VERSION_FILE ]]; then
 		echo "Lantern version metadata is missing: $VERSION_FILE" >&2

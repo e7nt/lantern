@@ -1281,6 +1281,16 @@ fn export_diagnostics(state: &mut UiState, diagnostics: &Arc<Mutex<BoundedTail>>
     }
 }
 
+fn show_help(state: &mut UiState) {
+    state.line("Lantern helps you understand and write code without giving up authorship.");
+    state.line("Ask · Use natural language, or select code in Helix and press Ctrl-a.");
+    state.line("Build · Ask Lantern to implement or fix something; Esc interrupts active work.");
+    state.line("Review · Press Space-g in Helix or type /git, then comment on exact diff lines.");
+    state.line("Plan · Ask for a plan, refine it in conversation, or edit the Markdown yourself.");
+    state.line("View · F2 expands the conversation and restores the editor.");
+    state.line("Quit · Type /quit, or press Ctrl-d at an empty idle prompt.");
+}
+
 fn handle_line(
     line: String,
     state: &mut UiState,
@@ -1304,6 +1314,10 @@ fn handle_line(
     }
     if line == "/git" {
         open_git(state);
+        return Ok(false);
+    }
+    if line == "/help" {
+        show_help(state);
         return Ok(false);
     }
     if line == "/refresh" || line.is_empty() {
@@ -1364,7 +1378,7 @@ fn handle_line(
             Err(message) => state.line(message),
         }
     } else if line.starts_with('/') {
-        state.line("Unknown diagnostic command.");
+        state.line("Unknown command. Type /help to see Lantern's capabilities.");
     } else {
         start_agent_question(
             state,
@@ -2444,6 +2458,26 @@ mod tests {
         assert!(is_quit_shortcut(ctrl_d, false, true));
         assert!(!is_quit_shortcut(ctrl_d, true, true));
         assert!(!is_quit_shortcut(ctrl_d, false, false));
+    }
+
+    #[test]
+    fn help_explains_authorship_and_the_small_interaction_surface() {
+        let mut state = UiState::new(Path::new("."));
+        show_help(&mut state);
+        let text = state
+            .transcript
+            .iter()
+            .filter_map(|item| match item {
+                TranscriptItem::Line(line) => Some(line.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("without giving up authorship"));
+        assert!(text.contains("natural language"));
+        assert!(text.contains("Ctrl-a"));
+        assert!(text.contains("Space-g"));
+        assert!(text.contains("/quit"));
     }
 
     #[test]

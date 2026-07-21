@@ -123,6 +123,7 @@ remove it only when you deliberately want to start another.
 
 Diagnostic commands remain available:
 
+- `/help` explains Lantern's purpose, capabilities, and essential interactions.
 - `/git` opens Lantern's focused Git review rail.
 - `/preview <one-line replacement>` shows a transient unified diff for the
   selected text; closing it leaves the repository unchanged.
