@@ -1,0 +1,15 @@
+{
+  "dataset": "code_review",
+  "version": 1,
+  "cases": [
+    {
+      "id": "two-line-one-correction",
+      "comments": [
+        "Return three instead.",
+        "Keep this function signature unchanged."
+      ],
+      "required": ["return three", "signature", "focused test"],
+      "forbidden": ["ignored the second comment", "all tests passed", "changed the public api"]
+    }
+  ]
+}

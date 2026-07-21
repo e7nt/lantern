@@ -1,6 +1,7 @@
 use lantern_diagnostics::{Code as DiagnosticCode, Record as DiagnosticRecord};
 use lantern_protocol::{
-    AgentIntent, Event, Evidence, EvidenceSource, GroundingState, MAX_FILES, MAX_FRAME_BYTES,
+    AgentIntent, CodeReviewAnchor, CodeReviewComment, Event, Evidence, EvidenceSource,
+    GitReviewContext, GitReviewScope, GitReviewState, GroundingState, MAX_FILES, MAX_FRAME_BYTES,
     PROTOCOL_VERSION, PlanReviewComment, Request, SelectionContext, SymbolCall, SymbolContext,
     SymbolLocation, WorkbenchTool,
 };
@@ -102,11 +103,11 @@ impl Daemon {
 }
 
 #[test]
-fn golden_wire_fixtures_match_the_v14_types() {
-    for line in include_str!("../../../protocol/v14/requests.jsonl").lines() {
+fn golden_wire_fixtures_match_the_v15_types() {
+    for line in include_str!("../../../protocol/v15/requests.jsonl").lines() {
         serde_json::from_str::<Request>(line).expect("golden request must deserialize");
     }
-    for line in include_str!("../../../protocol/v14/events.jsonl").lines() {
+    for line in include_str!("../../../protocol/v15/events.jsonl").lines() {
         serde_json::from_str::<Event>(line).expect("golden event must deserialize");
     }
 }
@@ -668,6 +669,14 @@ elif [[ ${LANTERN_FAKE_PI_MODE:?} == plan-progress ]]; then
     printf '%s\n' '{"type":"tool_execution_start","toolCallId":"call-test","toolName":"bash","args":{"command":"true"}}'
     printf '%s\n' '{"type":"tool_execution_end","toolCallId":"call-test","toolName":"bash","result":{"content":[]},"isError":false}'
     printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Changed the value and verified it."}}'
+elif [[ ${LANTERN_FAKE_PI_MODE:?} == code-review ]]; then
+    printf '%s\n' "$prompt" > "$capture_dir/code-review-prompt.json"
+    printf '%s\n' '{"type":"tool_execution_start","toolCallId":"call-edit","toolName":"edit","args":{"path":"sample.rs"}}'
+    printf '%s\n' 'fn value() -> u8 { 3 }' > sample.rs
+    printf '%s\n' '{"type":"tool_execution_end","toolCallId":"call-edit","toolName":"edit","result":{"content":[]},"isError":false}'
+    printf '%s\n' '{"type":"tool_execution_start","toolCallId":"call-test","toolName":"bash","args":{"command":"true"}}'
+    printf '%s\n' '{"type":"tool_execution_end","toolCallId":"call-test","toolName":"bash","result":{"content":[]},"isError":false}'
+    printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Addressed both review comments and verified the correction."}}'
 elif [[ ${LANTERN_FAKE_PI_MODE:?} == tools ]]; then
     printf '%s\n' '{"type":"tool_execution_start","toolCallId":"call-read","toolName":"read","args":{"path":"sample.rs"}}'
     printf '%s\n' '{"type":"tool_execution_end","toolCallId":"call-read","toolName":"read","result":{"content":[]},"isError":false}'
@@ -1483,6 +1492,92 @@ fn successful_implementation_stages_a_separate_plan_checkpoint() {
             .unwrap()
             .contains("[x] Change the value")
     );
+    fs::remove_dir_all(root).expect("remove repository fixture");
+    fs::remove_dir_all(driver).expect("remove driver fixture");
+}
+
+#[cfg(unix)]
+#[test]
+fn submitted_line_comments_drive_one_coherent_correction_turn() {
+    let root = fixture("code-review", "fn value() -> u8 { 1 }\n");
+    for arguments in [
+        &["init", "-q"][..],
+        &["config", "user.name", "Lantern Test"],
+        &["config", "user.email", "lantern@example.invalid"],
+        &["add", "sample.rs"],
+        &["commit", "-qm", "fixture"],
+    ] {
+        assert!(
+            Command::new("git")
+                .args(arguments)
+                .current_dir(&root)
+                .status()
+                .expect("run fixture git")
+                .success()
+        );
+    }
+    fs::write(root.join("sample.rs"), "fn value() -> u8 { 2 }\n").expect("write first revision");
+    let output = Command::new("git")
+        .args(["diff", "--no-ext-diff", "--unified=3", "--", "sample.rs"])
+        .current_dir(&root)
+        .output()
+        .expect("read review diff");
+    let full_diff = String::from_utf8(output.stdout).expect("UTF-8 review diff");
+    let hunk = full_diff[full_diff.find("@@").expect("diff hunk")..].to_owned();
+    let review = GitReviewContext {
+        relative_path: "sample.rs".into(),
+        state: GitReviewState::Modified,
+        scope: GitReviewScope::Hunk,
+        start_line: 1,
+        end_line: 2,
+        diff: hunk.clone(),
+    };
+    let anchored = |needle: &str, comment: &str| {
+        let diff_line = hunk
+            .lines()
+            .position(|line| line.contains(needle))
+            .expect("reviewed line");
+        CodeReviewComment {
+            anchor: CodeReviewAnchor {
+                review: review.clone(),
+                diff_line,
+                line: hunk.lines().nth(diff_line).unwrap().into(),
+            },
+            comment: comment.into(),
+        }
+    };
+    let comments = vec![
+        anchored("{ 2 }", "Return three instead."),
+        anchored("{ 1 }", "Keep this function signature unchanged."),
+    ];
+    let driver = fixture("code-review-driver", "private\n");
+    let pi_bin = fake_pi(&driver);
+    let mut daemon = Daemon::spawn_with_pi(&pi_bin, &driver, "code-review");
+    daemon.initialize();
+    daemon.open(&root);
+    daemon.send(&Request::ReviewCode {
+        id: 47,
+        repository: root.clone(),
+        comments,
+    });
+    let mut completed = false;
+    loop {
+        match daemon.next() {
+            Event::Completed { id: 47, .. } => completed = true,
+            Event::Settled { id: 47 } => break,
+            _ => {}
+        }
+    }
+    assert!(completed);
+    assert_eq!(
+        fs::read_to_string(root.join("sample.rs")).unwrap(),
+        "fn value() -> u8 { 3 }\n"
+    );
+    let prompt = fs::read_to_string(driver.join("code-review-prompt.json"))
+        .expect("read code review prompt");
+    assert!(prompt.contains("Return three instead"));
+    assert!(prompt.contains("Keep this function signature unchanged"));
+    assert!(prompt.contains("Address every developer comment as one coherent correction"));
     fs::remove_dir_all(root).expect("remove repository fixture");
     fs::remove_dir_all(driver).expect("remove driver fixture");
 }

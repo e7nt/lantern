@@ -24,7 +24,7 @@ PROJECT_ROOT = ROOT.parent
 DATASET_PATH = ROOT / "datasets" / "live_trace" / "v1.json"
 PI_VERSION = "0.80.6"
 MODEL = "gpt-5.4"
-PROTOCOL_VERSION = 14
+PROTOCOL_VERSION = 15
 TURN_TIMEOUT_SECONDS = 45
 
 

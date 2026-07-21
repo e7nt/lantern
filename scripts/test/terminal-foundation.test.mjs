@@ -105,6 +105,7 @@ test('focused Git is constrained to a 10 percent rail above the agent', async ()
 	assert.ok(calls.includes(context.repository));
 	assert.ok(calls.includes(gitRail));
 	assert.ok(calls.includes(environment(context).LANTERN_GIT_FOCUS_PATH));
+	assert.ok(calls.includes(environment(context).LANTERN_CONTROL_SOCKET));
 });
 
 test('focused Git rejects a terminal too narrow for the 10 percent rail', async () => {

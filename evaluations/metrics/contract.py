@@ -310,6 +310,48 @@ class PlanProgressContractMetric(BaseMetric):
         return self.success
 
 
+class CodeReviewContractMetric(BaseMetric):
+    """Checks that one correction result acknowledges every submitted concern."""
+
+    threshold = 1.0
+    evaluation_model = None
+    strict_mode = True
+    async_mode = False
+    verbose_mode = False
+    error = None
+
+    def __init__(self, required: Sequence[str], forbidden: Sequence[str]) -> None:
+        self.required = tuple(item.casefold() for item in required)
+        self.forbidden = tuple(item.casefold() for item in forbidden)
+        self.score = 0.0
+        self.reason = "not measured"
+        self.success = False
+
+    @property
+    def __name__(self) -> str:
+        return "Code review correction contract"
+
+    def measure(self, test_case: LLMTestCase, *args, **kwargs) -> float:
+        output = test_case.actual_output.casefold()
+        missing = [item for item in self.required if item not in output]
+        forbidden = [item for item in self.forbidden if item in output]
+        self.success = not missing and not forbidden
+        self.score = 1.0 if self.success else 0.0
+        failures = []
+        if missing:
+            failures.append(f"unaddressed review outcomes: {missing}")
+        if forbidden:
+            failures.append(f"unsupported review claims: {forbidden}")
+        self.reason = "; ".join(failures) if failures else "all review outcomes were addressed"
+        return self.score
+
+    async def a_measure(self, test_case: LLMTestCase, *args, **kwargs) -> float:
+        return self.measure(test_case, *args, **kwargs)
+
+    def is_successful(self) -> bool:
+        return self.success
+
+
 class ToolJourneyContractMetric(BaseMetric):
     """Checks an agent trace for ordered intent and unnecessary mutations."""
 
