@@ -1286,9 +1286,13 @@ fn show_help(state: &mut UiState) {
     state.line("Ask · Use natural language, or select code in Helix and press Ctrl-a.");
     state.line("Build · Ask Lantern to implement or fix something; Esc interrupts active work.");
     state.line("Review · Press Space-g in Helix or type /git, then comment on exact diff lines.");
+    state.line("Explore · Press Space-e in Helix to focus the folder tree and change markers.");
     state.line("Plan · Ask for a plan, refine it in conversation, or edit the Markdown yourself.");
     state.line("View · F2 expands the conversation and restores the editor.");
     state.line("Quit · Type /quit, or press Ctrl-d at an empty idle prompt.");
+    state.line(
+        "AI · Lantern uses your private Pi login. Run pi, then /login, and choose OpenAI Codex.",
+    );
 }
 
 fn handle_line(
@@ -2478,6 +2482,7 @@ mod tests {
         assert!(text.contains("Ctrl-a"));
         assert!(text.contains("Space-g"));
         assert!(text.contains("/quit"));
+        assert!(text.contains("private Pi login"));
     }
 
     #[test]

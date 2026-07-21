@@ -1,0 +1,17 @@
+[package]
+name = "lantern-explorer"
+version = "0.1.1"
+edition.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+crossterm.workspace = true
+lantern-git-rail = { path = "../git-rail" }
+lantern-protocol.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

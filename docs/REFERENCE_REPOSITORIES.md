@@ -181,6 +181,16 @@ editor commands and native ranges instead of reproducing editor semantics in
 the daemon. The two documented patches are removal-oriented seams, not a
 parallel editor abstraction.
 
+The 2026-07-21 explorer inspection found that pinned Helix's `file_explorer`
+is a modal one-directory picker: entering a directory replaces the picker and
+the component has no Lantern Git or review state. Lantern adopts Helix's
+directory-first ordering and existing-buffer open behavior, but rejects adding
+Git subprocesses, review files, or a persistent sidebar to the Helix patch set.
+The maintained explorer is instead a small sibling terminal surface that sends
+only the existing typed range-navigation command back to Helix. Git remains the
+file/change authority; ignored files, a second editor, icon packs, drag/drop,
+and filesystem mutation are deliberately excluded.
+
 ### Lazygit
 
 Lazygit remains the authority for Git mutation and detailed staged, unstaged,

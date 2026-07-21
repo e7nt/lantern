@@ -10,11 +10,11 @@ Lantern provides a coherent terminal environment around Helix and its focused
 Git review surface:
 
 ```text
-+-------------------------------------------------+
-|                                                 |
-| Helix                                      80%  |
-|                                                 |
-+-------------------------------------------------+
++------------+------------------------------------+
+| Explorer   |                                    |
+| 20%        | Helix                         80%  |
+|            |                                    |
++------------+------------------------------------+
 | Lantern agent and Git summary              20%  |
 +-------------------------------------------------+
 ```
@@ -76,7 +76,16 @@ builds the locked workbench:
 ./frontend/helix/prepare.sh
 ```
 
-The Lantern pane starts focused. Click a pane to focus it. In Helix, click to
+The workbench explorer starts focused. It is a real folder tree built from
+Git's tracked and visible untracked file inventory, so ignored dependencies do
+not become UI noise. `Enter`, `Right`, or a click expands a folder or opens a
+file in the existing Helix process. `Left` collapses or moves to the parent;
+`Up`/`Down` and `j`/`k` navigate. `Esc` focuses Helix, and `Space-e` returns to
+the explorer. Files and parent folders carry compact state marks: `M` modified,
+`S` staged, `±` staged and modified, `A` added, and `!` conflicted. A `·N`
+suffix shows bounded comments from the current submitted review handoff.
+
+Click a pane to focus it. In Helix, click to
 position the cursor, drag to select code, and use the wheel to scroll. The
 repository opens as a trusted workbench. Press `Ctrl-a` to open the small agent
 composer over Helix. With a saved selection it quietly adds bounded LSP
@@ -167,8 +176,8 @@ and exact hit targets rather than decorative chrome.
 
 ## Pass criteria
 
-- The initial tmux layout is 80% editor above a full-width 20% Lantern pane,
-  within one terminal row of rounding.
+- The initial upper work region is a 20/80 explorer/editor split above a
+  full-width 20% Lantern pane, within one terminal row of rounding.
 - Git summary sections distinguish staged, unstaged, and untracked paths.
 - Lantern Git uses a 10%-wide rail confined to the upper 80% work region, and
   returning from it preserves Helix's open buffers and undo history.

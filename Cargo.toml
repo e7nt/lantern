@@ -1,5 +1,5 @@
 [workspace]
-members = ["apps/daemon", "apps/git-rail", "crates/diagnostics", "crates/protocol", "frontend/terminal"]
+members = ["apps/daemon", "apps/explorer", "apps/git-rail", "crates/diagnostics", "crates/protocol", "frontend/terminal"]
 resolver = "3"
 
 [workspace.package]

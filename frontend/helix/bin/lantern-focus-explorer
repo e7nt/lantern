@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+: "${TMUX:?Lantern explorer requires the Lantern tmux session}"
+: "${TMUX_PANE:?Lantern pane is not configured}"
+
+explorer_pane=$(tmux list-panes -t "$TMUX_PANE" -F '#{pane_id} #{pane_title}' |
+	awk '$2 == "Explorer" { print $1; exit }')
+if [[ -z $explorer_pane ]]; then
+	echo "Lantern explorer pane is not available." >&2
+	exit 1
+fi
+
+tmux select-pane -t "$explorer_pane"

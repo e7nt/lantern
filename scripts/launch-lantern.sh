@@ -9,6 +9,7 @@ HELIX_BIN=${LANTERN_HELIX_BIN:-"$ROOT/.lantern/upstream/helix/target/release/hx"
 HELIX_RUNTIME=${LANTERN_HELIX_RUNTIME:-"$ROOT/.lantern/upstream/helix/runtime"}
 RUNTIME_DIR="$ROOT/target/release"
 GIT_BIN=${LANTERN_GIT_BIN:-"$RUNTIME_DIR/lantern-git-rail"}
+EXPLORER_BIN=${LANTERN_EXPLORER_BIN:-"$RUNTIME_DIR/lantern-explorer"}
 DAEMON_BIN=${LANTERN_DAEMON_BIN:-"$RUNTIME_DIR/lantern-daemon"}
 PANE_BIN=${LANTERN_PANE_BIN:-"$RUNTIME_DIR/lantern-terminal"}
 SUBMIT_BIN=${LANTERN_SUBMIT_BIN:-"$RUNTIME_DIR/lantern-submit"}
@@ -32,11 +33,15 @@ Inside Lantern:
   Ctrl-a    Ask about the repository or selected code
   F2        Expand or restore the agent conversation
   Space-g   Open changes for review and staging
+  Space-e   Focus the workbench explorer
   Esc       Interrupt the active agent turn
   Ctrl-d    Quit from an empty, idle agent prompt
 
 Use natural language. Ask what code does, request a change, or comment directly
 on a diff; Lantern keeps the code and your review at the center of the work.
+
+AI access uses your private Pi login, never a shared Lantern key. For first use,
+run `pi`, enter `/login`, and choose OpenAI Codex.
 EOF
 }
 
@@ -114,7 +119,7 @@ if [[ ! -d $HELIX_RUNTIME ]]; then
 	exit 1
 fi
 
-if [[ ! -x $DAEMON_BIN || ! -x $PANE_BIN || ! -x $SUBMIT_BIN || ! -x $GIT_BIN ]]; then
+if [[ ! -x $DAEMON_BIN || ! -x $PANE_BIN || ! -x $SUBMIT_BIN || ! -x $GIT_BIN || ! -x $EXPLORER_BIN ]]; then
 	echo "Lantern runtime is not built." >&2
 	echo "Run: cargo build --release --locked --manifest-path '$ROOT/Cargo.toml'" >&2
 	exit 1
@@ -146,8 +151,7 @@ editor_command=(env
 	"LANTERN_CONTROL_SOCKET=$control_socket"
 	"LANTERN_SUBMIT_BIN=$SUBMIT_BIN"
 	"LANTERN_GIT_BIN=$GIT_BIN"
-	"$HELIX_BIN"
-	.)
+	"$HELIX_BIN")
 printf -v editor_shell '%q ' "${editor_command[@]}"
 
 # Detached validation has no client from which tmux can infer dimensions.
@@ -180,6 +184,17 @@ printf -v agent_shell '%q ' "${agent_command[@]}"
 agent_pane=$(tmux split-window -v -l '20%' -P -F '#{pane_id}' \
 	-t "$editor_pane" -c "$repo" "$agent_shell")
 tmux select-pane -t "$agent_pane" -T Lantern
+
+explorer_command=(env
+	"LANTERN_REPO=$repo"
+	"LANTERN_EDITOR_PANE=$editor_pane"
+	"LANTERN_GIT_FOCUS_PATH=$git_focus_path"
+	"LANTERN_OPEN_BIN=$FRONTEND_DIR/bin/lantern-open-range"
+	"$EXPLORER_BIN")
+printf -v explorer_shell '%q ' "${explorer_command[@]}"
+explorer_pane=$(tmux split-window -h -b -l '20%' -P -F '#{pane_id}' \
+	-t "$editor_pane" -c "$repo" "$explorer_shell")
+tmux select-pane -t "$explorer_pane" -T Explorer
 tmux set-option -t "$session" status off
 tmux set-option -t "$session" pane-border-status off
 tmux set-option -t "$session" pane-border-style 'fg=#3A2A4D,bg=#3A2A4D'
@@ -198,5 +213,6 @@ trap - ERR
 if $detached; then
 	printf '%s\n' "$session"
 else
+	tmux select-pane -t "$explorer_pane"
 	exec tmux attach-session -t "$session"
 fi

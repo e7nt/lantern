@@ -24,7 +24,7 @@ async function fixture() {
 			'if [ "$1" = display-message ]; then\n' +
 			'  printf "%s\\n" "$TMUX_CLIENT_WIDTH"\n' +
 			'elif [ "$1" = list-panes ]; then\n' +
-			'  printf "%%7 Helix\\n%%8 Lantern\\n"\n' +
+			'  printf "%%7 Helix\\n%%8 Lantern\\n%%9 Explorer\\n"\n' +
 			'else\n' +
 			'  printf "%s\\n" "$*" >> "$TMUX_LOG"\n' +
 			'  if [ "$1" = display-popup ] && [ "$TMUX_EXPAND_ON_COMPACT" = 1 ]; then case "$*" in *LANTERN_GIT_LAYOUT=compact*) exit 21;; esac; fi\n' +
@@ -284,6 +284,21 @@ test('agent zoom toggles the same Lantern pane without rebuilding the layout', a
 	assert.match(calls, /select-pane -t %8/);
 });
 
+test('Space-e focuses the one persistent workbench explorer', async () => {
+	const context = await fixture();
+	const result = spawnSync(path.join(frontendBin, 'lantern-focus-explorer'), [], {
+		encoding: 'utf8',
+		env: {
+			...environment(context),
+			TMUX_PANE: '%7'
+		}
+	});
+
+	assert.equal(result.status, 0, result.stderr);
+	const calls = await readFile(context.tmuxLog, 'utf8');
+	assert.match(calls, /select-pane -t %9/);
+});
+
 test('terminal surfaces declare one mouse-enabled interaction contract', async () => {
 	const helixConfig = await readFile(
 		path.join(root, 'frontend/helix/config/helix/config.toml'),
@@ -293,18 +308,22 @@ test('terminal surfaces declare one mouse-enabled interaction contract', async (
 		path.join(root, 'apps/git-rail/src/main.rs'),
 		'utf8'
 	);
+	const explorer = await readFile(path.join(root, 'apps/explorer/src/main.rs'), 'utf8');
 	const launcher = await readFile(path.join(root, 'scripts/launch-lantern.sh'), 'utf8');
 
 	assert.match(helixConfig, /mouse = true/);
 	assert.match(helixConfig, /theme = "lantern"/);
 	assert.match(helixConfig, /C-a = \[":lantern-export-symbol-context", ":run-shell-command lantern-agent-composer"\]/);
 	assert.match(helixConfig, /F2 = ":run-shell-command lantern-toggle-agent"/);
+	assert.match(helixConfig, /e = ":run-shell-command lantern-focus-explorer"/);
 	assert.match(gitRail, /EnableMouseCapture/);
+	assert.match(explorer, /EnableMouseCapture/);
 	assert.match(gitRail, /"conflict"/);
 	assert.match(gitRail, /"modified"/);
 	assert.match(launcher, /set-option -t "\$session" mouse on/);
 	assert.match(launcher, /set-option -t "\$session" status off/);
 	assert.match(launcher, /pane-border-status off/);
 	assert.match(launcher, /bin\/lantern-cleanup-session/);
+	assert.match(launcher, /split-window -h -b -l '20%'/);
 	assert.match(launcher, /window-style 'fg=#C7B8E0,bg=#3A2A4D'/);
 });

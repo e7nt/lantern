@@ -279,6 +279,11 @@ decision unless ADR 001's revisit conditions occur.
 - `P1-08` Add redacted structured logging and an opt-in diagnostic bundle.
 - `P1-09` Add provider credential resolution without copying secrets into the
   database.
+- `P1-10` Replace the startup file-list picker with a persistent, bounded
+  folder tree that opens files through Helix's typed navigation seam and shows
+  existing Git/review state without owning edits or Git mutation. Implemented
+  as `apps/explorer`; ignored files, file operations, and icon systems remain
+  outside the first slice.
 
 Foundation progress on 2026-07-16: the first `P1-03`/`P1-04` lifecycle slice is
 implemented in the maintained Rust workspace and

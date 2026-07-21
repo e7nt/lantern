@@ -94,7 +94,9 @@ test('help explains Lantern before requiring a repository or runtime', async () 
 	assert.match(stdout, /lantern \[repository\]/);
 	assert.match(stdout, /Ctrl-a/);
 	assert.match(stdout, /Space-g/);
+	assert.match(stdout, /Space-e/);
 	assert.match(stdout, /Ctrl-d/);
+	assert.match(stdout, /private Pi login/);
 });
 
 test('release package locks Pi and replaces only its known vulnerable nested copies', async () => {
@@ -113,6 +115,7 @@ test('release package locks Pi and replaces only its known vulnerable nested cop
 	assert.match(packager, /shasum -a 256 \"\$\(basename \"\$ARCHIVE\"\)\"/);
 	assert.match(packager, /packaging\/helix-runtime-manifest\.txt/);
 	assert.match(packager, /packaging\/helix-grammars\.txt/);
+	assert.match(packager, /lantern-explorer/);
 	assert.doesNotMatch(packager, /cp -R \"\$HELIX_ROOT\/runtime\"/);
 });
 
