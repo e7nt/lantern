@@ -51,8 +51,9 @@ local by default.
 - One experienced engineer is working full-time with AI-assisted development.
 - Helix and every Lantern patch are pinned and auditable; the focused Git rail
   is built from this workspace.
-- Linux is release-blocking for `v0.1`; macOS is validated before the public
-  release gate. Windows is deferred while the tmux composition is primary.
+- macOS is the supported `v0.1` release target. Linux must pass its own package
+  and interaction acceptance before support is claimed. Windows is deferred
+  while the tmux composition is primary.
 - TypeScript and Rust fixtures receive full end-to-end coverage.
 - Other languages may work through editor language features but are not claimed
   as supported in `v0.1`.
@@ -61,8 +62,8 @@ local by default.
   and subscription access are never presented as interchangeable.
 - Lantern is licensed under AGPL-3.0-only. Commercial use remains possible, but
   modified network services must preserve corresponding-source access.
-- The repository stays private until the security model and contributor setup
-  pass the public-release gate.
+- The public repository retains the security and contributor gates established
+  before `v0.1.0`.
 - Lantern's core product remains open source and does not depend on a paid
   Lantern service.
 - Implementations prefer a single explicit primary path and surface failures

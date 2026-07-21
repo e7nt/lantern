@@ -4,13 +4,13 @@ Date: 2026-07-21
 
 ## User outcome
 
-After a future accepted semantic release, a macOS developer installs the
+As of `v0.1.0`, a macOS developer installs the
 complete Lantern workbench with `brew install e7nt/tap/lantern` and receives a
 new checksum-pinned version through `brew upgrade lantern`.
 
-No package has been published at this checkpoint. The source repository remains
-private, and the release workflow explicitly rejects that state before building
-or writing to the public tap.
+The source repository, release, checksums, provenance attestations, and Homebrew
+formula are public. The release workflow continues to reject publication from
+a private repository or an ordinary branch build.
 
 ## Implemented boundary
 
@@ -71,13 +71,17 @@ three maintained environments: Linux, Apple Silicon macOS, and Intel macOS.
   `/usr/local/bin`, which is not a clean Homebrew prefix and prevents the
   declared Python dependency from linking. Acceptance removes only symlinks
   targeting that exact runner-managed framework before testing installation.
+- Public release run
+  [`29850968830`](https://github.com/e7nt/lantern/actions/runs/29850968830)
+  publishes the checksum-pinned `v0.1.0` archives, provenance attestations, and
+  tap formula successfully.
+- Clean-install run
+  [`29854879698`](https://github.com/e7nt/lantern/actions/runs/29854879698)
+  installs the public formula and launches live Helix and Lantern panes against
+  a new Git repository on Apple Silicon in 2m35s and Intel in 3m28s.
 
-## Required evidence before the first tag
+## Remaining release-hardening evidence
 
-- Complete the remaining public-release gate and make `e7nt/lantern` public.
-- Add the narrowly scoped tap token as an Actions secret.
-- Install and launch the generated package on fresh supported Apple Silicon and
-  Intel Macs.
 - Exercise an actual install, later formula update, and `brew upgrade` without
   preserving state in the Cellar.
 - Run and record the release-candidate live model evaluations.

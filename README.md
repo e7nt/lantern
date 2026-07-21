@@ -17,8 +17,8 @@ developer is exploring rather than attempting to replace the developer.
 > trademark, package-name, or domain clearance.
 
 > **Project status:** Lantern is an early developer preview. The maintained
-> contracts are tested in CI; the first Homebrew release remains blocked on the
-> documented public-release gate and fresh-macOS installation evidence.
+> contracts are tested in CI, and Homebrew release `v0.1.0` is available for
+> supported Apple Silicon and Intel Macs.
 
 ## Try Lantern
 
@@ -36,16 +36,15 @@ Pi authentication remains private; start `pi`, use `/login`, and choose OpenAI
 Codex before launching Lantern. See
 [the frontend guide](frontend/helix/README.md) for the complete interaction.
 
-The release pipeline is prepared but has not published a public package. After
-the first accepted release, the supported install and upgrade path will be:
+The supported macOS install and upgrade path is:
 
 ```bash
 brew install e7nt/tap/lantern
 brew upgrade lantern
 ```
 
-Maintainers should follow [the release contract](docs/RELEASING.md); a tag will
-not publish while this source repository remains private.
+Maintainers should follow [the release contract](docs/RELEASING.md); ordinary
+commits never publish packages or update the tap.
 
 ## Product principles
 
