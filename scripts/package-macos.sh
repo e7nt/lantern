@@ -106,13 +106,11 @@ PI_PACKAGE="$INSTALL_ROOT/pi/node_modules/@earendil-works/pi-coding-agent"
 rm -rf "$PI_PACKAGE/node_modules/brace-expansion" "$PI_PACKAGE/node_modules/protobufjs"
 for dependency in brace-expansion protobufjs; do
 	resolved=$(node -e "console.log(require.resolve('$dependency/package.json', { paths: ['$PI_PACKAGE'] }))")
-	case $resolved in
-	"$INSTALL_ROOT/pi/node_modules/"*) ;;
-	*)
+	expected=$(realpath "$INSTALL_ROOT/pi/node_modules/$dependency/package.json")
+	if [[ $(realpath "$resolved") != "$expected" ]]; then
 		echo "Pi resolved $dependency outside the locked release runtime: $resolved" >&2
 		exit 1
-		;;
-	esac
+	fi
 done
 [[ $(node -p "require('$INSTALL_ROOT/pi/node_modules/brace-expansion/package.json').version") == 5.0.7 ]]
 [[ $(node -p "require('$INSTALL_ROOT/pi/node_modules/protobufjs/package.json').version") == 7.6.5 ]]
