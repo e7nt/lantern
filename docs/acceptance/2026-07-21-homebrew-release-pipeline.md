@@ -64,6 +64,9 @@ three maintained environments: Linux, Apple Silicon macOS, and Intel macOS.
   ad-hoc signing pass on Intel and caught a wrapper destination typo. The
   formula now preserves Pi's locked `node_modules` tree through `post_install`
   and writes the launcher explicitly to `bin/lantern`.
+- The first successful installed launch then exposed that the wrapper omitted
+  its declared Homebrew Git dependency from the sanitized runtime `PATH`. The
+  formula now provides Git's stable `opt_bin` alongside its other dependencies.
 
 ## Required evidence before the first tag
 
