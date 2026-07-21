@@ -17,7 +17,10 @@ use std::time::Instant;
 
 mod plan;
 
-use plan::{BriefCapture, SharedBrief, begin_capture, context_for_implementation, shared_brief};
+use plan::{
+    BriefCapture, RevisionCapture, SharedBrief, SharedRevision, begin_capture,
+    context_for_implementation, shared_brief, shared_revision,
+};
 
 type SharedWriter = Arc<Mutex<BufWriter<io::Stdout>>>;
 type Operations = Arc<Mutex<HashMap<u64, Arc<Cancellation>>>>;
@@ -925,6 +928,7 @@ enum AgentContext {
     },
     Selection(SelectionContext),
     Symbol(SymbolContext),
+    PlanReview(String),
 }
 
 struct PiOperation {
@@ -937,6 +941,7 @@ struct PiOperation {
     writer: SharedWriter,
     intent: AgentIntent,
     investigation_capture: Option<BriefCapture>,
+    revision_capture: Option<RevisionCapture>,
 }
 
 fn run_pi_operation(operation: PiOperation) {
@@ -950,14 +955,18 @@ fn run_pi_operation(operation: PiOperation) {
         writer,
         intent,
         mut investigation_capture,
+        mut revision_capture,
     } = operation;
-    let (selection, symbol_context, repository_semantic) = match agent_context {
+    let (selection, symbol_context, repository_semantic, plan_review) = match agent_context {
         AgentContext::Repository {
             semantic_state,
             semantic,
-        } => (None, None, Some((semantic_state, semantic))),
-        AgentContext::Selection(selection) => (Some(selection), None, None),
-        AgentContext::Symbol(context) => (Some(context.selection.clone()), Some(context), None),
+        } => (None, None, Some((semantic_state, semantic)), None),
+        AgentContext::Selection(selection) => (Some(selection), None, None, None),
+        AgentContext::Symbol(context) => {
+            (Some(context.selection.clone()), Some(context), None, None)
+        }
+        AgentContext::PlanReview(prompt) => (None, None, None, Some(prompt)),
     };
     let result = (|| -> Result<(), String> {
         if let Some(selection) = &selection {
@@ -1131,7 +1140,7 @@ fn run_pi_operation(operation: PiOperation) {
                 evidence.excerpt,
             ));
         }
-        let editor_context = selection.as_ref().map_or_else(
+        let editor_context = plan_review.clone().unwrap_or_else(|| selection.as_ref().map_or_else(
             || match &repository_semantic {
                 Some((semantic_state, semantic)) if !semantic.is_empty() => {
                     let context = semantic.iter().map(|evidence| format!("<semantic path=\"{}\" range=\"{}-{}\">\n{}\n</semantic>", evidence.relative_path.display(), evidence.start_line, evidence.end_line, evidence.excerpt)).collect::<Vec<_>>().join("\n");
@@ -1155,7 +1164,7 @@ fn run_pi_operation(operation: PiOperation) {
                 },
                 symbol_prompt,
             ),
-        );
+        ));
         let request = match intent {
             AgentIntent::Implement => format!("Developer implementation request: {query}"),
             AgentIntent::Understand => format!(
@@ -1170,9 +1179,13 @@ fn run_pi_operation(operation: PiOperation) {
             AgentIntent::PersistPlan => {
                 return Err("plan persistence reached the model driver".into());
             }
+            AgentIntent::ApplyPlanRevision => {
+                return Err("plan revision application reached the model driver".into());
+            }
         };
         let prompt = format!("{editor_context}\n\n{request}");
         let evidence_fast_path = symbol_context.is_some()
+            || plan_review.is_some()
             || repository_semantic
                 .as_ref()
                 .is_some_and(|(_, semantic)| !semantic.is_empty());
@@ -1213,14 +1226,18 @@ fn run_pi_operation(operation: PiOperation) {
                             if let Some(capture) = &mut investigation_capture {
                                 capture.append(text);
                             }
-                            emit(
-                                &writer,
-                                &Event::TextDelta {
-                                    id,
-                                    delta: text.to_owned(),
-                                },
-                            )
-                            .map_err(|cause| format!("cannot stream Pi text: {cause}"))?;
+                            if let Some(capture) = &mut revision_capture {
+                                capture.append(text);
+                            } else {
+                                emit(
+                                    &writer,
+                                    &Event::TextDelta {
+                                        id,
+                                        delta: text.to_owned(),
+                                    },
+                                )
+                                .map_err(|cause| format!("cannot stream Pi text: {cause}"))?;
+                            }
                         }
                     }
                     Some("agent_settled") => return Ok(true),
@@ -1321,6 +1338,10 @@ fn run_pi_operation(operation: PiOperation) {
     {
         capture.commit();
     }
+    let revision_result = (!cancellation.is_requested() && result.is_ok())
+        .then(|| revision_capture.map(RevisionCapture::finish))
+        .flatten()
+        .transpose();
     if cancellation.is_requested() {
         let _ = emit(
             &writer,
@@ -1328,6 +1349,13 @@ fn run_pi_operation(operation: PiOperation) {
                 id,
                 cancellation_latency_ms: cancellation.latency_ms(),
             },
+        );
+    } else if let Err(message) = &revision_result {
+        error(
+            &writer,
+            Some(id),
+            message.clone(),
+            "refine the review comments and submit them again",
         );
     } else if let Err(message) = result {
         driver.stop();
@@ -1346,6 +1374,16 @@ fn run_pi_operation(operation: PiOperation) {
             "run Pi interactively to inspect provider status, use `/login` for OpenAI Codex if required, then retry `/agent <question>`",
         );
     } else {
+        if let Ok(Some(proposal)) = revision_result {
+            let _ = emit(
+                &writer,
+                &Event::TextDelta {
+                    id,
+                    delta: "Prepared one coherent plan revision from the collected comments. Review the diff, then say ‘Apply that’ when it is right.".into(),
+                },
+            );
+            let _ = emit(&writer, &Event::ChangeProposal { id, proposal });
+        }
         let _ = emit(
             &writer,
             &Event::Completed {
@@ -1487,6 +1525,48 @@ fn spawn_plan_persistence(
     }));
 }
 
+fn spawn_plan_revision_application(
+    workers: &mut Vec<thread::JoinHandle<()>>,
+    id: u64,
+    repository: PathBuf,
+    revision: SharedRevision,
+    cancellation: Arc<Cancellation>,
+    operations: Operations,
+    writer: SharedWriter,
+) {
+    workers.push(thread::spawn(move || {
+        if cancellation.is_requested() {
+            let _ = emit(
+                &writer,
+                &Event::Cancelled {
+                    id,
+                    cancellation_latency_ms: cancellation.latency_ms(),
+                },
+            );
+        } else {
+            match plan::apply_revision(&repository, &revision) {
+                Ok(relative_path) => {
+                    let _ = emit(&writer, &Event::PlanRevisionApplied { id, relative_path });
+                    let _ = emit(
+                        &writer,
+                        &Event::Completed {
+                            id,
+                            evidence_count: 0,
+                        },
+                    );
+                }
+                Err(message) => error(
+                    &writer,
+                    Some(id),
+                    message,
+                    "review the current plan and submit the comments again",
+                ),
+            }
+        }
+        settle(id, &operations, &writer);
+    }));
+}
+
 fn prepare_agent_query(
     intent: AgentIntent,
     query: String,
@@ -1530,6 +1610,7 @@ fn main() -> io::Result<()> {
     let mut read_only_pi_driver: Option<Arc<PiDriver>> = None;
     let mut semantic_driver: Option<Arc<SemanticDriver>> = None;
     let last_investigation = shared_brief();
+    let pending_plan_revision = shared_revision();
 
     loop {
         let line = match read_frame(&mut input) {
@@ -1769,6 +1850,18 @@ fn main() -> io::Result<()> {
                     );
                     continue;
                 }
+                if intent == AgentIntent::ApplyPlanRevision {
+                    spawn_plan_revision_application(
+                        &mut workers,
+                        id,
+                        repository,
+                        pending_plan_revision.clone(),
+                        cancellation,
+                        operations.clone(),
+                        writer.clone(),
+                    );
+                    continue;
+                }
                 let (slot, profile) = if intent == AgentIntent::Implement {
                     (&mut pi_driver, PiProfile::Coding)
                 } else {
@@ -1803,6 +1896,7 @@ fn main() -> io::Result<()> {
                         writer: operation_writer,
                         intent,
                         investigation_capture: capture,
+                        revision_capture: None,
                     });
                 }));
             }
@@ -1834,6 +1928,18 @@ fn main() -> io::Result<()> {
                         id,
                         repository,
                         last_investigation.clone(),
+                        cancellation,
+                        operations.clone(),
+                        writer.clone(),
+                    );
+                    continue;
+                }
+                if intent == AgentIntent::ApplyPlanRevision {
+                    spawn_plan_revision_application(
+                        &mut workers,
+                        id,
+                        repository,
+                        pending_plan_revision.clone(),
                         cancellation,
                         operations.clone(),
                         writer.clone(),
@@ -1915,6 +2021,7 @@ fn main() -> io::Result<()> {
                         writer: operation_writer,
                         intent,
                         investigation_capture: capture,
+                        revision_capture: None,
                     });
                 }));
             }
@@ -1962,6 +2069,18 @@ fn main() -> io::Result<()> {
                     );
                     continue;
                 }
+                if intent == AgentIntent::ApplyPlanRevision {
+                    spawn_plan_revision_application(
+                        &mut workers,
+                        id,
+                        repository,
+                        pending_plan_revision.clone(),
+                        cancellation,
+                        operations.clone(),
+                        writer.clone(),
+                    );
+                    continue;
+                }
                 let (slot, profile) = if intent == AgentIntent::Implement {
                     (&mut pi_driver, PiProfile::Coding)
                 } else {
@@ -1996,6 +2115,60 @@ fn main() -> io::Result<()> {
                         writer: operation_writer,
                         intent,
                         investigation_capture: capture,
+                        revision_capture: None,
+                    });
+                }));
+            }
+            Request::ReviewPlan {
+                id,
+                repository,
+                comments,
+            } => {
+                let Some(repository) = opened_repository(&workbench, &repository, &writer, id)
+                else {
+                    continue;
+                };
+                let Some(cancellation) = admit(id, &operations, &writer) else {
+                    continue;
+                };
+                let (prompt, revision_capture) =
+                    match plan::review_context(&repository, &comments, &pending_plan_revision) {
+                        Ok(context) => context,
+                        Err(message) => {
+                            error(
+                                &writer,
+                                Some(id),
+                                message,
+                                "reselect stale plan text in Helix and submit the review again",
+                            );
+                            settle(id, &operations, &writer);
+                            continue;
+                        }
+                    };
+                let Some(driver) = persistent_pi(
+                    &mut read_only_pi_driver,
+                    &repository,
+                    &writer,
+                    id,
+                    PiProfile::ReadOnly,
+                ) else {
+                    settle(id, &operations, &writer);
+                    continue;
+                };
+                let operation_writer = writer.clone();
+                let active_operations = operations.clone();
+                workers.push(thread::spawn(move || {
+                    run_pi_operation(PiOperation {
+                        id,
+                        driver,
+                        query: "Reconcile the collected plan review.".into(),
+                        context: AgentContext::PlanReview(prompt),
+                        cancellation,
+                        operations: active_operations,
+                        writer: operation_writer,
+                        intent: AgentIntent::Plan,
+                        investigation_capture: None,
+                        revision_capture: Some(revision_capture),
                     });
                 }));
             }

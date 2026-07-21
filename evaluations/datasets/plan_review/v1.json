@@ -1,0 +1,14 @@
+{
+  "dataset": "plan_review",
+  "version": 1,
+  "cases": [
+    {
+      "id": "two-anchor-coherent-revision",
+      "comments": [
+        {"anchor": "Original objective.", "comment": "Make this measurable."},
+        {"anchor": "- Second task.", "comment": "Move this outside the first release."}
+      ],
+      "required_outcomes": ["under three seconds", "outside the first release"]
+    }
+  ]
+}

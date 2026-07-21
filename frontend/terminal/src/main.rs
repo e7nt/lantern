@@ -17,9 +17,10 @@ use lantern_diagnostics::{
 use lantern_protocol::{
     AgentGitFocus, AgentIntent, BoundedTail, ChangeProposal, ControlRequest, Event, Evidence,
     EvidenceSource, GitReviewContext, GroundingState, MAX_AGENT_TOUCHED_PATHS,
-    MAX_DIAGNOSTIC_BYTES, MAX_QUESTION_BYTES, MAX_SELECTION_BYTES, PROTOCOL_VERSION, Request,
-    SelectionContext, SymbolContext, SymbolContextExport, infer_agent_intent, read_frame,
-    search_term, validate_agent_git_focus, validate_git_review,
+    MAX_DIAGNOSTIC_BYTES, MAX_PLAN_COMMENT_BYTES, MAX_QUESTION_BYTES, MAX_SELECTION_BYTES,
+    PROTOCOL_VERSION, PlanReviewComment, Request, SelectionContext, SymbolContext,
+    SymbolContextExport, infer_agent_intent, read_frame, search_term, validate_agent_git_focus,
+    validate_git_review, validate_plan_review,
 };
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -72,6 +73,7 @@ enum Input {
     DaemonClosed { diagnostics: String },
     DaemonStartupTimeout,
     Question(String),
+    PlanComment(String),
     ControlError(String),
 }
 
@@ -106,6 +108,8 @@ struct UiState {
     agent_touched_paths: Vec<PathBuf>,
     last_agent_intent: Option<AgentIntent>,
     pending_agent_intent: Option<AgentIntent>,
+    plan_review_comments: Vec<PlanReviewComment>,
+    submitting_plan_review: bool,
 }
 
 impl UiState {
@@ -127,6 +131,8 @@ impl UiState {
             agent_touched_paths: Vec::new(),
             last_agent_intent: None,
             pending_agent_intent: None,
+            plan_review_comments: Vec::new(),
+            submitting_plan_review: false,
         }
     }
 
@@ -274,6 +280,7 @@ impl UiState {
         self.accepted_id = None;
         self.navigated_for = None;
         self.pending_agent_intent = None;
+        self.submitting_plan_review = false;
         self.line(format!("Agent unavailable: {reason}"));
         let diagnostics = diagnostic_summary(diagnostics);
         if !diagnostics.is_empty() {
@@ -672,6 +679,64 @@ fn selection_for_question(
     symbol_context_for_question(state, selection_path).map(|context| context.selection)
 }
 
+fn capture_exact_selection(selection_path: &Path) -> Result<SelectionContext, String> {
+    match fs::remove_file(selection_path) {
+        Ok(()) => {}
+        Err(cause) if cause.kind() == io::ErrorKind::NotFound => {}
+        Err(cause) => return Err(format!("cannot clear stale selection context: {cause}")),
+    }
+    let status = Command::new("lantern-capture-selection")
+        .arg("--exact")
+        .status()
+        .map_err(|cause| format!("cannot start the Helix selection bridge: {cause}"))?;
+    if !status.success() {
+        return Err(format!("selection bridge exited with {status}"));
+    }
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !selection_path.exists() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(10));
+    }
+    let bytes = fs::read(selection_path)
+        .map_err(|cause| format!("Helix did not export the selection: {cause}"))?;
+    let _ = fs::remove_file(selection_path);
+    if bytes.len() > MAX_SELECTION_BYTES + 4 * 1024 {
+        return Err("selection context file exceeds its bounded size".into());
+    }
+    let selection: SelectionContext = serde_json::from_slice(&bytes)
+        .map_err(|cause| format!("Helix returned invalid selection context: {cause}"))?;
+    lantern_protocol::validate_selection(&selection)?;
+    Ok(selection)
+}
+
+fn queue_plan_comment(
+    state: &mut UiState,
+    selection_path: &Path,
+    comment: String,
+) -> Result<(), String> {
+    if state.active_id.is_some() {
+        return Err("wait for the active agent turn to finish".into());
+    }
+    let candidate = PlanReviewComment {
+        anchor: capture_exact_selection(selection_path)?,
+        comment,
+    };
+    let mut comments = state.plan_review_comments.clone();
+    comments.push(candidate);
+    validate_plan_review(&comments)?;
+    state.plan_review_comments = comments;
+    let added = state
+        .plan_review_comments
+        .last()
+        .expect("comment just added");
+    state.line(format!(
+        "Added plan comment {} · lines {}-{} · say ‘Review these comments’ when ready",
+        state.plan_review_comments.len(),
+        added.anchor.start_line,
+        added.anchor.end_line,
+    ));
+    Ok(())
+}
+
 fn read_review_context(path: &Path) -> Result<SelectionContext, String> {
     let bytes = fs::read(path)
         .map_err(|cause| format!("cannot read selected Git review context: {cause}"))?;
@@ -785,27 +850,37 @@ fn spawn_control_listener(path: &Path, sender: SyncSender<Input>) -> io::Result<
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
     thread::spawn(move || {
         for connection in listener.incoming() {
-            let result = (|| -> Result<String, String> {
+            let result = (|| -> Result<ControlRequest, String> {
                 let stream = connection.map_err(|cause| cause.to_string())?;
                 let mut reader = BufReader::new(stream);
                 let frame = read_frame(&mut reader)
                     .map_err(|cause| cause.to_string())?
                     .ok_or("composer closed without a request")?;
-                match serde_json::from_str::<ControlRequest>(&frame)
-                    .map_err(|cause| format!("invalid composer request: {cause}"))?
-                {
+                let request = serde_json::from_str::<ControlRequest>(&frame)
+                    .map_err(|cause| format!("invalid composer request: {cause}"))?;
+                match &request {
                     ControlRequest::SubmitQuestion { question }
                         if !question.trim().is_empty() && question.len() <= MAX_QUESTION_BYTES =>
                     {
-                        Ok(question)
+                        Ok(request)
                     }
                     ControlRequest::SubmitQuestion { .. } => Err(format!(
                         "question must contain 1 to {MAX_QUESTION_BYTES} bytes"
                     )),
+                    ControlRequest::AddPlanComment { comment }
+                        if !comment.trim().is_empty()
+                            && comment.len() <= MAX_PLAN_COMMENT_BYTES =>
+                    {
+                        Ok(request)
+                    }
+                    ControlRequest::AddPlanComment { .. } => Err(format!(
+                        "plan comment must contain 1 to {MAX_PLAN_COMMENT_BYTES} bytes"
+                    )),
                 }
             })();
             let input = match result {
-                Ok(question) => Input::Question(question),
+                Ok(ControlRequest::SubmitQuestion { question }) => Input::Question(question),
+                Ok(ControlRequest::AddPlanComment { comment }) => Input::PlanComment(comment),
                 Err(message) => Input::ControlError(message),
             };
             if sender.send(input).is_err() {
@@ -923,6 +998,18 @@ fn prepare_selection(state: &mut UiState, selection_path: &Path) {
     }
 }
 
+fn requests_plan_review(query: &str) -> bool {
+    let query = query.trim().to_lowercase();
+    [
+        "review these comments",
+        "review my comments",
+        "review the plan comments",
+        "reconcile these comments",
+    ]
+    .iter()
+    .any(|phrase| query.contains(phrase))
+}
+
 fn start_agent_question(
     state: &mut UiState,
     repository: &Path,
@@ -937,7 +1024,31 @@ fn start_agent_question(
         state.line("Type a question about the selection, then press Enter.");
         return Ok(());
     }
-    if intent == AgentIntent::PersistPlan {
+    if requests_plan_review(query) {
+        if state.plan_review_comments.is_empty() {
+            state.line("No plan comments have been added yet.");
+            return Ok(());
+        }
+        let Some(id) = state.begin_operation() else {
+            state.line("The agent is already working.");
+            return Ok(());
+        };
+        state.pending_agent_intent = Some(AgentIntent::Plan);
+        state.submitting_plan_review = true;
+        send_request(
+            daemon_stdin,
+            &Request::ReviewPlan {
+                id,
+                repository: repository.to_owned(),
+                comments: state.plan_review_comments.clone(),
+            },
+        )?;
+        return Ok(());
+    }
+    if matches!(
+        intent,
+        AgentIntent::PersistPlan | AgentIntent::ApplyPlanRevision
+    ) {
         let Some(id) = state.begin_operation() else {
             state.line("The agent is already working.");
             return Ok(());
@@ -1457,6 +1568,10 @@ fn handle_daemon_event(
             }
         }
         Event::ChangeProposal { proposal, .. } => {
+            if state.submitting_plan_review {
+                state.plan_review_comments.clear();
+                state.submitting_plan_review = false;
+            }
             if let Err(message) = show_proposal(selection_path, &proposal) {
                 state.line(format!("Preview failed: {message}"));
             }
@@ -1465,6 +1580,12 @@ fn handle_daemon_event(
             state.line(format!("Saved plan · {}", relative_path.display()));
             if let Err(cause) = navigate_range(&relative_path, 1, 1, 1, 1) {
                 state.line(format!("Could not open the saved plan: {cause}"));
+            }
+        }
+        Event::PlanRevisionApplied { relative_path, .. } => {
+            state.line(format!("Updated plan · {}", relative_path.display()));
+            if let Err(cause) = navigate_range(&relative_path, 1, 1, 1, 1) {
+                state.line(format!("Could not open the updated plan: {cause}"));
             }
         }
         Event::TextDelta { id, delta } => {
@@ -1514,7 +1635,10 @@ fn handle_daemon_event(
         Event::Completed { id, .. } => {
             state.activity = Some("Finishing…".into());
             if state.active_id == Some(id)
-                && state.pending_agent_intent != Some(AgentIntent::PersistPlan)
+                && !matches!(
+                    state.pending_agent_intent,
+                    Some(AgentIntent::PersistPlan | AgentIntent::ApplyPlanRevision)
+                )
             {
                 state.last_agent_intent = state.pending_agent_intent;
             }
@@ -1544,6 +1668,7 @@ fn handle_daemon_event(
                 state.active_id = None;
                 state.navigated_for = None;
                 state.pending_agent_intent = None;
+                state.submitting_plan_review = false;
             }
         }
         Event::Settled { id } => {
@@ -1569,6 +1694,7 @@ fn handle_daemon_event(
                 state.accepted_id = None;
                 state.navigated_for = None;
                 state.pending_agent_intent = None;
+                state.submitting_plan_review = false;
             }
         }
     }
@@ -1690,6 +1816,12 @@ fn run(
                 &daemon_stdin,
                 &diagnostics,
             )?,
+            Input::PlanComment(comment) => {
+                if let Err(message) = queue_plan_comment(&mut state, &selection_path, comment) {
+                    state.line(format!("Could not add plan comment: {message}"));
+                }
+                false
+            }
             Input::ControlError(message) => {
                 state.line(format!("Could not submit question: {message}"));
                 false
@@ -1826,6 +1958,24 @@ mod tests {
         {
             Input::Question(question) => assert_eq!(question, "explain λ and $(literal)"),
             _ => panic!("expected a composer question"),
+        }
+
+        let mut stream = UnixStream::connect(&socket).expect("connect comment client");
+        serde_json::to_writer(
+            &mut stream,
+            &ControlRequest::AddPlanComment {
+                comment: "Make this measurable".into(),
+            },
+        )
+        .expect("write comment request");
+        stream.write_all(b"\n").expect("frame comment request");
+        drop(stream);
+        match receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("receive comment")
+        {
+            Input::PlanComment(comment) => assert_eq!(comment, "Make this measurable"),
+            _ => panic!("expected a plan comment"),
         }
         fs::remove_file(&socket).expect("remove control socket");
         fs::remove_dir(&directory).expect("remove control fixture");
@@ -2151,6 +2301,15 @@ mod tests {
         assert!(is_quit_shortcut(ctrl_d, false, true));
         assert!(!is_quit_shortcut(ctrl_d, true, true));
         assert!(!is_quit_shortcut(ctrl_d, false, false));
+    }
+
+    #[test]
+    fn natural_review_language_submits_the_collected_comments() {
+        assert!(requests_plan_review("Review these comments"));
+        assert!(requests_plan_review(
+            "Can you reconcile these comments into one plan?"
+        ));
+        assert!(!requests_plan_review("Review this implementation"));
     }
 
     #[test]

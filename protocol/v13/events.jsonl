@@ -1,0 +1,10 @@
+{"type":"initialized","protocol_version":13}
+{"type":"workbench_opened","repository":"/workspace/project"}
+{"type":"accepted","id":3}
+{"type":"text_delta","id":3,"delta":"Prepared one coherent plan revision. Review the diff, then say ‘Apply that’ when it is right."}
+{"type":"change_proposal","id":3,"proposal":{"selection":{"relative_path":".lantern/plans/active.md","language":"markdown","start_line":1,"start_column":1,"end_line":20,"end_column":1,"text":"old plan","document_modified":false},"replacement":"revised plan"}}
+{"type":"completed","id":3,"evidence_count":0}
+{"type":"settled","id":3}
+{"type":"plan_revision_applied","id":4,"relative_path":".lantern/plans/active.md"}
+{"type":"cancelled","id":3,"cancellation_latency_ms":12}
+{"type":"error","id":null,"message":"invalid protocol request","recovery":"send one valid JSON request per line"}

@@ -33,7 +33,7 @@ async function fixture() {
 	await chmod(path.join(fakeBin, 'tmux'), 0o755);
 	await writeFile(
 		path.join(fakeBin, 'lantern-submit'),
-		'#!/bin/sh\ncat > "$LANTERN_SUBMIT_LOG"\n'
+		'#!/bin/sh\nprintf "%s\\n" "$*" > "$LANTERN_SUBMIT_ARGS_LOG"\ncat > "$LANTERN_SUBMIT_LOG"\n'
 	);
 	await chmod(path.join(fakeBin, 'lantern-submit'), 0o755);
 	return { directory, repository, fakeBin, tmuxLog, submitLog };
@@ -53,7 +53,8 @@ function environment({ directory, repository, fakeBin, tmuxLog, submitLog }) {
 		TMUX_LOG: tmuxLog,
 		LANTERN_CONTROL_SOCKET: path.join(repository, 'control.sock'),
 		LANTERN_SUBMIT_BIN: path.join(fakeBin, 'lantern-submit'),
-		LANTERN_SUBMIT_LOG: submitLog
+		LANTERN_SUBMIT_LOG: submitLog,
+		LANTERN_SUBMIT_ARGS_LOG: path.join(directory, 'submit-args.log')
 	};
 }
 
@@ -140,7 +141,7 @@ test('Ctrl-a composer opens a small contextual popup', async () => {
 
 	assert.equal(result.status, 0, result.stderr);
 	const calls = await readFile(context.tmuxLog, 'utf8');
-	assert.match(calls, /display-popup -t %7 -E -w 70% -h 7 -T  Ask Lantern /);
+	assert.match(calls, /display-popup -t %7 -E -w 70% -h 8 -T  Ask Lantern /);
 	assert.match(calls, /LANTERN_AGENT_PANE=%8/);
 	assert.match(calls, /LANTERN_REVIEW_PATH=/);
 });
@@ -194,6 +195,30 @@ test('composer submits the question literally and focuses Lantern', async () => 
 	assert.equal(await readFile(context.submitLog, 'utf8'), question);
 	assert.doesNotMatch(calls, /send-keys/);
 	assert.match(calls, /select-pane -t %8/);
+});
+
+test('composer can queue one plan comment without asking the model', async () => {
+	const context = await fixture();
+	const comment = 'Keep this task outside the first release.';
+	const result = spawnSync(
+		path.join(frontendBin, 'lantern-agent-composer'),
+		['--prompt'],
+		{
+			encoding: 'utf8',
+			input: `${comment} __LANTERN_PLAN_COMMENT__\n`,
+			env: {
+				...environment(context),
+				LANTERN_AGENT_PANE: '%8'
+			}
+		}
+	);
+
+	assert.equal(result.status, 0, result.stderr);
+	assert.equal(await readFile(context.submitLog, 'utf8'), comment);
+	assert.equal(
+		await readFile(path.join(context.directory, 'submit-args.log'), 'utf8'),
+		'--plan-comment\n'
+	);
 });
 
 test('dismissing the Git composer clears its one-shot review context', async () => {

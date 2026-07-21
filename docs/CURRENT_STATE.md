@@ -26,7 +26,7 @@ and tool vocabulary should not become user-facing ceremony.
   reading mode for the persistent agent pane.
 - Bounded, typed composer submission over a private session-local Unix socket;
   tmux owns presentation and focus but never transports questions.
-- Maintained Rust terminal, daemon, diagnostics, and Protocol v12 crates.
+- Maintained Rust terminal, daemon, diagnostics, and Protocol v13 crates.
 - Selection capture, exact navigation, bounded local literal search, and
   Helix-provided definition/reference context.
 - Bounded two-hop outgoing-call context from Helix's active language server,
@@ -50,6 +50,10 @@ and tool vocabulary should not become user-facing ceremony.
 - One durable active plan: after a complete conversational plan, `Write this
   down` creates `.lantern/plans/active.md` with a minimal versioned Markdown
   schema and opens it in Helix. Existing plans are never overwritten.
+- Multi-place active-plan review: select plan text, press `Ctrl-a`, type a
+  comment, and press `Ctrl-r` to queue it locally. Repeat anywhere in the plan,
+  then say `Review these comments` for one coherent, previewed revision. `Apply
+  that` writes it only if the reviewed plan has not changed.
 - Pi's pinned `read`, `grep`, `find`, `ls`, `edit`, `write`, and `bash` tools,
   launched inside the repository with typed activity in Lantern.
 - Successful edit/write activity opens the changed file in Helix; `Space-g` or
@@ -60,7 +64,7 @@ and tool vocabulary should not become user-facing ceremony.
 
 ## Current boundary
 
-Protocol v12 and the terminal open one trusted repository directly. The old
+Protocol v13 and the terminal open one trusted repository directly. The old
 policy engine, capability fields, and `/trust` commands have been removed. Pi
 runs its explicit built-in coding-tool allowlist in that repository. Raw tool
 arguments, command output, and provider stderr are not copied into Lantern's
@@ -86,9 +90,9 @@ opening line 1.
 
 Implement next:
 
-1. Validate the read-only readiness brief on a real feature investigation
-   before adding Markdown persistence or plan tasks. Do not add another
-   retrieval or caching layer without a measured unmet question.
+1. Validate the complete plan conversation, persistence, multi-comment review,
+   stale-edit rejection, and implementation handoff on a real feature. Add
+   revision history only if that journey demonstrates a concrete recovery need.
 
 [The persistent Pi acceptance report](acceptance/2026-07-18-persistent-pi.md)
 records a grounded warm follow-up beginning text in 1.52 seconds and settling

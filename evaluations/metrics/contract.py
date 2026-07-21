@@ -195,6 +195,61 @@ class PlanningArtifactContractMetric(BaseMetric):
         return self.success
 
 
+class PlanReviewContractMetric(BaseMetric):
+    """Checks that one revision addresses every submitted plan comment."""
+
+    threshold = 1.0
+    evaluation_model = None
+    strict_mode = True
+    async_mode = False
+    verbose_mode = False
+    error = None
+
+    def __init__(self, required_outcomes: Sequence[str]) -> None:
+        self.required_outcomes = tuple(item.casefold() for item in required_outcomes)
+        self.score = 0.0
+        self.reason = "not measured"
+        self.success = False
+
+    @property
+    def __name__(self) -> str:
+        return "Plan review contract"
+
+    def measure(self, test_case: LLMTestCase, *args, **kwargs) -> float:
+        output = test_case.actual_output.casefold()
+        headings = (
+            "objective",
+            "repository evidence",
+            "acceptance criteria",
+            "exclusions",
+            "decisions",
+            "tasks",
+            "risks and unknowns",
+            "verification",
+        )
+        forbidden = ("lantern_plan:", "# active implementation plan", "```", "implemented")
+        missing_headings = [heading for heading in headings if heading not in output]
+        missing_outcomes = [item for item in self.required_outcomes if item not in output]
+        present_forbidden = [item for item in forbidden if item in output]
+        self.success = not missing_headings and not missing_outcomes and not present_forbidden
+        self.score = 1.0 if self.success else 0.0
+        failures = []
+        if missing_headings:
+            failures.append(f"missing headings: {missing_headings}")
+        if missing_outcomes:
+            failures.append(f"unaddressed comments: {missing_outcomes}")
+        if present_forbidden:
+            failures.append(f"forbidden wrapper or claim: {present_forbidden}")
+        self.reason = "; ".join(failures) if failures else "all plan comments were reconciled"
+        return self.score
+
+    async def a_measure(self, test_case: LLMTestCase, *args, **kwargs) -> float:
+        return self.measure(test_case, *args, **kwargs)
+
+    def is_successful(self) -> bool:
+        return self.success
+
+
 class ToolJourneyContractMetric(BaseMetric):
     """Checks an agent trace for ordered intent and unnecessary mutations."""
 
