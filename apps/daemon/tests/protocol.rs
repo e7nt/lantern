@@ -102,11 +102,11 @@ impl Daemon {
 }
 
 #[test]
-fn golden_wire_fixtures_match_the_v13_types() {
-    for line in include_str!("../../../protocol/v13/requests.jsonl").lines() {
+fn golden_wire_fixtures_match_the_v14_types() {
+    for line in include_str!("../../../protocol/v14/requests.jsonl").lines() {
         serde_json::from_str::<Request>(line).expect("golden request must deserialize");
     }
-    for line in include_str!("../../../protocol/v13/events.jsonl").lines() {
+    for line in include_str!("../../../protocol/v14/events.jsonl").lines() {
         serde_json::from_str::<Event>(line).expect("golden event must deserialize");
     }
 }
@@ -657,6 +657,17 @@ elif [[ ${LANTERN_FAKE_PI_MODE:?} == plan ]]; then
     printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Objective\nPersist the accepted plan.\nRepository evidence\n- apps/daemon/src/main.rs\nAcceptance criteria\n- Create one editable Markdown file.\nExclusions\n- Task dashboard.\nDecisions\n- Use create-new semantics.\nTasks\n1. Serialize the plan.\nRisks and unknowns\n- Existing active plan.\nVerification\n- Prove byte-identical duplicate rejection."}}'
 elif [[ ${LANTERN_FAKE_PI_MODE:?} == plan-review ]]; then
     printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Objective\nRevised measurable objective.\nRepository evidence\n- src/lib.rs:1\nAcceptance criteria\n- One measurable check.\nExclusions\n- Deferred task.\nDecisions\n- Preserve the first task.\nTasks\n- First task.\nRisks and unknowns\n- One risk.\nVerification\n- Run one test."}}'
+elif [[ ${LANTERN_FAKE_PI_MODE:?} == plan-progress && "$*" != *'read,grep,find,ls,edit'* ]]; then
+    printf '%s\n' "$prompt" > "$capture_dir/progress-prompt.json"
+    printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Objective\nUpdated value checkpoint.\nRepository evidence\n- sample.rs:1\nAcceptance criteria\n- Value returns two.\nExclusions\n- No unrelated changes.\nDecisions\n- Preserve the focused implementation.\nTasks\n- [x] Change the value.\nRisks and unknowns\n- None discovered.\nVerification\n- Focused verification completed."}}'
+elif [[ ${LANTERN_FAKE_PI_MODE:?} == plan-progress ]]; then
+    printf '%s\n' "$prompt" > "$capture_dir/implementation-prompt.json"
+    printf '%s\n' '{"type":"tool_execution_start","toolCallId":"call-edit","toolName":"edit","args":{"path":"sample.rs"}}'
+    printf '%s\n' 'fn value() -> u8 { 2 }' > sample.rs
+    printf '%s\n' '{"type":"tool_execution_end","toolCallId":"call-edit","toolName":"edit","result":{"content":[]},"isError":false}'
+    printf '%s\n' '{"type":"tool_execution_start","toolCallId":"call-test","toolName":"bash","args":{"command":"true"}}'
+    printf '%s\n' '{"type":"tool_execution_end","toolCallId":"call-test","toolName":"bash","result":{"content":[]},"isError":false}'
+    printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Changed the value and verified it."}}'
 elif [[ ${LANTERN_FAKE_PI_MODE:?} == tools ]]; then
     printf '%s\n' '{"type":"tool_execution_start","toolCallId":"call-read","toolName":"read","args":{"path":"sample.rs"}}'
     printf '%s\n' '{"type":"tool_execution_end","toolCallId":"call-read","toolName":"read","result":{"content":[]},"isError":false}'
@@ -1396,6 +1407,81 @@ fn multiple_plan_comments_stage_one_revision_before_explicit_application() {
         fs::read_to_string(&plan_path)
             .unwrap()
             .contains("Revised measurable objective")
+    );
+    fs::remove_dir_all(root).expect("remove repository fixture");
+    fs::remove_dir_all(driver).expect("remove driver fixture");
+}
+
+#[cfg(unix)]
+#[test]
+fn successful_implementation_stages_a_separate_plan_checkpoint() {
+    let root = fixture("plan-progress", "fn value() -> u8 { 1 }\n");
+    for arguments in [
+        &["init", "-q"][..],
+        &["config", "user.name", "Lantern Test"],
+        &["config", "user.email", "lantern@example.invalid"],
+        &["add", "sample.rs"],
+        &["commit", "-qm", "fixture"],
+    ] {
+        assert!(
+            Command::new("git")
+                .args(arguments)
+                .current_dir(&root)
+                .status()
+                .expect("run fixture git")
+                .success()
+        );
+    }
+    let plan = "---\nlantern_plan: 1\nstatus: active\n---\n\n# Active implementation plan\n\nObjective\nChange the value.\nRepository evidence\n- sample.rs:1\nAcceptance criteria\n- Value returns two.\nExclusions\n- No unrelated changes.\nDecisions\n- Keep the function small.\nTasks\n- Change the value.\nRisks and unknowns\n- Verification pending.\nVerification\n- Run the focused check.\n";
+    let plan_path = root.join(".lantern/plans/active.md");
+    fs::create_dir_all(plan_path.parent().unwrap()).expect("create plan directory");
+    fs::write(&plan_path, plan).expect("write active plan");
+    let driver = fixture("plan-progress-driver", "private\n");
+    let pi_bin = fake_pi(&driver);
+    let mut daemon = Daemon::spawn_with_pi(&pi_bin, &driver, "plan-progress");
+    daemon.initialize();
+    daemon.open(&root);
+    daemon.send(&Request::AskAgent {
+        id: 45,
+        repository: root.clone(),
+        query: "Proceed with the first task".into(),
+        intent: AgentIntent::Implement,
+    });
+    let mut started = false;
+    let mut proposal = None;
+    loop {
+        match daemon.next() {
+            Event::PlanProgressStarted { id: 45 } => started = true,
+            Event::ChangeProposal {
+                id: 45,
+                proposal: staged,
+            } => proposal = Some(staged),
+            Event::Settled { id: 45 } => break,
+            _ => {}
+        }
+    }
+    assert!(started);
+    let proposal = proposal.expect("staged plan checkpoint");
+    assert!(proposal.replacement.contains("[x] Change the value"));
+    assert_eq!(fs::read_to_string(&plan_path).unwrap(), plan);
+    let prompt =
+        fs::read_to_string(driver.join("progress-prompt.json")).expect("read plan progress prompt");
+    assert!(prompt.contains("fn value() -> u8 { 2 }"));
+    assert!(prompt.contains("Changed the value and verified it"));
+    assert!(prompt.contains("development command completed successfully during the turn: true"));
+    assert!(prompt.contains("does not by itself prove verification"));
+
+    daemon.send(&Request::AskAgent {
+        id: 46,
+        repository: root.clone(),
+        query: "Apply that".into(),
+        intent: AgentIntent::ApplyPlanRevision,
+    });
+    while !matches!(daemon.next(), Event::Settled { id: 46 }) {}
+    assert!(
+        fs::read_to_string(&plan_path)
+            .unwrap()
+            .contains("[x] Change the value")
     );
     fs::remove_dir_all(root).expect("remove repository fixture");
     fs::remove_dir_all(driver).expect("remove driver fixture");

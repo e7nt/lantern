@@ -1,0 +1,13 @@
+{
+  "dataset": "plan_progress",
+  "version": 1,
+  "cases": [
+    {
+      "id": "one-verified-task-checkpoint",
+      "implementation_summary": "Changed the value and verified it with the focused test.",
+      "touched_paths": ["sample.rs"],
+      "required": ["[x] change the value", "sample.rs", "focused test"],
+      "forbidden": ["[x] publish the release", "full test suite passed", "unrelated.rs"]
+    }
+  ]
+}

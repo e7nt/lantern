@@ -1588,6 +1588,15 @@ fn handle_daemon_event(
                 state.line(format!("Could not open the updated plan: {cause}"));
             }
         }
+        Event::PlanProgressStarted { .. } => {
+            state.activity = Some("Preparing the plan checkpoint…".into());
+        }
+        Event::PlanProgressFailed {
+            message, recovery, ..
+        } => {
+            state.line(format!("Plan checkpoint unavailable: {message}"));
+            state.line(format!("Recovery: {recovery}"));
+        }
         Event::TextDelta { id, delta } => {
             state.activity = Some("Responding…".into());
             state.answer_delta(id, &delta);
@@ -2271,6 +2280,42 @@ mod tests {
         .expect("handle search-only state");
         assert_eq!(state.activity.as_deref(), Some("Searching the repository…"));
         assert!(state.transcript.is_empty());
+    }
+
+    #[test]
+    fn plan_checkpoint_state_is_visible_without_hiding_the_code_result() {
+        let mut state = UiState::new(Path::new("."));
+        handle_daemon_event(
+            Event::PlanProgressStarted { id: 7 },
+            &mut state,
+            Path::new("."),
+            Path::new("unused"),
+            Path::new("unused-focus"),
+        )
+        .unwrap();
+        assert_eq!(
+            state.activity.as_deref(),
+            Some("Preparing the plan checkpoint…")
+        );
+
+        handle_daemon_event(
+            Event::PlanProgressFailed {
+                id: 7,
+                message: "invalid checkpoint".into(),
+                recovery: "review the code diff".into(),
+            },
+            &mut state,
+            Path::new("."),
+            Path::new("unused"),
+            Path::new("unused-focus"),
+        )
+        .unwrap();
+        assert!(state.transcript.iter().any(|item| {
+            matches!(item, TranscriptItem::Line(line) if line.contains("invalid checkpoint"))
+        }));
+        assert!(state.transcript.iter().any(|item| {
+            matches!(item, TranscriptItem::Line(line) if line.contains("review the code diff"))
+        }));
     }
 
     #[test]
