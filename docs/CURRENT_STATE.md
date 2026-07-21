@@ -353,9 +353,21 @@ deliberately unimplemented. See the
 
 ## Required checks
 
-Run the repository gates documented in `README.md`. Model-mediated behavior
+Run `./scripts/check.sh`, the canonical local and CI gate documented in
+`README.md`. Model-mediated behavior
 also requires the deterministic DeepEval contract suite. A live provider run is
 recorded separately and must never be required for ordinary open-source CI.
+
+The first open-source hardening slice now provides a pinned Rust, Node, Python,
+and uv contributor baseline; one `scripts/check.sh` entry point shared by local
+development and least-privilege CI; clean-checkout fetching of the recorded
+Helix revision; contribution guidance; and private vulnerability reporting.
+External actions are pinned by commit and CI requires no provider credentials.
+A legal open-source license remains an explicit release blocker pending the
+maintainer's Apache-2.0 versus MIT decision. Fresh-machine setup,
+dependency/license auditing, release artifacts, and upgrade behavior remain
+unverified. See the
+[foundation report](acceptance/2026-07-21-open-source-foundation.md).
 
 ## Authority of documents
 

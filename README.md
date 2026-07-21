@@ -16,6 +16,26 @@ developer is exploring rather than attempting to replace the developer.
 > **Naming status:** `Lantern` is a working codename. It has not undergone
 > trademark, package-name, or domain clearance.
 
+> **Project status:** Lantern is an early Linux developer preview. It is not a
+> packaged release yet. The maintained contracts are tested in CI; the complete
+> interactive workbench still requires local preparation and real-use feedback.
+
+## Try Lantern
+
+The current path requires Git, Rust, Node.js 22, Python 3.12, uv, tmux 3.2 or
+newer, and Pi 0.80.6. From a clean checkout:
+
+```bash
+./frontend/helix/prepare.sh
+./scripts/launch-lantern.sh /path/to/a/git/repository
+```
+
+Preparation fetches one pinned Helix revision, applies Lantern's audited patch
+set, builds the locked Rust workspace, and installs the locked semantic worker.
+Pi authentication remains private; start `pi`, use `/login`, and choose OpenAI
+Codex before launching Lantern. See
+[the frontend guide](frontend/helix/README.md) for the complete interaction.
+
 ## Product principles
 
 1. Understand before implementing.
@@ -80,6 +100,12 @@ More detail is captured in:
 - [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md)
 - [docs/CREDENTIALS.md](docs/CREDENTIALS.md)
 
+## Contributing
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for the supported environment, clean
+checkout setup, pull-request expectations, and safe reporting guidance. Report
+vulnerabilities privately according to [SECURITY.md](SECURITY.md).
+
 ## Contributor verification
 
 Lantern's maintained Rust code is one workspace with four explicit owners:
@@ -87,37 +113,17 @@ Lantern's maintained Rust code is one workspace with four explicit owners:
 diagnostic records and exports, `apps/daemon` owns agent execution, and
 `frontend/terminal` owns the developer-facing terminal surface.
 
-Run the Rust gate from the repository root:
+Run every non-provider check through the same entry point used by CI:
 
 ```bash
-cargo fmt --all --check
-cargo test --workspace --all-targets
-cargo clippy --workspace --all-targets -- -D warnings
-cargo build --workspace --release --locked
+./scripts/check.sh
 ```
 
-Run the terminal composition contract:
+Focused suites are also available:
 
 ```bash
-node --test scripts/test/terminal-foundation.test.mjs
-```
-
-Run the deterministic model-behavior contracts and Python quality checks:
-
-```bash
-cd evaluations
-DEEPEVAL_DISABLE_DOTENV=1 uv run pytest
-uv run ruff format --check .
-uv run ruff check .
-```
-
-Run the local semantic worker contracts independently:
-
-```bash
-cd services/semantic-index
-uv run pytest
-uv run ruff format --check .
-uv run ruff check .
+./scripts/check.sh rust terminal
+./scripts/check.sh evaluations semantic-index
 ```
 
 Live provider evaluation is explicit and credential-dependent; it is not part
