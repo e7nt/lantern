@@ -31,7 +31,7 @@ if [[ $requested_path == *$'\n'* || $requested_path == *"'"* ]]; then
 fi
 
 repo=$(realpath "$LANTERN_REPO")
-target=$(realpath -m "$repo/$requested_path")
+target=$(realpath "$repo/$requested_path")
 
 case "$target" in
 	"$repo"/*) ;;
@@ -46,7 +46,7 @@ if [[ ! -f $target ]]; then
 	exit 2
 fi
 
-relative=$(realpath --relative-to "$repo" "$target")
+relative=${target#"$repo"/}
 command="lantern-navigate '$relative' ${coordinates[*]}"
 
 # tmux is used only to deliver one typed, validated Helix command.

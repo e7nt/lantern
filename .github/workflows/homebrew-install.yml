@@ -51,12 +51,35 @@ jobs:
           }
           trap cleanup EXIT
 
+          ready=false
           for attempt in {1..30}; do
             panes=$(tmux list-panes -t "$session" \
               -F '#{pane_title}|#{pane_dead}' 2>/dev/null || true)
             if grep -Fxq 'Explorer|0' <<<"$panes" &&
               grep -Fxq 'Helix|0' <<<"$panes" &&
               grep -Fxq 'Lantern|0' <<<"$panes"; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+
+          if ! $ready; then
+            tmux list-panes -t "$session" \
+              -F 'title=#{pane_title} dead=#{pane_dead} command=#{pane_current_command}' >&2 || true
+            exit 1
+          fi
+
+          explorer_pane=$(tmux list-panes -t "$session" \
+            -F '#{pane_title}|#{pane_id}' | awk -F '|' '$1 == "Explorer" { print $2 }')
+          editor_pane=$(tmux list-panes -t "$session" \
+            -F '#{pane_title}|#{pane_id}' | awk -F '|' '$1 == "Helix" { print $2 }')
+          tmux send-keys -t "$explorer_pane" Enter
+          for attempt in {1..20}; do
+            active_title=$(tmux display-message -p -t "$session" '#{pane_title}')
+            editor_text=$(tmux capture-pane -p -t "$editor_pane" 2>/dev/null || true)
+            if [[ $active_title == Helix ]] &&
+              grep -Fq 'Lantern Homebrew acceptance' <<<"$editor_text"; then
               exit 0
             fi
             sleep 1

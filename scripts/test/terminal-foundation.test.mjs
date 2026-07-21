@@ -33,6 +33,11 @@ async function fixture() {
 	);
 	await chmod(path.join(fakeBin, 'tmux'), 0o755);
 	await writeFile(
+		path.join(fakeBin, 'realpath'),
+		'#!/bin/sh\ncase "$1" in -*) exit 64;; esac\nexec /usr/bin/realpath "$@"\n',
+	);
+	await chmod(path.join(fakeBin, 'realpath'), 0o755);
+	await writeFile(
 		path.join(fakeBin, 'lantern-submit'),
 		'#!/bin/sh\nprintf "%s\\n" "$*" > "$LANTERN_SUBMIT_ARGS_LOG"\ncat > "$LANTERN_SUBMIT_LOG"\n'
 	);
@@ -61,6 +66,8 @@ function environment({ directory, repository, fakeBin, tmuxLog, submitLog }) {
 
 test('range navigation sends one validated Helix-native command', async () => {
 	const context = await fixture();
+	const opener = await readFile(path.join(frontendBin, 'lantern-open-range'), 'utf8');
+	assert.doesNotMatch(opener, /realpath (?:-m|--relative-to)/);
 	const result = spawnSync(
 		path.join(frontendBin, 'lantern-open-range'),
 		['source file.rs', '1', '4', '1', '8'],
