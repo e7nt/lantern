@@ -102,4 +102,19 @@ test('release package locks Pi and replaces only its known vulnerable nested cop
 	assert.match(packager, /== 7\.6\.5/);
 	assert.match(packager, /onnxruntime==1\.23\.2/);
 	assert.match(packager, /shasum -a 256 \"\$\(basename \"\$ARCHIVE\"\)\"/);
+	assert.match(packager, /packaging\/helix-runtime-manifest\.txt/);
+	assert.doesNotMatch(packager, /cp -R \"\$HELIX_ROOT\/runtime\"/);
+});
+
+test('packaged Helix runtime is an explicit supported-language allowlist', async () => {
+	const manifest = await readFile(
+		path.join(root, 'packaging/helix-runtime-manifest.txt'),
+		'utf8',
+	);
+	assert.match(manifest, /grammars\/python\.so/);
+	assert.match(manifest, /grammars\/javascript\.so/);
+	assert.match(manifest, /grammars\/typescript\.so/);
+	assert.match(manifest, /grammars\/tsx\.so/);
+	assert.match(manifest, /queries\/_javascript/);
+	assert.doesNotMatch(manifest, /grammars\/sources/);
 });
