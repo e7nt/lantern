@@ -36,10 +36,14 @@ focused rerun passed and the second complete canonical run passed. This is
 recorded rather than presented as two clean repetitions. Fresh-machine CI will
 provide independent clean-checkout evidence.
 
+## License decision
+
+The maintainer subsequently selected AGPL-3.0-only. The repository contains the
+unaltered GNU license text, package metadata uses the SPDX identifier, and the
+contribution guide applies the same inbound terms without copyright assignment.
+
 ## Remaining release blockers
 
-- The maintainer must explicitly choose Apache-2.0 or MIT before a `LICENSE`
-  file is added or the repository is described as legally open source.
 - The complete preparation and launch journey has not run on a fresh supported
   Linux machine or macOS.
 - Dependency license, vulnerability, and secret scanning are not yet CI gates.

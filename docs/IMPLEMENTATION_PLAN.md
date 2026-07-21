@@ -59,7 +59,8 @@ local by default.
 - A user explicitly authenticates a supported model driver. The Phase 0 Pi RPC
   experiment may use eligible ChatGPT subscription access; generic API billing
   and subscription access are never presented as interchangeable.
-- No open-source license is selected until the owner makes that legal decision.
+- Lantern is licensed under AGPL-3.0-only. Commercial use remains possible, but
+  modified network services must preserve corresponding-source access.
 - The repository stays private until the security model and contributor setup
   pass the public-release gate.
 - Lantern's core product remains open source and does not depend on a paid
@@ -584,6 +585,7 @@ The detailed interaction contract is in
   `SECURITY.md` are implemented; a concise architecture entry point, code of
   conduct, and issue/pull-request templates remain.
 - `P8-13` Select an open-source license before changing repository visibility.
+  AGPL-3.0-only is selected and recorded in package and contributor metadata.
 - `P8-14` Provide a one-command development bootstrap and fixture setup. The
   pinned Helix preparation and canonical `scripts/check.sh` gate now work from
   a clean checkout; fresh supported-machine validation remains.

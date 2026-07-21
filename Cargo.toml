@@ -5,6 +5,9 @@ resolver = "3"
 [workspace.package]
 edition = "2024"
 publish = false
+rust-version = "1.96"
+license = "AGPL-3.0-only"
+repository = "https://github.com/e7nt/lantern"
 
 [workspace.dependencies]
 crossterm = "=0.28.1"

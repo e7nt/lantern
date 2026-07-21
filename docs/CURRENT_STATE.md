@@ -363,11 +363,13 @@ and uv contributor baseline; one `scripts/check.sh` entry point shared by local
 development and least-privilege CI; clean-checkout fetching of the recorded
 Helix revision; contribution guidance; and private vulnerability reporting.
 External actions are pinned by commit and CI requires no provider credentials.
-A legal open-source license remains an explicit release blocker pending the
-maintainer's Apache-2.0 versus MIT decision. Fresh-machine setup,
-dependency/license auditing, release artifacts, and upgrade behavior remain
-unverified. See the
+A legal open-source license is now explicit: Lantern uses AGPL-3.0-only so
+commercial use remains possible while modified network services retain a
+corresponding-source obligation. Fresh-machine setup, dependency-license
+auditing, release artifacts, and upgrade behavior remain unverified. See the
 [foundation report](acceptance/2026-07-21-open-source-foundation.md).
+The focused legal decision and verification are recorded in the
+[AGPL licensing checkpoint](acceptance/2026-07-21-agpl-license.md).
 
 ## Authority of documents
 

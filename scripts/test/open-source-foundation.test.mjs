@@ -35,8 +35,10 @@ test('CI is least privilege and pins every external action by commit', async () 
 });
 
 test('public contributor entry points exist and the check script is executable', async () => {
-	for (const file of ['CONTRIBUTING.md', 'SECURITY.md', 'rust-toolchain.toml']) {
+	for (const file of ['LICENSE', 'CONTRIBUTING.md', 'SECURITY.md', 'rust-toolchain.toml']) {
 		assert.ok((await stat(path.join(root, file))).isFile(), `${file} should exist`);
 	}
 	assert.notEqual((await stat(path.join(root, 'scripts/check.sh'))).mode & 0o111, 0);
+	const manifest = await readFile(path.join(root, 'Cargo.toml'), 'utf8');
+	assert.match(manifest, /license = "AGPL-3\.0-only"/);
 });
