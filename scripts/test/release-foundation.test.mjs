@@ -49,6 +49,8 @@ test('formula renderer emits architecture-pinned AGPL metadata', async () => {
 	assert.match(stdout, /license "AGPL-3\.0-only"/);
 	assert.match(stdout, /on_arm do/);
 	assert.match(stdout, /on_intel do/);
+	assert.match(stdout, /semantic_runtime\/"vendor\.tar"/);
+	assert.match(stdout, /def post_install/);
 	assert.equal((stdout.match(/sha256 "a{64}"/g) ?? []).length, 2);
 	assert.match(stdout, /assert_match "lantern #\{version\}"/);
 });

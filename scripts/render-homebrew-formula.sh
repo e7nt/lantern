@@ -42,6 +42,9 @@ class Lantern < Formula
 
   def install
     libexec.install Dir["*"]
+    semantic_runtime = libexec/"libexec/lantern/semantic"
+    system "tar", "-C", semantic_runtime, "-cf", semantic_runtime/"vendor.tar", "vendor"
+    rm_r semantic_runtime/"vendor"
     runtime_path = [
       Formula["node@22"].opt_bin,
       Formula["python@3.12"].opt_bin,
@@ -49,6 +52,15 @@ class Lantern < Formula
       ENV.fetch("PATH"),
     ].join(File::PATH_SEPARATOR)
     bin.write_env_script libexec/"bin/lantern", PATH: runtime_path, HOMEBREW_PREFIX: HOMEBREW_PREFIX
+  end
+
+  def post_install
+    semantic_runtime = libexec/"libexec/lantern/semantic"
+    archive = semantic_runtime/"vendor.tar"
+    return unless archive.exist?
+
+    system "tar", "-C", semantic_runtime, "-xf", archive
+    rm archive
   end
 
   test do
