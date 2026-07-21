@@ -3,7 +3,7 @@ use std::fmt;
 use std::io::{self, BufRead};
 use std::path::{Component, Path, PathBuf};
 
-pub const PROTOCOL_VERSION: u32 = 15;
+pub const PROTOCOL_VERSION: u32 = 16;
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const MAX_EVENT_BYTES: usize = 256 * 1024;
 pub const MAX_DIAGNOSTIC_BYTES: usize = 8 * 1024;
@@ -368,8 +368,7 @@ pub enum Request {
 pub enum ControlRequest {
     SubmitQuestion { question: String },
     AddPlanComment { comment: String },
-    AddCodeReviewComment { comment: CodeReviewComment },
-    SubmitCodeReview,
+    SubmitCodeReview { comments: Vec<CodeReviewComment> },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
