@@ -35,7 +35,7 @@ jobs:
       - name: Verify the installed workbench
         run: |
           set -euo pipefail
-          [[ $(lantern --version) == "lantern 0.1.0" ]]
+          [[ $(lantern --version) == "lantern 0.1.1" ]]
           repo=$(mktemp -d)
           git -C "$repo" init -q
           git -C "$repo" config user.name "Lantern acceptance"

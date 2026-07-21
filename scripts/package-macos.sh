@@ -60,7 +60,18 @@ mkdir -p "$STAGE/bin" "$INSTALL_ROOT/bin" "$INSTALL_ROOT/helix" \
 install -m 0755 "$ROOT/scripts/launch-lantern.sh" "$INSTALL_ROOT/scripts-launch-lantern"
 install -m 0755 "$ROOT/scripts/run-semantic-worker.sh" "$INSTALL_ROOT/scripts-run-semantic-worker"
 install -m 0755 "$HELIX_ROOT/target/release/hx" "$INSTALL_ROOT/helix/hx"
-cp -R "$HELIX_ROOT/runtime" "$INSTALL_ROOT/helix/runtime"
+HELIX_RUNTIME="$INSTALL_ROOT/helix/runtime"
+mkdir -p "$HELIX_RUNTIME"
+while IFS= read -r relative_path; do
+	[[ -z $relative_path || $relative_path == \#* ]] && continue
+	source_path="$HELIX_ROOT/runtime/$relative_path"
+	if [[ ! -e $source_path ]]; then
+		echo "Helix runtime manifest path is missing: $relative_path" >&2
+		exit 1
+	fi
+	mkdir -p "$(dirname "$HELIX_RUNTIME/$relative_path")"
+	cp -R "$source_path" "$HELIX_RUNTIME/$relative_path"
+done <"$ROOT/packaging/helix-runtime-manifest.txt"
 cp -R "$ROOT/frontend/helix/bin" "$INSTALL_ROOT/frontend/helix/bin"
 cp -R "$ROOT/frontend/helix/config" "$INSTALL_ROOT/frontend/helix/config"
 install -m 0755 "$ROOT/target/release/lantern-daemon" "$INSTALL_ROOT/bin/lantern-daemon"
@@ -93,6 +104,10 @@ PYTHON=$(uv python find 3.12)
 uv pip install --python "$PYTHON" --target "$INSTALL_ROOT/semantic/vendor" \
 	fastembed==0.8.0 numpy==2.4.3 onnxruntime==1.23.2 \
 	tree-sitter-language-pack==1.12.5
+find "$INSTALL_ROOT/semantic/vendor" -type d \
+	\( -name __pycache__ -o -name tests -o -name test \) -prune -exec rm -rf {} +
+find "$INSTALL_ROOT/semantic/vendor" -type f \
+	\( -name '*.pyc' -o -name '*.pyo' \) -delete
 env PYTHONPATH="$INSTALL_ROOT/semantic/vendor:$INSTALL_ROOT/semantic/service" \
 	"$PYTHON" -m lantern_semantic_index.prepare \
 	--model-cache "$INSTALL_ROOT/semantic/models"
@@ -102,6 +117,8 @@ install -m 0644 "$ROOT/packaging/pi/package.json" "$INSTALL_ROOT/pi/package.json
 install -m 0644 "$ROOT/packaging/pi/package-lock.json" "$INSTALL_ROOT/pi/package-lock.json"
 npm ci --prefix "$INSTALL_ROOT/pi" --omit=dev
 PI_PACKAGE="$INSTALL_ROOT/pi/node_modules/@earendil-works/pi-coding-agent"
+rm -rf "$PI_PACKAGE/docs" "$PI_PACKAGE/examples"
+rm -f "$PI_PACKAGE/CHANGELOG.md" "$PI_PACKAGE/README.md"
 # Pi 0.80.6 bundles two older transitive copies. Remove only those copies so
 # Node resolves the locked patched versions installed at the package root.
 rm -rf "$PI_PACKAGE/node_modules/brace-expansion" "$PI_PACKAGE/node_modules/protobufjs"
