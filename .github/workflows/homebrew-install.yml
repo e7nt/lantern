@@ -26,7 +26,7 @@ jobs:
           for command in 2to3-3.12 idle3.12 pip3.12 pydoc3.12 python3.12 python3.12-config; do
             candidate="$(brew --prefix)/bin/$command"
             if [[ -L $candidate ]] &&
-              [[ $(readlink "$candidate") == /Library/Frameworks/Python.framework/Versions/3.12/* ]]; then
+              [[ $(realpath "$candidate") == /Library/Frameworks/Python.framework/Versions/3.12/* ]]; then
               rm "$candidate"
             fi
           done
