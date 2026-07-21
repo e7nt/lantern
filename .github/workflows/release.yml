@@ -52,8 +52,6 @@ jobs:
         include:
           - runner: macos-14
             arch: arm64
-          - runner: macos-15-intel
-            arch: x86_64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
@@ -139,12 +137,9 @@ jobs:
           version=${GITHUB_REF_NAME#v}
           base="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME"
           arm_name="lantern-$version-darwin-arm64.tar.gz"
-          intel_name="lantern-$version-darwin-x86_64.tar.gz"
           arm_sha=$(awk '{print $1}' "dist/$arm_name.sha256")
-          intel_sha=$(awk '{print $1}' "dist/$intel_name.sha256")
           ./scripts/render-homebrew-formula.sh "$version" \
-            "$base/$arm_name" "$arm_sha" \
-            "$base/$intel_name" "$intel_sha" >lantern.rb
+            "$base/$arm_name" "$arm_sha" >lantern.rb
           content=$(base64 -w 0 lantern.rb)
           current_sha=$(GH_TOKEN="$TAP_TOKEN" gh api \
             repos/e7nt/homebrew-tap/contents/Formula/lantern.rb \

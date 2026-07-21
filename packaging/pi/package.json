@@ -1,6 +1,6 @@
 {
   "name": "lantern-pi-runtime",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "Locked Pi runtime bundled with Lantern releases",
   "license": "AGPL-3.0-only",

@@ -22,13 +22,13 @@ test('release publication is tag-only, least privilege, and commit pinned', asyn
 	assert.match(workflow, /publish:[\s\S]+if: github\.event_name == 'push'/);
 });
 
-test('Homebrew acceptance installs and launches both supported architectures', async () => {
+test('Homebrew acceptance installs and launches the supported Apple Silicon release', async () => {
 	const workflow = await readFile(
 		path.join(root, '.github/workflows/homebrew-install.yml'),
 		'utf8',
 	);
 	assert.match(workflow, /runner: macos-14\n\s+arch: arm64/);
-	assert.match(workflow, /runner: macos-15-intel\n\s+arch: x86_64/);
+	assert.doesNotMatch(workflow, /macos-15-intel|arch: x86_64/);
 	assert.match(workflow, /brew install e7nt\/tap\/lantern/);
 	assert.match(workflow, /brew info --json=v2 e7nt\/tap\/lantern/);
 	assert.match(workflow, /lantern \$installed_version/);
@@ -49,18 +49,16 @@ test('formula renderer emits architecture-pinned AGPL metadata', async () => {
 		version,
 		`${base}/lantern-${version}-darwin-arm64.tar.gz`,
 		sha,
-		`${base}/lantern-${version}-darwin-x86_64.tar.gz`,
-		sha,
 	]);
 	assert.match(stdout, /license "AGPL-3\.0-only"/);
-	assert.match(stdout, /on_arm do/);
-	assert.match(stdout, /on_intel do/);
+	assert.match(stdout, /depends_on arch: :arm64/);
+	assert.doesNotMatch(stdout, /on_intel|x86_64/);
 	assert.match(stdout, /semantic_runtime\/"vendor\.tar"/);
 	assert.match(stdout, /pi_runtime\/"node_modules\.tar"/);
 	assert.match(stdout, /\(bin\/"lantern"\)\.write_env_script/);
 	assert.match(stdout, /Formula\["git"\]\.opt_bin/);
 	assert.match(stdout, /def post_install/);
-	assert.equal((stdout.match(/sha256 "a{64}"/g) ?? []).length, 2);
+	assert.equal((stdout.match(/sha256 "a{64}"/g) ?? []).length, 1);
 	assert.match(stdout, /assert_match "lantern #\{version\}"/);
 });
 
