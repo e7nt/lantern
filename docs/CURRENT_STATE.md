@@ -284,6 +284,16 @@ interactive; reopening `/git` restores the exact or nearest surviving hunk
 after agent edits. See the
 [review-handoff report](acceptance/2026-07-19-git-agent-review-handoff.md).
 
+The Git surface now changes shape with the task instead of reserving permanent
+space. Browsing remains a 10% rail; opening a diff expands the same focused
+process into an 80%-wide canvas over the upper editor region while the
+full-width agent remains visible below. `Esc` collapses back to the rail, and a
+strict bounded resume envelope preserves the selected file, hunk, exact diff
+line, scroll offset, and pending comment count across the process transition.
+`p`/`n` move between reviewable files, `[`/`]` move between hunks, and all
+existing line-comment and submit interactions remain authoritative. See the
+[adaptive review report](acceptance/2026-07-21-adaptive-git-review-canvas.md).
+
 The return path is connected as well. Successful edit/write events are retained
 only for the active turn in a bounded path set. On settlement, Lantern offers
 one compact review instruction; the next `Space-g` or `/git` consumes that

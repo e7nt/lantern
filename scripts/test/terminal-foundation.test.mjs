@@ -27,6 +27,7 @@ async function fixture() {
 			'  printf "%%7 Helix\\n%%8 Lantern\\n"\n' +
 			'else\n' +
 			'  printf "%s\\n" "$*" >> "$TMUX_LOG"\n' +
+			'  if [ "$1" = display-popup ] && [ "$TMUX_EXPAND_ON_COMPACT" = 1 ]; then case "$*" in *LANTERN_GIT_LAYOUT=compact*) exit 21;; esac; fi\n' +
 			'  if [ "$1" = display-popup ] && [ -n "$TMUX_POPUP_STATUS" ]; then exit "$TMUX_POPUP_STATUS"; fi\n' +
 			'fi\n'
 	);
@@ -106,6 +107,29 @@ test('focused Git is constrained to a 10 percent rail above the agent', async ()
 	assert.ok(calls.includes(gitRail));
 	assert.ok(calls.includes(environment(context).LANTERN_GIT_FOCUS_PATH));
 	assert.ok(calls.includes(environment(context).LANTERN_CONTROL_SOCKET));
+	assert.match(calls, /LANTERN_GIT_LAYOUT=compact/);
+});
+
+test('opening a diff expands Git across the upper editor region', async () => {
+	const context = await fixture();
+	const gitRail = path.join(context.directory, 'lantern-git-rail');
+	await writeFile(gitRail, '#!/bin/sh\nexit 0\n');
+	await chmod(gitRail, 0o755);
+
+	const result = spawnSync(path.join(frontendBin, 'lantern-git'), [], {
+		encoding: 'utf8',
+		env: {
+			...environment(context),
+			LANTERN_GIT_BIN: gitRail,
+			TMUX_EXPAND_ON_COMPACT: '1'
+		}
+	});
+
+	assert.equal(result.status, 0, result.stderr);
+	const calls = await readFile(context.tmuxLog, 'utf8');
+	assert.match(calls, /display-popup -E -w 10% -h 80% -x 0 -y 0/);
+	assert.match(calls, /display-popup -E -w 80% -h 80% -x 10% -y 0/);
+	assert.match(calls, /LANTERN_GIT_LAYOUT=review/);
 });
 
 test('focused Git rejects a terminal too narrow for the 10 percent rail', async () => {
