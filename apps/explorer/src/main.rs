@@ -63,8 +63,11 @@ struct State {
 }
 
 impl State {
-    fn apply(&mut self, mut snapshot: Snapshot) {
+    fn apply(&mut self, mut snapshot: Snapshot) -> bool {
         snapshot.tree.preserve_expansion(&self.tree);
+        if snapshot.tree == self.tree {
+            return false;
+        }
         self.tree = snapshot.tree;
         let rows = self.tree.rows();
         self.selected = self
@@ -73,6 +76,7 @@ impl State {
             .and_then(|path| rows.iter().position(|row| &row.path == path))
             .unwrap_or_else(|| self.selected.min(rows.len().saturating_sub(1)));
         self.remember_selection(&rows);
+        true
     }
 
     fn move_selection(&mut self, amount: isize) {
@@ -358,10 +362,13 @@ fn run() -> Result<(), String> {
         if let Ok(result) = receiver.try_recv() {
             refresh_in_flight = false;
             match result {
-                Ok(snapshot) => state.apply(snapshot),
-                Err(message) => state.notice = Some(message),
+                Ok(snapshot) => dirty |= state.apply(snapshot),
+                Err(message) if state.notice.as_deref() != Some(&message) => {
+                    state.notice = Some(message);
+                    dirty = true;
+                }
+                Err(_) => {}
             }
-            dirty = true;
         }
         if !refresh_in_flight && Instant::now() >= next_refresh {
             request_refresh(rail.clone(), focus_path.clone(), sender.clone());
@@ -435,5 +442,37 @@ fn main() {
     if let Err(message) = run() {
         eprintln!("{message}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lantern_git_rail::Status;
+
+    fn tree(files: &[&str]) -> ExplorerTree {
+        ExplorerTree::new(
+            files.iter().map(PathBuf::from).collect(),
+            &Status::default(),
+            HashMap::new(),
+        )
+    }
+
+    #[test]
+    fn unchanged_background_refresh_does_not_request_a_repaint() {
+        let mut state = State {
+            tree: tree(&["README.md", "src/main.rs"]),
+            selected_path: None,
+            selected: 0,
+            offset: 0,
+            notice: None,
+            help: false,
+        };
+        assert!(!state.apply(Snapshot {
+            tree: tree(&["README.md", "src/main.rs"]),
+        }));
+        assert!(state.apply(Snapshot {
+            tree: tree(&["README.md", "src/lib.rs"]),
+        }));
     }
 }

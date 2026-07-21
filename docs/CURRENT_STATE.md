@@ -25,7 +25,8 @@ and tool vocabulary should not become user-facing ceremony.
   plus an on-demand 10% focused Git rail and expanded review canvas.
 - A persistent, Git-aware folder tree in the upper work region. It opens files
   in the existing Helix process, propagates changed/comment state to collapsed
-  folders, refreshes without blocking input, and supports keyboard and mouse.
+  folders, repaints only when visible state changes, and supports keyboard and
+  mouse. Its navigation helper uses the portable macOS command surface.
 - Mouse and keyboard interaction across the surfaces.
 - A `Ctrl-a` contextual composer over Helix and reversible `F2` full-screen
   reading mode for the persistent agent pane.

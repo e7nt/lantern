@@ -39,6 +39,8 @@ test('Homebrew acceptance installs and launches the supported Apple Silicon rele
 	assert.match(workflow, /grep -Fxq 'Explorer\|0'/);
 	assert.match(workflow, /grep -Fxq 'Helix\|0'/);
 	assert.match(workflow, /grep -Fxq 'Lantern\|0'/);
+	assert.match(workflow, /tmux send-keys -t "\$explorer_pane" Enter/);
+	assert.match(workflow, /Lantern Homebrew acceptance/);
 });
 
 test('formula renderer emits architecture-pinned AGPL metadata', async () => {

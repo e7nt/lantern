@@ -40,7 +40,7 @@ pub struct TreeRow {
     pub comments: usize,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExplorerTree {
     files: Vec<PathBuf>,
     status: HashMap<PathBuf, FileState>,
