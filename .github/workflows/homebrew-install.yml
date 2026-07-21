@@ -44,8 +44,8 @@ jobs:
           for attempt in {1..30}; do
             panes=$(tmux list-panes -t "$session" \
               -F '#{pane_title}\t#{pane_dead}' 2>/dev/null || true)
-            if grep -q $'^Helix\\t0$' <<<"$panes" &&
-              grep -q $'^Lantern\\t0$' <<<"$panes"; then
+            if grep -q $'^Helix\t0$' <<<"$panes" &&
+              grep -q $'^Lantern\t0$' <<<"$panes"; then
               exit 0
             fi
             sleep 1
