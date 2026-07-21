@@ -53,6 +53,11 @@ builds both macOS architectures from the tag, verifies checksums, publishes one
 GitHub release with provenance attestations, and writes the checksum-pinned
 formula to `e7nt/homebrew-tap`.
 
+Before the repository is public, a maintainer may manually run the `Release`
+workflow on `main`. That path builds and smoke-tests both packages as private,
+short-lived workflow artifacts, but it cannot create a GitHub release or alter
+the tap.
+
 Release tags and attached archives are immutable product inputs. If a release
 is wrong, fix it in a new patch version; do not replace a published archive or
 move its version tag.

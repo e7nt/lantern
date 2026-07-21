@@ -3,6 +3,7 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -28,16 +29,18 @@ jobs:
       - name: Validate public semantic release
         run: |
           set -euo pipefail
-          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          [[ $(git cat-file -t "$GITHUB_REF_NAME") == tag ]]
-          version=${GITHUB_REF_NAME#v}
-          [[ $(<VERSION) == "$version" ]]
+          version=$(<VERSION)
+          [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           cargo metadata --no-deps --format-version 1 |
             jq -e --arg version "$version" 'all(.packages[]; .version == $version)' >/dev/null
-          [[ $(gh repo view "$GITHUB_REPOSITORY" --json visibility --jq .visibility) == PUBLIC ]]
-          if [[ -z $TAP_TOKEN ]]; then
-            echo "HOMEBREW_TAP_TOKEN is required to update e7nt/homebrew-tap." >&2
-            exit 1
+          if [[ $GITHUB_EVENT_NAME == push ]]; then
+            [[ "$GITHUB_REF_NAME" == "v$version" ]]
+            [[ $(git cat-file -t "$GITHUB_REF_NAME") == tag ]]
+            [[ $(gh repo view "$GITHUB_REPOSITORY" --json visibility --jq .visibility) == PUBLIC ]]
+            if [[ -z $TAP_TOKEN ]]; then
+              echo "HOMEBREW_TAP_TOKEN is required to update e7nt/homebrew-tap." >&2
+              exit 1
+            fi
           fi
 
   build:
@@ -73,7 +76,16 @@ jobs:
           uv python install 3.12
           ./frontend/helix/prepare.sh
       - name: Package release runtime
-        run: ./scripts/package-macos.sh "${GITHUB_REF_NAME#v}" dist
+        run: ./scripts/package-macos.sh "$(<VERSION)" dist
+      - name: Smoke-test packaged launcher
+        run: |
+          set -euo pipefail
+          archive=$(find dist -name '*.tar.gz' -type f -print -quit)
+          smoke=$(mktemp -d)
+          tar -xzf "$archive" -C "$smoke"
+          launcher=$(find "$smoke" -path '*/bin/lantern' -type f -print -quit)
+          HOMEBREW_PREFIX=$(brew --prefix) "$launcher" --version |
+            grep -Fx "lantern $(<VERSION)"
       - name: Upload architecture package
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -85,6 +97,7 @@ jobs:
   publish:
     name: Publish release and Homebrew formula
     needs: build
+    if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
