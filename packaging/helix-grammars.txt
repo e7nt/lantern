@@ -1,0 +1,25 @@
+# Helix grammars compiled and shipped by Lantern. Keep this list aligned with
+# the languages the workbench intentionally supports.
+bash
+comment
+css
+diff
+git-config
+git-rebase
+gitattributes
+gitcommit
+gitignore
+html
+javascript
+jsdoc
+json
+markdown
+markdown_inline
+python
+regex
+rust
+rust-format-args
+toml
+tsx
+typescript
+yaml

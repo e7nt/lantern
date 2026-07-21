@@ -1,28 +1,6 @@
-# Runtime assets supported by Lantern v0.1. Build-only grammar sources are
-# intentionally absent. Keep query inheritance dependencies explicit.
-grammars/bash.so
-grammars/comment.so
-grammars/diff.so
-grammars/git-config.so
-grammars/git-rebase.so
-grammars/gitattributes.so
-grammars/gitcommit.so
-grammars/gitignore.so
-grammars/html.so
-grammars/css.so
-grammars/javascript.so
-grammars/jsdoc.so
-grammars/json.so
-grammars/markdown.so
-grammars/markdown_inline.so
-grammars/python.so
-grammars/regex.so
-grammars/rust-format-args.so
-grammars/rust.so
-grammars/toml.so
-grammars/tsx.so
-grammars/typescript.so
-grammars/yaml.so
+# Non-grammar runtime assets supported by Lantern v0.1. Keep query inheritance
+# dependencies explicit. Compiled grammars are listed separately because their
+# shared-library extension is platform-specific.
 queries/_javascript
 queries/_jsx
 queries/_typescript
