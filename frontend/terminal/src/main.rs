@@ -112,6 +112,7 @@ struct UiState {
     plan_review_comments: Vec<PlanReviewComment>,
     submitting_plan_review: bool,
     code_review_comments: Vec<CodeReviewComment>,
+    review_return_comments: Vec<CodeReviewComment>,
     submitting_code_review: bool,
 }
 
@@ -137,6 +138,7 @@ impl UiState {
             plan_review_comments: Vec::new(),
             submitting_plan_review: false,
             code_review_comments: Vec::new(),
+            review_return_comments: Vec::new(),
             submitting_code_review: false,
         }
     }
@@ -1184,9 +1186,14 @@ fn open_git(state: &mut UiState) {
     }
 }
 
-fn publish_agent_git_focus(path: &Path, relative_paths: &[PathBuf]) -> Result<(), String> {
+fn publish_agent_git_focus(
+    path: &Path,
+    relative_paths: &[PathBuf],
+    review_comments: &[CodeReviewComment],
+) -> Result<(), String> {
     let focus = AgentGitFocus {
         relative_paths: relative_paths.to_vec(),
+        review_comments: review_comments.to_vec(),
     };
     validate_agent_git_focus(&focus)?;
     let payload = serde_json::to_vec(&focus)
@@ -1684,7 +1691,7 @@ fn handle_daemon_event(
             state.activity = Some("Finishing…".into());
             if state.active_id == Some(id) && state.submitting_code_review {
                 let count = state.code_review_comments.len();
-                state.code_review_comments.clear();
+                state.review_return_comments = std::mem::take(&mut state.code_review_comments);
                 state.submitting_code_review = false;
                 state.line(format!(
                     "Addressed {count} submitted code review comment{} · inspect the new Git diff",
@@ -1733,7 +1740,11 @@ fn handle_daemon_event(
             state.activity = None;
             if state.active_id == Some(id) {
                 if !state.agent_touched_paths.is_empty() {
-                    match publish_agent_git_focus(git_focus_path, &state.agent_touched_paths) {
+                    match publish_agent_git_focus(
+                        git_focus_path,
+                        &state.agent_touched_paths,
+                        &state.review_return_comments,
+                    ) {
                         Ok(()) => state.line(format!(
                             "Review {} agent-edited file{} · Space-g in Helix or /git",
                             state.agent_touched_paths.len(),
@@ -1748,6 +1759,7 @@ fn handle_daemon_event(
                         }
                     }
                 }
+                state.review_return_comments.clear();
                 state.active_id = None;
                 state.accepted_id = None;
                 state.navigated_for = None;
@@ -2565,6 +2577,7 @@ mod tests {
         )
         .unwrap();
         assert!(state.code_review_comments.is_empty());
+        assert_eq!(state.review_return_comments.len(), 1);
         assert!(!state.submitting_code_review);
     }
 
@@ -2583,6 +2596,21 @@ mod tests {
         let mut state = UiState::new(Path::new("."));
         state.daemon = DaemonState::Ready;
         state.active_id = Some(7);
+        state.review_return_comments = vec![CodeReviewComment {
+            anchor: lantern_protocol::CodeReviewAnchor {
+                review: GitReviewContext {
+                    relative_path: "src/lib.rs".into(),
+                    state: lantern_protocol::GitReviewState::Modified,
+                    scope: lantern_protocol::GitReviewScope::Hunk,
+                    start_line: 1,
+                    end_line: 2,
+                    diff: "@@ -1 +1 @@\n-old\n+new".into(),
+                },
+                diff_line: 2,
+                line: "+new".into(),
+            },
+            comment: "Keep the public behavior.".into(),
+        }];
 
         handle_daemon_event(
             Event::ToolFinished {
@@ -2608,6 +2636,8 @@ mod tests {
 
         let focus: AgentGitFocus = serde_json::from_slice(&fs::read(&focus_path).unwrap()).unwrap();
         assert_eq!(focus.relative_paths, vec![PathBuf::from("src/lib.rs")]);
+        assert_eq!(focus.review_comments.len(), 1);
+        assert!(state.review_return_comments.is_empty());
         assert!(state.transcript.iter().any(|item| {
             matches!(item, TranscriptItem::Line(line) if line.contains("Space-g in Helix"))
         }));

@@ -84,6 +84,7 @@ struct GitResume {
     diff_line: usize,
     offset: usize,
     comments: Vec<CodeReviewComment>,
+    submitted_comments: Vec<CodeReviewComment>,
 }
 
 #[derive(Clone, Copy)]
@@ -182,6 +183,7 @@ struct State {
     repository_generation: u64,
     help: bool,
     review_comments: Vec<CodeReviewComment>,
+    submitted_review_comments: Vec<CodeReviewComment>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -238,6 +240,7 @@ impl State {
             repository_generation: 0,
             help: false,
             review_comments: Vec::new(),
+            submitted_review_comments: Vec::new(),
         })
     }
 
@@ -821,6 +824,7 @@ impl State {
             diff_line,
             offset,
             comments: self.review_comments.clone(),
+            submitted_comments: self.submitted_review_comments.clone(),
         };
         let payload = serde_json::to_vec(&resume)
             .map_err(|error| format!("Cannot encode Git review position: {error}"))?;
@@ -954,7 +958,7 @@ impl State {
     }
 
     fn open_review_comment(&mut self, rail: &GitRail, index: usize) {
-        let Some(comment) = self.review_comments.get(index).cloned() else {
+        let Some(comment) = self.review_summary_comment(index).cloned() else {
             return;
         };
         self.restore_review(rail, &comment.anchor.review);
@@ -964,12 +968,24 @@ impl State {
         }
     }
 
+    fn review_summary_comment(&self, index: usize) -> Option<&CodeReviewComment> {
+        self.submitted_review_comments.get(index).or_else(|| {
+            index
+                .checked_sub(self.submitted_review_comments.len())
+                .and_then(|index| self.review_comments.get(index))
+        })
+    }
+
+    fn review_summary_len(&self) -> usize {
+        self.submitted_review_comments.len() + self.review_comments.len()
+    }
+
     fn restore_review_context(&mut self, rail: &GitRail, path: &Path, open_diff: bool) {
         let Ok(bytes) = fs::read(path) else {
             return;
         };
         let _ = fs::remove_file(path);
-        if bytes.len() > MAX_SELECTION_BYTES + MAX_CODE_REVIEW_BYTES + 8 * 1024 {
+        if bytes.len() > MAX_SELECTION_BYTES + 2 * MAX_CODE_REVIEW_BYTES + 8 * 1024 {
             self.notice = Some("Saved Git review context exceeded its bound.".into());
             return;
         }
@@ -985,8 +1001,15 @@ impl State {
             self.notice = Some("Saved Git review draft was invalid.".into());
             return;
         }
+        if !resume.submitted_comments.is_empty()
+            && validate_code_review(&resume.submitted_comments).is_err()
+        {
+            self.notice = Some("Saved submitted review was invalid.".into());
+            return;
+        }
         self.restore_review(rail, &resume.review);
         self.review_comments = resume.comments;
+        self.submitted_review_comments = resume.submitted_comments;
         if open_diff {
             if let View::Diff {
                 hunks,
@@ -1063,9 +1086,9 @@ impl State {
     }
 
     fn focus_agent_changes(&mut self, path: &Path) {
-        if fs::metadata(path)
-            .is_ok_and(|metadata| metadata.len() > MAX_AGENT_GIT_FOCUS_BYTES as u64 + 4 * 1024)
-        {
+        if fs::metadata(path).is_ok_and(|metadata| {
+            metadata.len() > (MAX_AGENT_GIT_FOCUS_BYTES + MAX_CODE_REVIEW_BYTES + 8 * 1024) as u64
+        }) {
             let _ = fs::remove_file(path);
             self.notice = Some("Agent Git review context exceeded its bound.".into());
             return;
@@ -1082,6 +1105,7 @@ impl State {
             self.notice = Some(message);
             return;
         }
+        self.submitted_review_comments = focus.review_comments;
         let selected = focus
             .relative_paths
             .iter()
@@ -1103,9 +1127,18 @@ impl State {
             .iter()
             .filter(|path| self.changes.iter().any(|change| change.path == **path))
             .count();
+        let submitted = self.submitted_review_comments.len();
         self.notice = Some(format!(
-            "Reviewing {changed} agent-edited file{}.",
-            if changed == 1 { "" } else { "s" }
+            "Reviewing {changed} agent-edited file{}{}.",
+            if changed == 1 { "" } else { "s" },
+            if submitted == 0 {
+                String::new()
+            } else {
+                format!(
+                    " · Your review: {submitted} comment{}",
+                    if submitted == 1 { "" } else { "s" }
+                )
+            }
         ));
     }
 
@@ -1414,7 +1447,12 @@ fn draw(stdout: &mut Stdout, state: &State) -> io::Result<()> {
             stdout,
             change,
             hunks,
-            (*selected, *offset, *cursor),
+            (
+                *selected,
+                *offset,
+                *cursor,
+                state.submitted_review_comments.len(),
+            ),
             &state.review_comments,
             width,
             height,
@@ -1427,19 +1465,27 @@ fn draw(stdout: &mut Stdout, state: &State) -> io::Result<()> {
             draw_review_input(stdout, anchor, value, width, height)?
         }
         View::ReviewSummary { selected } => {
-            let rows = state
-                .review_comments
+            let mut rows = state
+                .submitted_review_comments
                 .iter()
                 .map(|comment| {
                     format!(
-                        "{}:{}  {}",
+                        "Your review · {}:{}  {}",
                         comment.anchor.review.relative_path.display(),
                         comment.anchor.diff_line + 1,
                         comment.comment
                     )
                 })
                 .collect::<Vec<_>>();
-            draw_menu(stdout, "Review draft", &rows, *selected, width, height)?;
+            rows.extend(state.review_comments.iter().map(|comment| {
+                format!(
+                    "Draft · {}:{}  {}",
+                    comment.anchor.review.relative_path.display(),
+                    comment.anchor.diff_line + 1,
+                    comment.comment
+                )
+            }));
+            draw_menu(stdout, "Review", &rows, *selected, width, height)?;
         }
         View::ReviewConfirm => {
             draw_review_confirm(stdout, state.review_comments.len(), width, height)?
@@ -1816,12 +1862,12 @@ fn draw_diff(
     stdout: &mut Stdout,
     change: &Change,
     hunks: &[DiffHunk],
-    position: (usize, usize, usize),
+    position: (usize, usize, usize, usize),
     comments: &[CodeReviewComment],
     width: u16,
     height: u16,
 ) -> io::Result<()> {
-    let (selected, offset, cursor) = position;
+    let (selected, offset, cursor, submitted_comments) = position;
     let Some(hunk) = hunks.get(selected) else {
         return Ok(());
     };
@@ -1830,7 +1876,20 @@ fn draw_diff(
         MoveTo(0, 1),
         SetForegroundColor(MUTED),
         Print(clipped(
-            &format!("{}/{} {}", selected + 1, hunks.len(), change.path.display()),
+            &format!(
+                "{}/{} {}{}",
+                selected + 1,
+                hunks.len(),
+                change.path.display(),
+                if submitted_comments == 0 {
+                    String::new()
+                } else {
+                    format!(
+                        "  Your review · {submitted_comments} comment{} · v view",
+                        if submitted_comments == 1 { "" } else { "s" }
+                    )
+                }
+            ),
             width as usize,
         ))
     )?;
@@ -2067,7 +2126,7 @@ fn run() -> Result<RunOutcome, String> {
                         KeyCode::Char('c') => state.start_code_review_comment(&rail),
                         KeyCode::Char('e') => state.edit_comment_at_cursor(&rail),
                         KeyCode::Char('x') => state.delete_comment_at_cursor(&rail),
-                        KeyCode::Char('v') if !state.review_comments.is_empty() => {
+                        KeyCode::Char('v') if state.review_summary_len() > 0 => {
                             state.view = View::ReviewSummary { selected: 0 }
                         }
                         KeyCode::Char('R') if !state.review_comments.is_empty() => {
@@ -2125,8 +2184,9 @@ fn run() -> Result<RunOutcome, String> {
                         }
                         KeyCode::Up | KeyCode::Char('k') => *selected = selected.saturating_sub(1),
                         KeyCode::Down | KeyCode::Char('j') => {
-                            *selected =
-                                (*selected + 1).min(state.review_comments.len().saturating_sub(1))
+                            let len =
+                                state.submitted_review_comments.len() + state.review_comments.len();
+                            *selected = (*selected + 1).min(len.saturating_sub(1))
                         }
                         KeyCode::Enter => {
                             let selected = *selected;
@@ -2134,6 +2194,14 @@ fn run() -> Result<RunOutcome, String> {
                         }
                         KeyCode::Char('e') => {
                             let index = *selected;
+                            if index < state.submitted_review_comments.len() {
+                                state.notice = Some(
+                                    "Submitted feedback is read-only; add a new comment from the diff."
+                                        .into(),
+                                );
+                                continue;
+                            }
+                            let index = index - state.submitted_review_comments.len();
                             let comment = state.review_comments[index].clone();
                             state.view = View::ReviewInput {
                                 anchor: comment.anchor,
@@ -2142,20 +2210,42 @@ fn run() -> Result<RunOutcome, String> {
                             };
                         }
                         KeyCode::Char('x') => {
-                            let removed = state.review_comments[*selected].clone();
-                            state.review_comments.remove(*selected);
-                            if state.review_comments.is_empty() {
-                                state.restore_review(&rail, &removed.anchor.review);
-                                if let View::Diff { cursor, offset, .. } = &mut state.view {
-                                    *cursor = removed.anchor.diff_line;
-                                    *offset = removed.anchor.diff_line.saturating_sub(1);
+                            if *selected < state.submitted_review_comments.len() {
+                                state.submitted_review_comments.remove(*selected);
+                                let len = state.submitted_review_comments.len()
+                                    + state.review_comments.len();
+                                if len == 0 {
+                                    state.view = View::Changes;
+                                } else {
+                                    *selected = (*selected).min(len - 1);
                                 }
-                                state.notice = Some("Review draft is now empty.".into());
+                                continue;
+                            }
+                            let draft_index = *selected - state.submitted_review_comments.len();
+                            let removed = state.review_comments[draft_index].clone();
+                            state.review_comments.remove(draft_index);
+                            if state.review_comments.is_empty() {
+                                if state.submitted_review_comments.is_empty() {
+                                    state.restore_review(&rail, &removed.anchor.review);
+                                    if let View::Diff { cursor, offset, .. } = &mut state.view {
+                                        *cursor = removed.anchor.diff_line;
+                                        *offset = removed.anchor.diff_line.saturating_sub(1);
+                                    }
+                                    state.notice = Some("Review draft is now empty.".into());
+                                } else {
+                                    let len = state.submitted_review_comments.len()
+                                        + state.review_comments.len();
+                                    *selected = (*selected).min(len - 1);
+                                }
                             } else {
-                                *selected = (*selected).min(state.review_comments.len() - 1);
+                                let len = state.submitted_review_comments.len()
+                                    + state.review_comments.len();
+                                *selected = (*selected).min(len - 1);
                             }
                         }
-                        KeyCode::Char('R') => state.view = View::ReviewConfirm,
+                        KeyCode::Char('R') if !state.review_comments.is_empty() => {
+                            state.view = View::ReviewConfirm
+                        }
                         _ => {}
                     },
                     View::ReviewConfirm => match key.code {
@@ -2406,6 +2496,7 @@ mod tests {
             repository_generation: 0,
             help: false,
             review_comments: Vec::new(),
+            submitted_review_comments: Vec::new(),
         }
     }
 
@@ -2496,11 +2587,25 @@ mod tests {
         fs::write(root.join("second.txt"), "agent edit\n").expect("write second fixture");
         let rail = GitRail::open(&root).expect("open focus fixture");
         let mut state = State::load(&rail).expect("load focus fixture");
+        state.selected = state
+            .changes
+            .iter()
+            .position(|change| change.path == Path::new("tracked.txt"))
+            .unwrap();
+        state.open_diff(&rail);
+        let review_comment = CodeReviewComment {
+            anchor: state
+                .code_review_anchor(&rail)
+                .expect("review return anchor"),
+            comment: "Preserve the public behavior.".into(),
+        };
+        state.view = View::Changes;
         let focus_path = root.join("agent-focus.json");
         fs::write(
             &focus_path,
             serde_json::to_vec(&AgentGitFocus {
                 relative_paths: vec!["second.txt".into(), "tracked.txt".into()],
+                review_comments: vec![review_comment.clone()],
             })
             .unwrap(),
         )
@@ -2510,9 +2615,10 @@ mod tests {
 
         assert!(!focus_path.exists());
         assert_eq!(state.changes[state.selected].path, Path::new("second.txt"));
+        assert_eq!(state.submitted_review_comments, vec![review_comment]);
         assert_eq!(
             state.notice.as_deref(),
-            Some("Reviewing 2 agent-edited files.")
+            Some("Reviewing 2 agent-edited files · Your review: 1 comment.")
         );
         let _ = fs::remove_dir_all(root);
     }
@@ -2585,6 +2691,7 @@ mod tests {
                 diff_line: 1,
                 offset: 1,
                 comments: vec![draft.clone()],
+                submitted_comments: vec![draft.clone()],
             })
             .unwrap(),
         )
@@ -2601,6 +2708,7 @@ mod tests {
             }
         ));
         assert_eq!(restored.review_comments, vec![draft.clone()]);
+        assert_eq!(restored.submitted_review_comments, vec![draft.clone()]);
         assert!(!resume.exists());
 
         fs::write(
@@ -2610,6 +2718,7 @@ mod tests {
                 diff_line: 1,
                 offset: 1,
                 comments: vec![draft.clone()],
+                submitted_comments: vec![draft.clone()],
             })
             .unwrap(),
         )
@@ -2622,6 +2731,7 @@ mod tests {
             Path::new("tracked.txt")
         );
         assert_eq!(collapsed.review_comments, vec![draft]);
+        assert_eq!(collapsed.submitted_review_comments.len(), 1);
 
         fs::write(
             root.join("tracked.txt"),

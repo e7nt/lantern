@@ -1,0 +1,6 @@
+{"method":"initialize","protocol_version":17}
+{"method":"open_workbench","repository":"/workspace/project"}
+{"method":"review_code","id":1,"repository":"/workspace/project","comments":[{"anchor":{"review":{"relative_path":"src/lib.rs","state":"modified","scope":"hunk","start_line":4,"end_line":6,"diff":"@@ -4 +4 @@\n-old()\n+new()"},"diff_line":2,"line":"+new()"},"comment":"Preserve the old error behavior."}]}
+{"method":"ask_agent","id":2,"repository":"/workspace/project","query":"Apply that","intent":"apply_plan_revision"}
+{"method":"cancel","id":1}
+{"method":"shutdown"}

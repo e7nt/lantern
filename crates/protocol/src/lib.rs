@@ -3,7 +3,7 @@ use std::fmt;
 use std::io::{self, BufRead};
 use std::path::{Component, Path, PathBuf};
 
-pub const PROTOCOL_VERSION: u32 = 16;
+pub const PROTOCOL_VERSION: u32 = 17;
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const MAX_EVENT_BYTES: usize = 256 * 1024;
 pub const MAX_DIAGNOSTIC_BYTES: usize = 8 * 1024;
@@ -80,6 +80,7 @@ pub struct GitReviewContext {
 #[serde(deny_unknown_fields)]
 pub struct AgentGitFocus {
     pub relative_paths: Vec<PathBuf>,
+    pub review_comments: Vec<CodeReviewComment>,
 }
 
 impl GitReviewContext {
@@ -838,6 +839,9 @@ pub fn validate_agent_git_focus(focus: &AgentGitFocus) -> Result<(), String> {
             return Err("agent Git focus contains a duplicate path".into());
         }
     }
+    if !focus.review_comments.is_empty() {
+        validate_code_review(&focus.review_comments)?;
+    }
     Ok(())
 }
 
@@ -1057,11 +1061,13 @@ mod tests {
     fn agent_git_focus_is_bounded_unique_and_repository_relative() {
         let focus = AgentGitFocus {
             relative_paths: vec!["src/lib.rs".into(), "tests/flow.rs".into()],
+            review_comments: Vec::new(),
         };
         validate_agent_git_focus(&focus).unwrap();
 
         let duplicate = AgentGitFocus {
             relative_paths: vec!["src/lib.rs".into(), "src/lib.rs".into()],
+            review_comments: Vec::new(),
         };
         assert_eq!(
             validate_agent_git_focus(&duplicate).unwrap_err(),
@@ -1069,16 +1075,19 @@ mod tests {
         );
         let escape = AgentGitFocus {
             relative_paths: vec!["../outside".into()],
+            review_comments: Vec::new(),
         };
         assert!(validate_agent_git_focus(&escape).is_err());
         let too_many = AgentGitFocus {
             relative_paths: (0..=MAX_AGENT_TOUCHED_PATHS)
                 .map(|index| format!("src/{index}.rs").into())
                 .collect(),
+            review_comments: Vec::new(),
         };
         assert!(validate_agent_git_focus(&too_many).is_err());
         let oversized = AgentGitFocus {
             relative_paths: vec!["x".repeat(MAX_AGENT_GIT_FOCUS_BYTES + 1).into()],
+            review_comments: Vec::new(),
         };
         assert!(validate_agent_git_focus(&oversized).is_err());
     }
