@@ -9,6 +9,7 @@ SEMANTIC_SERVICE="$ROOT/services/semantic-index"
 SEMANTIC_ENV="$ROOT/.lantern/toolchains/semantic-index"
 SEMANTIC_MODEL_CACHE="$ROOT/.lantern/toolchains/semantic-models"
 HELIX_REVISION=14d6bc0febed9c692048271a8ae2362ac969c6e0
+HELIX_REPOSITORY=https://github.com/helix-editor/helix.git
 HELIX_PATCHES=(
 	"$FRONTEND_DIR/patches/0001-add-lantern-range-navigation.patch"
 	"$FRONTEND_DIR/patches/0002-add-picker-mouse-interaction.patch"
@@ -24,6 +25,13 @@ HELIX_PATCHED_HASHES=(
 	3b64ad7b5c51817168bea9486ba67dba52e0ae5c
 	2e2ab18588b2b643eb3318971a215235993e6762
 )
+
+for command in git cargo uv; do
+	if ! command -v "$command" >/dev/null; then
+		echo "Required preparation command is not installed: $command" >&2
+		exit 1
+	fi
+done
 
 verify_revision() {
 	local directory=$1
@@ -41,6 +49,32 @@ verify_revision() {
 	fi
 }
 
+prepare_helix_checkout() {
+	if [[ -d $HELIX_DIR/.git ]]; then
+		actual_repository=$(git -C "$HELIX_DIR" remote get-url origin 2>/dev/null || true)
+		if [[ $actual_repository != "$HELIX_REPOSITORY" ]]; then
+			echo "Helix remote mismatch: expected $HELIX_REPOSITORY, found ${actual_repository:-none}" >&2
+			exit 1
+		fi
+		if git -C "$HELIX_DIR" rev-parse --verify HEAD >/dev/null 2>&1; then
+			return
+		fi
+	fi
+	if [[ -e $HELIX_DIR ]]; then
+		if [[ ! -d $HELIX_DIR/.git ]]; then
+			echo "Helix source path exists but is not a Git checkout: $HELIX_DIR" >&2
+			exit 1
+		fi
+	else
+		mkdir -p "$(dirname "$HELIX_DIR")"
+		git init -q "$HELIX_DIR"
+		git -C "$HELIX_DIR" remote add origin "$HELIX_REPOSITORY"
+	fi
+	git -C "$HELIX_DIR" fetch --depth 1 origin "$HELIX_REVISION"
+	git -C "$HELIX_DIR" checkout -q --detach FETCH_HEAD
+}
+
+prepare_helix_checkout
 verify_revision "$HELIX_DIR" "$HELIX_REVISION" Helix
 
 if git -C "$HELIX_DIR" diff --quiet; then
@@ -66,10 +100,6 @@ fi
 cargo build --release --locked --manifest-path "$HELIX_DIR/Cargo.toml"
 cargo build --release --locked --manifest-path "$ROOT/Cargo.toml"
 
-if ! command -v uv >/dev/null; then
-	echo "uv is required to prepare Lantern's pinned local semantic worker." >&2
-	exit 1
-fi
 UV_PROJECT_ENVIRONMENT="$SEMANTIC_ENV" uv sync --locked --project "$SEMANTIC_SERVICE"
 env PYTHONPATH="$SEMANTIC_SERVICE" "$SEMANTIC_ENV/bin/python" \
 	-m lantern_semantic_index.prepare --model-cache "$SEMANTIC_MODEL_CACHE"

@@ -68,8 +68,9 @@ Launch from the repository to inspect:
 ./scripts/launch-lantern.sh /path/to/repository
 ```
 
-The current development workspace is already prepared. To reproduce the pinned
-build after checking out the recorded Helix upstream repository, run:
+From a clean Lantern checkout, the preparation command fetches the exact Helix
+revision recorded in `upstream.json`, applies the audited patch inventory, and
+builds the locked workbench:
 
 ```bash
 ./frontend/helix/prepare.sh

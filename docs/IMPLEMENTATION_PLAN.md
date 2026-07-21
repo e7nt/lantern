@@ -580,15 +580,20 @@ The detailed interaction contract is in
 
 ### Contributor and release experience
 
-- `P8-12` Add `CONTRIBUTING.md`, `ARCHITECTURE.md`, `SECURITY.md`, a code of
-  conduct, issue templates, and pull request templates.
+- `P8-12` Add contributor stewardship documents. `CONTRIBUTING.md` and
+  `SECURITY.md` are implemented; a concise architecture entry point, code of
+  conduct, and issue/pull-request templates remain.
 - `P8-13` Select an open-source license before changing repository visibility.
-- `P8-14` Provide a one-command development bootstrap and fixture setup.
+- `P8-14` Provide a one-command development bootstrap and fixture setup. The
+  pinned Helix preparation and canonical `scripts/check.sh` gate now work from
+  a clean checkout; fresh supported-machine validation remains.
 - `P8-15` Publish protocol and storage compatibility policies.
 - `P8-16` Produce signed or checksummed daemon binaries for macOS and Linux.
 - `P8-17` Package, checksum, and validate installable Lantern builds containing
   the supported Helix, Lazygit, pane, and daemon revisions.
-- `P8-18` Add dependency, license, secret, and vulnerability checks to CI.
+- `P8-18` Add dependency, license, secret, and vulnerability checks to CI. The
+  least-privilege deterministic Rust, terminal, evaluation, and semantic jobs
+  are implemented; supply-chain audit jobs remain.
 - `P8-19` Write user documentation for workbenches, model configuration, learning,
   planning, Guided Build, review, and recovery.
 - `P8-20` Identify bounded good-first issues that do not require agent-runtime
