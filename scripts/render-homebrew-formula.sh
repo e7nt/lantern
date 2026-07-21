@@ -45,22 +45,31 @@ class Lantern < Formula
     semantic_runtime = libexec/"libexec/lantern/semantic"
     system "tar", "-C", semantic_runtime, "-cf", semantic_runtime/"vendor.tar", "vendor"
     rm_r semantic_runtime/"vendor"
+    pi_runtime = libexec/"libexec/lantern/pi"
+    system "tar", "-C", pi_runtime, "-cf", pi_runtime/"node_modules.tar", "node_modules"
+    rm_r pi_runtime/"node_modules"
     runtime_path = [
       Formula["node@22"].opt_bin,
       Formula["python@3.12"].opt_bin,
       Formula["tmux"].opt_bin,
       ENV.fetch("PATH"),
     ].join(File::PATH_SEPARATOR)
-    bin.write_env_script libexec/"bin/lantern", PATH: runtime_path, HOMEBREW_PREFIX: HOMEBREW_PREFIX
+    (bin/"lantern").write_env_script libexec/"bin/lantern", PATH: runtime_path, HOMEBREW_PREFIX: HOMEBREW_PREFIX
   end
 
   def post_install
     semantic_runtime = libexec/"libexec/lantern/semantic"
     archive = semantic_runtime/"vendor.tar"
-    return unless archive.exist?
-
-    system "tar", "-C", semantic_runtime, "-xf", archive
-    rm archive
+    if archive.exist?
+      system "tar", "-C", semantic_runtime, "-xf", archive
+      rm archive
+    end
+    pi_runtime = libexec/"libexec/lantern/pi"
+    pi_archive = pi_runtime/"node_modules.tar"
+    if pi_archive.exist?
+      system "tar", "-C", pi_runtime, "-xf", pi_archive
+      rm pi_archive
+    end
   end
 
   test do
