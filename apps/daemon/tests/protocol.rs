@@ -1578,6 +1578,7 @@ fn submitted_line_comments_drive_one_coherent_correction_turn() {
     assert!(prompt.contains("Return three instead"));
     assert!(prompt.contains("Keep this function signature unchanged"));
     assert!(prompt.contains("Address every developer comment as one coherent correction"));
+    drop(daemon);
     fs::remove_dir_all(root).expect("remove repository fixture");
     fs::remove_dir_all(driver).expect("remove driver fixture");
 }
