@@ -35,6 +35,11 @@ versions (`5.0.7` and `7.6.5`) from Lantern's package root. A future Pi upgrade
 should remove this narrow packaging correction after its own dependency graph
 is clean and the driver contract is revalidated.
 
+The first Intel validation found that ONNX Runtime versions after 1.23.2 no
+longer provide CPython 3.12 Intel macOS wheels. The semantic project therefore
+pins 1.23.2, the newest version present in official PyPI file metadata for all
+three maintained environments: Linux, Apple Silicon macOS, and Intel macOS.
+
 ## Verification at this checkpoint
 
 - Release workflow structure and immutable action pins are deterministic tests.

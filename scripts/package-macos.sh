@@ -91,7 +91,8 @@ cp -R "$ROOT/services/semantic-index/lantern_semantic_index" \
 	"$INSTALL_ROOT/semantic/service/lantern_semantic_index"
 PYTHON=$(uv python find 3.12)
 uv pip install --python "$PYTHON" --target "$INSTALL_ROOT/semantic/vendor" \
-	fastembed==0.8.0 numpy==2.4.3 tree-sitter-language-pack==1.12.5
+	fastembed==0.8.0 numpy==2.4.3 onnxruntime==1.23.2 \
+	tree-sitter-language-pack==1.12.5
 env PYTHONPATH="$INSTALL_ROOT/semantic/vendor:$INSTALL_ROOT/semantic/service" \
 	"$PYTHON" -m lantern_semantic_index.prepare \
 	--model-cache "$INSTALL_ROOT/semantic/models"
