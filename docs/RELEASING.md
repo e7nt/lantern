@@ -9,7 +9,7 @@ formula; pushing ordinary commits never publishes software.
 Each semantic version produces separate Apple Silicon and Intel archives. An
 archive contains:
 
-- the four Lantern Rust executables;
+- the five Lantern Rust executables;
 - the pinned, patched Helix binary and runtime;
 - Lantern's Helix helpers, configuration, and theme;
 - the locked Pi 0.80.6 runtime;

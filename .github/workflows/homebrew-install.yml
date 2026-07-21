@@ -35,7 +35,9 @@ jobs:
       - name: Verify the installed workbench
         run: |
           set -euo pipefail
-          [[ $(lantern --version) == "lantern 0.1.1" ]]
+          installed_version=$(brew info --json=v2 e7nt/tap/lantern |
+            jq -r '.formulae[0].versions.stable')
+          [[ $(lantern --version) == "lantern $installed_version" ]]
           repo=$(mktemp -d)
           git -C "$repo" init -q
           git -C "$repo" config user.name "Lantern acceptance"
@@ -54,7 +56,8 @@ jobs:
           for attempt in {1..30}; do
             panes=$(tmux list-panes -t "$session" \
               -F '#{pane_title}|#{pane_dead}' 2>/dev/null || true)
-            if grep -Fxq 'Helix|0' <<<"$panes" &&
+            if grep -Fxq 'Explorer|0' <<<"$panes" &&
+              grep -Fxq 'Helix|0' <<<"$panes" &&
               grep -Fxq 'Lantern|0' <<<"$panes"; then
               exit 0
             fi

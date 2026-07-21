@@ -17,7 +17,7 @@ developer is exploring rather than attempting to replace the developer.
 > trademark, package-name, or domain clearance.
 
 > **Project status:** Lantern is an early developer preview. The maintained
-> contracts are tested in CI, and Homebrew release `v0.1.0` is available for
+> contracts are tested in CI, and tagged Homebrew releases are available for
 > supported Apple Silicon and Intel Macs.
 
 ## Try Lantern
@@ -133,10 +133,11 @@ undergone trademark clearance.
 
 ## Contributor verification
 
-Lantern's maintained Rust code is one workspace with four explicit owners:
+Lantern's maintained Rust code is one workspace with explicit owners:
 `crates/protocol` defines the wire contract, `crates/diagnostics` owns safe
-diagnostic records and exports, `apps/daemon` owns agent execution, and
-`frontend/terminal` owns the developer-facing terminal surface.
+diagnostic records and exports, `apps/daemon` owns agent execution,
+`apps/explorer` owns workbench navigation, `apps/git-rail` owns focused review,
+and `frontend/terminal` owns the developer-facing agent surface.
 
 Run every non-provider check through the same entry point used by CI:
 

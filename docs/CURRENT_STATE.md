@@ -6,8 +6,9 @@ after `AGENTS.md` and before choosing work from the full roadmap.
 ## Product direction
 
 Lantern is an open-source, lightweight coding workbench for developers who love
-to understand and write code. The primary surface is Helix above a full-width
-agent pane, with Lantern's focused Git review available as a narrow rail. Pi is the initial agent
+to understand and write code. The primary surface is a Git-aware explorer
+beside Helix above a full-width agent pane, with Lantern's focused Git review
+available on demand as a narrow rail or expanded canvas. Pi is the initial agent
 harness. A launched workbench is trusted by default: the agent is intended to
 search, edit, run development commands, and use Git while narrating meaningful
 work and remaining immediately interruptible.
@@ -20,7 +21,8 @@ and tool vocabulary should not become user-facing ceremony.
 ## What works today
 
 - Reproducible pinned Helix and maintained Lantern runtime preparation.
-- The 80/20 Helix/agent composition and on-demand 10% focused Git rail.
+- The upper 20/80 explorer/Helix composition above a full-width 20% agent pane,
+  plus an on-demand 10% focused Git rail and expanded review canvas.
 - A persistent, Git-aware folder tree in the upper work region. It opens files
   in the existing Helix process, propagates changed/comment state to collapsed
   folders, refreshes without blocking input, and supports keyboard and mouse.
@@ -370,7 +372,7 @@ A legal open-source license is now explicit: Lantern uses AGPL-3.0-only so
 commercial use remains possible while modified network services retain a
 corresponding-source obligation. A tag-only release pipeline now builds
 checksum-pinned Apple Silicon and Intel workbench archives, attests them, and
-updates `e7nt/homebrew-tap`. Public `v0.1.0` is installed and launched from that
+updates `e7nt/homebrew-tap`. Public `v0.1.1` is installed and launched from that
 tap on clean Apple Silicon and Intel runners. Linux artifacts,
 dependency-license auditing, and real cross-version upgrade behavior remain
 unverified. See the

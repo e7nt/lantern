@@ -593,17 +593,17 @@ The detailed interaction contract is in
 - `P8-13` Select an open-source license before changing repository visibility.
   AGPL-3.0-only is selected and recorded in package and contributor metadata.
 - `P8-14` Provide a one-command development bootstrap and fixture setup. The
-  pinned Helix preparation and canonical `scripts/check.sh` gate now work from
-  a clean checkout; fresh supported-machine validation remains.
+  pinned Helix preparation and canonical `scripts/check.sh` gate work from a
+  clean checkout and have passed on both supported macOS architectures.
 - `P8-15` Publish protocol and storage compatibility policies.
 - `P8-16` Produce signed or checksummed daemon binaries for macOS and Linux.
   The tag workflow now produces checksummed, attested macOS workbench archives;
   Linux release artifacts remain.
 - `P8-17` Package, checksum, and validate installable Lantern builds containing
   the supported Helix, focused Git rail, pane, daemon, semantic worker, and Pi
-  revisions. The architecture-specific Homebrew package and tap-update pipeline
-  are implemented; fresh Apple Silicon and Intel installation plus upgrade
-  evidence remain before the first public tag.
+  revisions. Architecture-specific Homebrew packages, tap updates, and fresh
+  Apple Silicon and Intel installs are implemented and validated. A real
+  cross-version `brew upgrade` journey remains to be recorded.
 - `P8-18` Add dependency, license, secret, and vulnerability checks to CI. The
   least-privilege deterministic Rust, terminal, evaluation, and semantic jobs
   are implemented; supply-chain audit jobs remain.
