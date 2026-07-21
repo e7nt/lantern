@@ -103,11 +103,11 @@ impl Daemon {
 }
 
 #[test]
-fn golden_wire_fixtures_match_the_v16_types() {
-    for line in include_str!("../../../protocol/v16/requests.jsonl").lines() {
+fn golden_wire_fixtures_match_the_v17_types() {
+    for line in include_str!("../../../protocol/v17/requests.jsonl").lines() {
         serde_json::from_str::<Request>(line).expect("golden request must deserialize");
     }
-    for line in include_str!("../../../protocol/v16/events.jsonl").lines() {
+    for line in include_str!("../../../protocol/v17/events.jsonl").lines() {
         serde_json::from_str::<Event>(line).expect("golden event must deserialize");
     }
 }

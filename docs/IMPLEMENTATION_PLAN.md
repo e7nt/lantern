@@ -297,7 +297,7 @@ diagnostic redaction, and general supervision remain promotion work.
 
 The historical `P1-07` slice added locked workspace configuration and a
 dedicated policy crate. ADR 003 superseded that direction. Protocol v5 removed
-the policy crate, capability negotiation, and `/trust`; Protocol v16 retains the
+the policy crate, capability negotiation, and `/trust`; Protocol v17 retains the
 single trusted-workbench path, adds repository questions without requiring
 editor context, and carries verified local-semantic evidence. Protocol v4 and
 v5 fixtures remain historical evidence only.
@@ -326,7 +326,7 @@ terminal derives compact reasons locally and reuses the existing streamed
 evidence and exact-range navigation path; it performs no additional scan,
 index, or model request.
 
-The maintained Protocol v16 product now exposes Pi's pinned coding-tool set in
+The maintained Protocol v17 product now exposes Pi's pinned coding-tool set in
 the trusted repository and submits `Ctrl-a` composer questions through a
 bounded private Unix socket. Plain questions are the only conversational path;
 selection and LSP context enrich it without creating a fallback agent mode.
@@ -529,12 +529,15 @@ The detailed interaction contract is in
 - `P7-02` Add risk-focused filtering for public APIs, migrations, security, and
   concurrency.
 - `P7-03` Add exact-line, batched review comments over modified and staged Git
-  hunks. Protocol v16 implements an editable draft, one explicit submission,
+  hunks. Protocol v17 implements an editable draft, one explicit submission,
   and one coherent correction turn; real-journey validation remains.
 - `P7-03a` Expand the compact Git rail into an editor-sized review canvas when a
   diff opens, then collapse without losing the file, hunk, line, scroll
   position, or pending review count. Implemented in the focused Git surface;
   live visual validation remains.
+- `P7-03b` Return submitted comments as a passive `Your review` section beside
+  the agent's new diff. Implemented without resolution state, approval gates,
+  or mandatory interaction; live visual validation remains.
 - `P7-03` Link changed behavior to tests and command results.
 - `P7-04` Record commands, exit status, duration, and redacted output summaries.
 - `P7-05` Distinguish passed, failed, skipped, and unverified criteria.
