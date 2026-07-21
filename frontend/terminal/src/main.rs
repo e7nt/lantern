@@ -384,6 +384,31 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
     wrapped
 }
 
+fn strip_paired_delimiter(text: &str, delimiter: &str) -> String {
+    let mut rendered = String::with_capacity(text.len());
+    let mut remainder = text;
+    while let Some(open) = remainder.find(delimiter) {
+        rendered.push_str(&remainder[..open]);
+        let content = &remainder[open + delimiter.len()..];
+        let Some(close) = content.find(delimiter) else {
+            rendered.push_str(&remainder[open..]);
+            return rendered;
+        };
+        rendered.push_str(&content[..close]);
+        remainder = &content[close + delimiter.len()..];
+    }
+    rendered.push_str(remainder);
+    rendered
+}
+
+fn present_inline_markdown(text: &str) -> String {
+    // Presentation belongs at the terminal boundary. Keep the source response
+    // intact in the transcript and remove only balanced inline Markdown chrome.
+    let text = strip_paired_delimiter(text, "`");
+    let text = strip_paired_delimiter(&text, "**");
+    strip_paired_delimiter(&text, "__")
+}
+
 fn evidence_source_text(source: EvidenceSource) -> (&'static str, &'static str) {
     match source {
         EvidenceSource::Selection => ("Selected code", "exact code highlighted in Helix"),
@@ -408,18 +433,21 @@ fn answer_rows(text: &str, width: usize) -> Vec<TranscriptRow> {
         let (display, style) = if in_code_block {
             (format!("  {line}"), RowStyle::Code)
         } else if let Some(heading) = trimmed.strip_prefix("### ") {
-            (heading.to_owned(), RowStyle::Heading)
+            (present_inline_markdown(heading), RowStyle::Heading)
         } else if let Some(heading) = trimmed.strip_prefix("## ") {
-            (heading.to_owned(), RowStyle::Heading)
+            (present_inline_markdown(heading), RowStyle::Heading)
         } else if let Some(heading) = trimmed.strip_prefix("# ") {
-            (heading.to_owned(), RowStyle::Heading)
+            (present_inline_markdown(heading), RowStyle::Heading)
         } else if let Some(item) = trimmed
             .strip_prefix("- ")
             .or_else(|| trimmed.strip_prefix("* "))
         {
-            (format!("• {item}"), RowStyle::Normal)
+            (
+                format!("• {}", present_inline_markdown(item)),
+                RowStyle::Normal,
+            )
         } else {
-            (line.to_owned(), RowStyle::Normal)
+            (present_inline_markdown(line), RowStyle::Normal)
         };
         rows.extend(
             wrap_text(&display, width)
@@ -2167,7 +2195,7 @@ mod tests {
     #[test]
     fn answers_render_structure_without_markdown_chrome() {
         let rows = answer_rows(
-            "## Result\n\n- Changed the parser\n- Ran the focused test\n\n```rust\nfn answer() {}\n```",
+            "## **Result**\n\n- Changed the `parser`\n- Ran the __focused test__\n\n```rust\nfn answer() {}\n```",
             80,
         );
         let rendered: Vec<_> = rows
@@ -2184,6 +2212,22 @@ mod tests {
                 ("", RowStyle::Normal),
                 ("  fn answer() {}", RowStyle::Code),
             ]
+        );
+    }
+
+    #[test]
+    fn inline_markdown_only_removes_balanced_presentation_chrome() {
+        assert_eq!(
+            present_inline_markdown("Use **fast** `cargo test` and __read the diff__."),
+            "Use fast cargo test and read the diff."
+        );
+        assert_eq!(
+            present_inline_markdown("A streamed **partial response"),
+            "A streamed **partial response"
+        );
+        assert_eq!(
+            present_inline_markdown("2 * 3 and snake_case"),
+            "2 * 3 and snake_case"
         );
     }
 
