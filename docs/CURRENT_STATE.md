@@ -26,7 +26,7 @@ and tool vocabulary should not become user-facing ceremony.
   reading mode for the persistent agent pane.
 - Bounded, typed composer submission over a private session-local Unix socket;
   tmux owns presentation and focus but never transports questions.
-- Maintained Rust terminal, daemon, diagnostics, and Protocol v13 crates.
+- Maintained Rust terminal, daemon, diagnostics, and Protocol v14 crates.
 - Selection capture, exact navigation, bounded local literal search, and
   Helix-provided definition/reference context.
 - Bounded two-hop outgoing-call context from Helix's active language server,
@@ -54,6 +54,10 @@ and tool vocabulary should not become user-facing ceremony.
   comment, and press `Ctrl-r` to queue it locally. Repeat anywhere in the plan,
   then say `Review these comments` for one coherent, previewed revision. `Apply
   that` writes it only if the reviewed plan has not changed.
+- Plan-aware implementation checkpoints: a successful implementation turn with
+  a reviewable agent diff asks the read-only Pi profile for one complete plan
+  progress proposal. Code review remains primary; the plan changes only after
+  the developer reviews its separate diff and says `Apply that`.
 - Pi's pinned `read`, `grep`, `find`, `ls`, `edit`, `write`, and `bash` tools,
   launched inside the repository with typed activity in Lantern.
 - Successful edit/write activity opens the changed file in Helix; `Space-g` or
@@ -64,7 +68,7 @@ and tool vocabulary should not become user-facing ceremony.
 
 ## Current boundary
 
-Protocol v13 and the terminal open one trusted repository directly. The old
+Protocol v14 and the terminal open one trusted repository directly. The old
 policy engine, capability fields, and `/trust` commands have been removed. Pi
 runs its explicit built-in coding-tool allowlist in that repository. Raw tool
 arguments, command output, and provider stderr are not copied into Lantern's
@@ -91,8 +95,9 @@ opening line 1.
 Implement next:
 
 1. Validate the complete plan conversation, persistence, multi-comment review,
-   stale-edit rejection, and implementation handoff on a real feature. Add
-   revision history only if that journey demonstrates a concrete recovery need.
+   implementation checkpoint, stale-edit rejection, and resumed handoff on a
+   real feature. Add revision history only if that journey demonstrates a
+   concrete recovery need.
 
 [The persistent Pi acceptance report](acceptance/2026-07-18-persistent-pi.md)
 records a grounded warm follow-up beginning text in 1.52 seconds and settling

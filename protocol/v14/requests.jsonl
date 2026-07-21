@@ -1,0 +1,7 @@
+{"method":"initialize","protocol_version":14}
+{"method":"open_workbench","repository":"/workspace/project"}
+{"method":"ask_agent","id":1,"repository":"/workspace/project","query":"Proceed with the first task","intent":"implement"}
+{"method":"ask_agent","id":2,"repository":"/workspace/project","query":"Apply that","intent":"apply_plan_revision"}
+{"method":"review_plan","id":3,"repository":"/workspace/project","comments":[{"anchor":{"relative_path":".lantern/plans/active.md","language":"markdown","start_line":17,"start_column":1,"end_line":17,"end_column":15,"text":"- Second task.","document_modified":false},"comment":"Move this outside the first release."}]}
+{"method":"cancel","id":1}
+{"method":"shutdown"}

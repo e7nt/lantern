@@ -204,7 +204,7 @@ silently perform Git operations.
 
 The protocol proofs above landed in Phase 1 foundation slices on 2026-07-16.
 They are preserved in [Protocol v4](../protocol/v4/README.md); the maintained
-contract is now [Protocol v13](../protocol/v13/README.md). The lifecycle keeps the
+contract is now [Protocol v14](../protocol/v14/README.md). The lifecycle keeps the
 pane busy through settlement without rendering acceptance as UI noise, bounds a
 frame at 1 MiB, drains malformed frames before continuing, prevents an active
 ID from being replaced, and joins daemon workers during shutdown. The follow-up
@@ -240,6 +240,13 @@ there are no reviewers, reactions, threads, server state, or sidebar. It also
 rejects partial model edits. Pi receives the bounded collection in a read-only
 profile and must return one complete plan body; Lantern previews that body and
 applies it only against its exact reviewed base.
+
+Protocol v14 keeps Pi's separate persistent profiles instead of adding a plan
+worker or task engine. The coding profile remains responsible for the code
+turn. A second, read-only profile receives the bounded reviewed diff and
+completion summary to draft one plan checkpoint. Lantern adopts the existing
+profile separation and rejects hidden plan edits, prose heuristics, automatic
+task scheduling, and durable execution state.
 
 ## Next inspections
 

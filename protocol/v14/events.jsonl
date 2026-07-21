@@ -1,0 +1,13 @@
+{"type":"initialized","protocol_version":14}
+{"type":"workbench_opened","repository":"/workspace/project"}
+{"type":"accepted","id":1}
+{"type":"tool_finished","id":1,"tool":"edit","relative_path":"src/lib.rs","success":true}
+{"type":"plan_progress_started","id":1}
+{"type":"text_delta","id":1,"delta":"Prepared a plan checkpoint from the reviewed implementation."}
+{"type":"change_proposal","id":1,"proposal":{"selection":{"relative_path":".lantern/plans/active.md","language":"markdown","start_line":1,"start_column":1,"end_line":20,"end_column":1,"text":"old plan","document_modified":false},"replacement":"checkpoint plan"}}
+{"type":"plan_progress_failed","id":4,"message":"the implementation diff is not UTF-8","recovery":"review the code diff, then update the plan manually"}
+{"type":"plan_revision_applied","id":2,"relative_path":".lantern/plans/active.md"}
+{"type":"completed","id":1,"evidence_count":1}
+{"type":"settled","id":1}
+{"type":"cancelled","id":1,"cancellation_latency_ms":12}
+{"type":"error","id":null,"message":"invalid protocol request","recovery":"send one valid JSON request per line"}

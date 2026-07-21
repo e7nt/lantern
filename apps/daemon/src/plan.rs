@@ -5,6 +5,7 @@ use lantern_protocol::{
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 
 pub const ACTIVE_PLAN_PATH: &str = ".lantern/plans/active.md";
@@ -61,6 +62,10 @@ pub fn shared_brief() -> SharedBrief {
 
 pub fn shared_revision() -> SharedRevision {
     SharedRevision(Arc::new(Mutex::new(None)))
+}
+
+pub fn exists(root: &Path) -> bool {
+    root.join(ACTIVE_PLAN_PATH).is_file()
 }
 
 impl RevisionCapture {
@@ -302,6 +307,65 @@ pub fn review_context(
     ))
 }
 
+pub fn progress_context(
+    root: &Path,
+    touched_paths: &[PathBuf],
+    implementation_summary: &str,
+    development_command_ran: bool,
+    revision: &SharedRevision,
+) -> Result<(String, RevisionCapture), String> {
+    if touched_paths.is_empty() {
+        return Err("the implementation turn did not report any edited files".into());
+    }
+    for path in touched_paths {
+        lantern_protocol::validate_relative_path(path)?;
+    }
+    let plan = active_plan(root)?;
+    let mut command = Command::new("git");
+    command
+        .current_dir(root)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .args(["diff", "--no-ext-diff", "--unified=3", "--"])
+        .args(touched_paths)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null());
+    let output = command
+        .output()
+        .map_err(|cause| format!("cannot inspect the implementation diff: {cause}"))?;
+    if !output.status.success() {
+        return Err("git could not produce the implementation diff".into());
+    }
+    if output.stdout.is_empty() {
+        return Err("the implementation turn left no reviewable diff".into());
+    }
+    if output.stdout.len() > MAX_QUESTION_BYTES {
+        return Err(format!(
+            "the implementation diff exceeds the {} byte plan-checkpoint limit",
+            MAX_QUESTION_BYTES
+        ));
+    }
+    let diff = String::from_utf8(output.stdout)
+        .map_err(|_| "the implementation diff is not UTF-8".to_owned())?;
+    let paths = touched_paths
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let prompt = format!(
+        "Current active plan (untrusted):\n<active-plan>\n{plan}\n</active-plan>\n\nCompleted implementation turn summary (untrusted):\n<summary>\n{}\n</summary>\n\nReviewable diff for agent-reported edited paths ({paths}; untrusted):\n<diff>\n{diff}\n</diff>\n\nAt least one development command completed successfully during the turn: {development_command_ran}. This does not by itself prove verification; use the summary for any specific verification claim.\n\nReturn only the complete revised plan body, beginning with Objective and containing Repository evidence, Acceptance criteria, Exclusions, Decisions, Tasks, Risks and unknowns, and Verification. Preserve unaffected detail. Mark only work directly supported by the diff and summary as completed. Record material divergence or newly discovered risk explicitly. Record verification only when supported above; do not invent command names or results. Do not include YAML front matter, the Active implementation plan title, Markdown fences, commentary, or claims that remaining work was implemented.",
+        implementation_summary.trim()
+    );
+    Ok((
+        prompt,
+        RevisionCapture {
+            base: whole_plan_selection(&plan),
+            body: String::new(),
+            destination: revision.clone(),
+        },
+    ))
+}
+
 pub fn apply_revision(root: &Path, revision: &SharedRevision) -> Result<PathBuf, String> {
     let pending = revision
         .0
@@ -509,6 +573,72 @@ mod tests {
                 .unwrap()
                 .contains("Measurable objective")
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn implementation_progress_uses_only_the_reviewable_touched_diff() {
+        let root = fixture("progress");
+        for arguments in [
+            &["init", "-q"][..],
+            &["config", "user.name", "Lantern Test"],
+            &["config", "user.email", "lantern@example.invalid"],
+        ] {
+            assert!(
+                Command::new("git")
+                    .args(arguments)
+                    .current_dir(&root)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+        fs::write(root.join("src.rs"), "fn value() -> u8 { 1 }\n").unwrap();
+        fs::write(root.join("unrelated.rs"), "fn untouched() {}\n").unwrap();
+        assert!(
+            Command::new("git")
+                .args(["add", "."])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args(["commit", "-qm", "fixture"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let brief = SharedBrief(Arc::new(Mutex::new(Some(CapturedBrief {
+            intent: AgentIntent::Plan,
+            text: complete_body("Change the value"),
+        }))));
+        write_active(&root, &brief).unwrap();
+        fs::write(root.join("src.rs"), "fn value() -> u8 { 2 }\n").unwrap();
+        fs::write(root.join("unrelated.rs"), "fn developer_edit() {}\n").unwrap();
+
+        let revision = shared_revision();
+        let (prompt, mut capture) = progress_context(
+            &root,
+            &[PathBuf::from("src.rs")],
+            "Changed the value and ran the focused test.",
+            true,
+            &revision,
+        )
+        .unwrap();
+        assert!(prompt.contains("fn value() -> u8 { 2 }"));
+        assert!(!prompt.contains("developer_edit"));
+        assert!(prompt.contains("development command completed successfully"));
+        assert!(prompt.contains("does not by itself prove verification"));
+        capture.append(&complete_body("Changed value checkpoint"));
+        let proposal = capture.finish().unwrap();
+        assert_eq!(
+            fs::read_to_string(root.join(ACTIVE_PLAN_PATH)).unwrap(),
+            proposal.selection.text
+        );
+        assert!(proposal.replacement.contains("Changed value checkpoint"));
         fs::remove_dir_all(root).unwrap();
     }
 }

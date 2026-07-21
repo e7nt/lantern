@@ -250,6 +250,66 @@ class PlanReviewContractMetric(BaseMetric):
         return self.success
 
 
+class PlanProgressContractMetric(BaseMetric):
+    """Checks that a plan checkpoint reflects only supported implementation outcomes."""
+
+    threshold = 1.0
+    evaluation_model = None
+    strict_mode = True
+    async_mode = False
+    verbose_mode = False
+    error = None
+
+    def __init__(self, required: Sequence[str], forbidden: Sequence[str]) -> None:
+        self.required = tuple(item.casefold() for item in required)
+        self.forbidden = tuple(item.casefold() for item in forbidden)
+        self.score = 0.0
+        self.reason = "not measured"
+        self.success = False
+
+    @property
+    def __name__(self) -> str:
+        return "Plan progress contract"
+
+    def measure(self, test_case: LLMTestCase, *args, **kwargs) -> float:
+        output = test_case.actual_output.casefold()
+        headings = (
+            "objective",
+            "repository evidence",
+            "acceptance criteria",
+            "exclusions",
+            "decisions",
+            "tasks",
+            "risks and unknowns",
+            "verification",
+        )
+        missing_headings = [heading for heading in headings if heading not in output]
+        missing = [item for item in self.required if item not in output]
+        present_forbidden = [item for item in self.forbidden if item in output]
+        wrappers = [item for item in ("lantern_plan:", "```") if item in output]
+        self.success = (
+            not missing_headings and not missing and not present_forbidden and not wrappers
+        )
+        self.score = 1.0 if self.success else 0.0
+        failures = []
+        if missing_headings:
+            failures.append(f"missing headings: {missing_headings}")
+        if missing:
+            failures.append(f"missing supported outcomes: {missing}")
+        if present_forbidden:
+            failures.append(f"unsupported outcomes were claimed: {present_forbidden}")
+        if wrappers:
+            failures.append(f"forbidden wrappers were present: {wrappers}")
+        self.reason = "; ".join(failures) if failures else "plan checkpoint is evidence-bounded"
+        return self.score
+
+    async def a_measure(self, test_case: LLMTestCase, *args, **kwargs) -> float:
+        return self.measure(test_case, *args, **kwargs)
+
+    def is_successful(self) -> bool:
+        return self.success
+
+
 class ToolJourneyContractMetric(BaseMetric):
     """Checks an agent trace for ordered intent and unnecessary mutations."""
 

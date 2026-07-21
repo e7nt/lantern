@@ -1,9 +1,10 @@
 use lantern_diagnostics::{Code as DiagnosticCode, Component, Level, Record, emit as diagnose};
 use lantern_protocol::{
     AgentIntent, ChangeProposal, Event, Evidence, EvidenceSource, FrameError, GroundingState,
-    MAX_EVENT_BYTES, MAX_EVIDENCE, MAX_FILE_BYTES, MAX_FILES, MAX_SELECTION_BYTES,
-    PROTOCOL_VERSION, Request, SelectionContext, SymbolContext, SymbolLocation, WorkbenchTool,
-    read_frame, validate_relative_path, validate_selection, validate_symbol_context,
+    MAX_EVENT_BYTES, MAX_EVIDENCE, MAX_FILE_BYTES, MAX_FILES, MAX_QUESTION_BYTES,
+    MAX_SELECTION_BYTES, PROTOCOL_VERSION, Request, SelectionContext, SymbolContext,
+    SymbolLocation, WorkbenchTool, read_frame, validate_relative_path, validate_selection,
+    validate_symbol_context,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -942,6 +943,147 @@ struct PiOperation {
     intent: AgentIntent,
     investigation_capture: Option<BriefCapture>,
     revision_capture: Option<RevisionCapture>,
+    plan_progress: Option<PlanProgress>,
+}
+
+struct PlanProgress {
+    driver: Arc<PiDriver>,
+    revision: SharedRevision,
+}
+
+fn append_bounded(destination: &mut String, text: &str) {
+    let mut remaining = MAX_QUESTION_BYTES.saturating_sub(destination.len());
+    for character in text.chars() {
+        let bytes = character.len_utf8();
+        if bytes > remaining {
+            break;
+        }
+        destination.push(character);
+        remaining -= bytes;
+    }
+}
+
+fn capture_plan_progress(
+    id: u64,
+    progress: &PlanProgress,
+    prompt: String,
+    mut capture: RevisionCapture,
+    cancellation: &Arc<Cancellation>,
+    writer: &SharedWriter,
+) -> Result<ChangeProposal, String> {
+    emit(writer, &Event::PlanProgressStarted { id })
+        .map_err(|cause| format!("cannot stream plan checkpoint start: {cause}"))?;
+    progress.driver.set_thinking_level("off")?;
+    progress.driver.send(&serde_json::json!({
+        "id": format!("lantern-plan-progress-{id}"),
+        "type": "prompt",
+        "message": prompt,
+    }))?;
+    cancellation.attach_abort(progress.driver.stdin.clone());
+    let stream_result = (|| -> Result<bool, String> {
+        let mut active_tools = HashMap::new();
+        let mut stdout = progress
+            .driver
+            .stdout
+            .lock()
+            .expect("Pi plan progress stdout lock");
+        loop {
+            let mut line = String::new();
+            let bytes = stdout
+                .read_line(&mut line)
+                .map_err(|cause| format!("cannot read Pi plan checkpoint event: {cause}"))?;
+            if bytes == 0 {
+                return Ok(false);
+            }
+            let event: serde_json::Value = serde_json::from_str(&line)
+                .map_err(|cause| format!("Pi emitted invalid plan checkpoint JSON: {cause}"))?;
+            match event.get("type").and_then(|value| value.as_str()) {
+                Some("message_update") => {
+                    let delta = &event["assistantMessageEvent"];
+                    if delta["type"] == "text_delta" {
+                        capture.append(
+                            delta["delta"]
+                                .as_str()
+                                .ok_or("Pi plan checkpoint delta is not a string")?,
+                        );
+                    }
+                }
+                Some("agent_settled") => return Ok(true),
+                Some("response") if event["success"] == false => {
+                    return Err(
+                        "Pi rejected the plan checkpoint request; provider detail was excluded"
+                            .into(),
+                    );
+                }
+                Some("tool_execution_start") => {
+                    let call_id = event["toolCallId"]
+                        .as_str()
+                        .filter(|value| value.len() <= 256)
+                        .ok_or("Pi plan checkpoint tool has an invalid identifier")?;
+                    let name = event["toolName"]
+                        .as_str()
+                        .ok_or("Pi plan checkpoint tool has no name")?;
+                    let tool = pi_tool(name)
+                        .filter(|tool| {
+                            matches!(
+                                tool,
+                                WorkbenchTool::Read
+                                    | WorkbenchTool::Grep
+                                    | WorkbenchTool::Find
+                                    | WorkbenchTool::List
+                            )
+                        })
+                        .ok_or("Pi plan checkpoint requested a mutating tool")?;
+                    let relative_path = pi_tool_path(&event, &progress.driver.root);
+                    emit(
+                        writer,
+                        &Event::ToolStarted {
+                            id,
+                            tool,
+                            relative_path: relative_path.clone(),
+                        },
+                    )
+                    .map_err(|cause| format!("cannot stream plan checkpoint tool: {cause}"))?;
+                    active_tools.insert(call_id.to_owned(), (tool, relative_path));
+                }
+                Some("tool_execution_end") => {
+                    let call_id = event["toolCallId"]
+                        .as_str()
+                        .ok_or("Pi plan checkpoint tool result has no identifier")?;
+                    let (tool, relative_path) = active_tools
+                        .remove(call_id)
+                        .ok_or("Pi completed a plan checkpoint tool that was not started")?;
+                    let success = event["isError"]
+                        .as_bool()
+                        .map(|is_error| !is_error)
+                        .ok_or("Pi plan checkpoint tool result has no error status")?;
+                    emit(
+                        writer,
+                        &Event::ToolFinished {
+                            id,
+                            tool,
+                            relative_path,
+                            success,
+                        },
+                    )
+                    .map_err(|cause| {
+                        format!("cannot stream plan checkpoint tool result: {cause}")
+                    })?;
+                }
+                _ => {}
+            }
+        }
+    })();
+    let restore_result = progress.driver.set_thinking_level("medium");
+    let settled = stream_result?;
+    restore_result?;
+    if !settled && !cancellation.is_requested() {
+        return Err("Pi closed before the plan checkpoint settled".into());
+    }
+    if cancellation.is_requested() {
+        return Err("plan checkpoint was interrupted".into());
+    }
+    capture.finish()
 }
 
 fn run_pi_operation(operation: PiOperation) {
@@ -956,7 +1098,11 @@ fn run_pi_operation(operation: PiOperation) {
         intent,
         mut investigation_capture,
         mut revision_capture,
+        plan_progress,
     } = operation;
+    let mut implementation_summary = String::new();
+    let mut implementation_paths = Vec::new();
+    let mut development_command_ran = false;
     let (selection, symbol_context, repository_semantic, plan_review) = match agent_context {
         AgentContext::Repository {
             semantic_state,
@@ -1166,7 +1312,9 @@ fn run_pi_operation(operation: PiOperation) {
             ),
         ));
         let request = match intent {
-            AgentIntent::Implement => format!("Developer implementation request: {query}"),
+            AgentIntent::Implement => format!(
+                "Developer implementation request: {query}\n\nImplement the requested code slice and verify it. Do not edit .lantern/plans/active.md; Lantern prepares any plan checkpoint separately for developer review."
+            ),
             AgentIntent::Understand => format!(
                 "Developer question: {query}\n\nExplain naturally and concisely from inspected evidence. Do not change files."
             ),
@@ -1225,6 +1373,9 @@ fn run_pi_operation(operation: PiOperation) {
                                 .ok_or("Pi text delta is not a string")?;
                             if let Some(capture) = &mut investigation_capture {
                                 capture.append(text);
+                            }
+                            if intent == AgentIntent::Implement {
+                                append_bounded(&mut implementation_summary, text);
                             }
                             if let Some(capture) = &mut revision_capture {
                                 capture.append(text);
@@ -1291,6 +1442,18 @@ fn run_pi_operation(operation: PiOperation) {
                             },
                         )
                         .map_err(|cause| format!("cannot stream tool result: {cause}"))?;
+                        if intent == AgentIntent::Implement && success {
+                            if matches!(tool, WorkbenchTool::Edit | WorkbenchTool::Write)
+                                && let Some(path) = &relative_path
+                                && implementation_paths.len() < 64
+                                && !implementation_paths.contains(path)
+                            {
+                                implementation_paths.push(path.clone());
+                            }
+                            if tool == WorkbenchTool::Bash {
+                                development_command_ran = true;
+                            }
+                        }
                         if intent != AgentIntent::Implement
                             && success
                             && tool == WorkbenchTool::Read
@@ -1342,6 +1505,30 @@ fn run_pi_operation(operation: PiOperation) {
         .then(|| revision_capture.map(RevisionCapture::finish))
         .flatten()
         .transpose();
+    let progress_result = if !cancellation.is_requested()
+        && result.is_ok()
+        && let Some(progress) = &plan_progress
+        && !implementation_paths.is_empty()
+    {
+        match plan::progress_context(
+            &driver.root,
+            &implementation_paths,
+            &implementation_summary,
+            development_command_ran,
+            &progress.revision,
+        ) {
+            Ok((prompt, capture)) => {
+                capture_plan_progress(id, progress, prompt, capture, &cancellation, &writer)
+                    .map(Some)
+            }
+            Err(message) if message == "the implementation turn left no reviewable diff" => {
+                Ok(None)
+            }
+            Err(message) => Err(message),
+        }
+    } else {
+        Ok(None)
+    };
     if cancellation.is_requested() {
         let _ = emit(
             &writer,
@@ -1383,6 +1570,29 @@ fn run_pi_operation(operation: PiOperation) {
                 },
             );
             let _ = emit(&writer, &Event::ChangeProposal { id, proposal });
+        }
+        match progress_result {
+            Ok(Some(proposal)) => {
+                let _ = emit(
+                    &writer,
+                    &Event::TextDelta {
+                        id,
+                        delta: "Prepared a plan checkpoint from the reviewed implementation. Review the plan diff, then say ‘Apply that’ when it is right.".into(),
+                    },
+                );
+                let _ = emit(&writer, &Event::ChangeProposal { id, proposal });
+            }
+            Err(message) => {
+                let _ = emit(
+                    &writer,
+                    &Event::PlanProgressFailed {
+                        id,
+                        message,
+                        recovery: "review the code diff, then update the plan manually or add plan comments for a fresh review".into(),
+                    },
+                );
+            }
+            Ok(None) => {}
         }
         let _ = emit(
             &writer,
@@ -1469,6 +1679,27 @@ fn persistent_pi(
             None
         }
     }
+}
+
+fn prepare_plan_progress(
+    intent: AgentIntent,
+    repository: &Path,
+    current: &mut Option<Arc<PiDriver>>,
+    revision: &SharedRevision,
+    writer: &SharedWriter,
+    id: u64,
+) -> Result<Option<PlanProgress>, ()> {
+    if intent != AgentIntent::Implement || !plan::exists(repository) {
+        return Ok(None);
+    }
+    persistent_pi(current, repository, writer, id, PiProfile::ReadOnly)
+        .map(|driver| {
+            Some(PlanProgress {
+                driver,
+                revision: revision.clone(),
+            })
+        })
+        .ok_or(())
 }
 
 fn run_plan_persistence(
@@ -1871,6 +2102,17 @@ fn main() -> io::Result<()> {
                     settle(id, &operations, &writer);
                     continue;
                 };
+                let Ok(plan_progress) = prepare_plan_progress(
+                    intent,
+                    &repository,
+                    &mut read_only_pi_driver,
+                    &pending_plan_revision,
+                    &writer,
+                    id,
+                ) else {
+                    settle(id, &operations, &writer);
+                    continue;
+                };
                 let Some(query) = prepare_agent_query(
                     intent,
                     query,
@@ -1897,6 +2139,7 @@ fn main() -> io::Result<()> {
                         intent,
                         investigation_capture: capture,
                         revision_capture: None,
+                        plan_progress,
                     });
                 }));
             }
@@ -1993,6 +2236,17 @@ fn main() -> io::Result<()> {
                     settle(id, &operations, &writer);
                     continue;
                 };
+                let Ok(plan_progress) = prepare_plan_progress(
+                    intent,
+                    &repository,
+                    &mut read_only_pi_driver,
+                    &pending_plan_revision,
+                    &writer,
+                    id,
+                ) else {
+                    settle(id, &operations, &writer);
+                    continue;
+                };
                 let Some(query) = prepare_agent_query(
                     intent,
                     query,
@@ -2022,6 +2276,7 @@ fn main() -> io::Result<()> {
                         intent,
                         investigation_capture: capture,
                         revision_capture: None,
+                        plan_progress,
                     });
                 }));
             }
@@ -2090,6 +2345,17 @@ fn main() -> io::Result<()> {
                     settle(id, &operations, &writer);
                     continue;
                 };
+                let Ok(plan_progress) = prepare_plan_progress(
+                    intent,
+                    &repository,
+                    &mut read_only_pi_driver,
+                    &pending_plan_revision,
+                    &writer,
+                    id,
+                ) else {
+                    settle(id, &operations, &writer);
+                    continue;
+                };
                 let Some(query) = prepare_agent_query(
                     intent,
                     query,
@@ -2116,6 +2382,7 @@ fn main() -> io::Result<()> {
                         intent,
                         investigation_capture: capture,
                         revision_capture: None,
+                        plan_progress,
                     });
                 }));
             }
@@ -2169,6 +2436,7 @@ fn main() -> io::Result<()> {
                         intent: AgentIntent::Plan,
                         investigation_capture: None,
                         revision_capture: Some(revision_capture),
+                        plan_progress: None,
                     });
                 }));
             }
