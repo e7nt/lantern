@@ -18,7 +18,7 @@ developer is exploring rather than attempting to replace the developer.
 
 > **Project status:** Lantern is an early developer preview. The maintained
 > contracts are tested in CI, and tagged Homebrew releases are available for
-> supported Apple Silicon and Intel Macs.
+> supported Apple Silicon Macs. Intel packaging is currently paused.
 
 ## Try Lantern
 

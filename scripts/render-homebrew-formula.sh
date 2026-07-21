@@ -5,15 +5,11 @@ set -euo pipefail
 VERSION=${1:-}
 ARM64_URL=${2:-}
 ARM64_SHA=${3:-}
-X86_64_URL=${4:-}
-X86_64_SHA=${5:-}
 
 if [[ ! $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
 	|| [[ ! $ARM64_SHA =~ ^[0-9a-f]{64}$ ]] \
-	|| [[ ! $X86_64_SHA =~ ^[0-9a-f]{64}$ ]] \
-	|| [[ $ARM64_URL != https://github.com/e7nt/lantern/releases/download/* ]] \
-	|| [[ $X86_64_URL != https://github.com/e7nt/lantern/releases/download/* ]]; then
-	echo "Usage: $0 <version> <arm64-url> <arm64-sha256> <x86_64-url> <x86_64-sha256>" >&2
+	|| [[ $ARM64_URL != https://github.com/e7nt/lantern/releases/download/* ]]; then
+	echo "Usage: $0 <version> <arm64-url> <arm64-sha256>" >&2
 	exit 2
 fi
 
@@ -24,21 +20,15 @@ class Lantern < Formula
   version "$VERSION"
   license "AGPL-3.0-only"
 
+  url "$ARM64_URL"
+  sha256 "$ARM64_SHA"
+
   depends_on "git"
   depends_on "node@22"
   depends_on "python@3.12"
   depends_on "tmux"
   depends_on :macos
-
-  on_arm do
-    url "$ARM64_URL"
-    sha256 "$ARM64_SHA"
-  end
-
-  on_intel do
-    url "$X86_64_URL"
-    sha256 "$X86_64_SHA"
-  end
+  depends_on arch: :arm64
 
   def install
     libexec.install Dir["*"]

@@ -597,12 +597,12 @@ The detailed interaction contract is in
   clean checkout and have passed on both supported macOS architectures.
 - `P8-15` Publish protocol and storage compatibility policies.
 - `P8-16` Produce signed or checksummed daemon binaries for macOS and Linux.
-  The tag workflow now produces checksummed, attested macOS workbench archives;
-  Linux release artifacts remain.
+  The tag workflow produces checksummed, attested Apple Silicon workbench
+  archives. New Intel packaging is paused; Intel and Linux artifacts remain.
 - `P8-17` Package, checksum, and validate installable Lantern builds containing
   the supported Helix, focused Git rail, pane, daemon, semantic worker, and Pi
-  revisions. Architecture-specific Homebrew packages, tap updates, and fresh
-  Apple Silicon and Intel installs are implemented and validated. A real
+  revisions. Apple Silicon Homebrew packages, tap updates, and fresh installs
+  are implemented and validated. Intel packaging is paused. A real
   cross-version `brew upgrade` journey remains to be recorded.
 - `P8-18` Add dependency, license, secret, and vulnerability checks to CI. The
   least-privilege deterministic Rust, terminal, evaluation, and semantic jobs

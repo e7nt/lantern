@@ -6,8 +6,8 @@ formula; pushing ordinary commits never publishes software.
 
 ## Release boundary
 
-Each semantic version produces separate Apple Silicon and Intel archives. An
-archive contains:
+Each semantic version currently produces one Apple Silicon archive. Intel
+packaging is paused. The archive contains:
 
 - the five Lantern Rust executables;
 - the pinned, patched Helix binary and runtime;
@@ -18,9 +18,9 @@ archive contains:
 - the AGPL license and exact version metadata.
 
 Homebrew supplies only Git, tmux, Node.js 22, and Python 3.12 as runtime
-dependencies. The formula selects the matching architecture archive and checks
-its SHA-256 before installation. `brew upgrade lantern` receives a new version
-only after the tap formula is updated successfully.
+dependencies. The formula declares Apple Silicon as a requirement and checks
+the archive's SHA-256 before installation. `brew upgrade lantern` receives a
+new version only after the tap formula is updated successfully.
 
 ## One-time GitHub setup
 
@@ -49,7 +49,7 @@ only after the tap formula is updated successfully.
 
 The tag workflow validates the tag shape, annotated-tag object, repository
 visibility, version agreement, and tap credential before building. It then
-builds both macOS architectures from the tag, verifies checksums, publishes one
+builds Apple Silicon from the tag, verifies its checksum, publishes one
 GitHub release with provenance attestations, and writes the checksum-pinned
 formula to `e7nt/homebrew-tap`.
 
@@ -74,7 +74,7 @@ lantern /path/to/a/git/repository
 
 Maintainers must also run the `Homebrew install acceptance` workflow. It
 installs the public formula and launches the shipped workbench against a fresh
-Git repository on both supported macOS architectures.
+Git repository on Apple Silicon.
 
 After a later release:
 
