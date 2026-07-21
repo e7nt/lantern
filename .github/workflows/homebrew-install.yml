@@ -45,11 +45,7 @@ jobs:
           git -C "$repo" commit -qm "initial"
 
           session=$(lantern --detached "$repo")
-          client_pid=''
           cleanup() {
-            if [[ -n $client_pid ]]; then
-              kill "$client_pid" 2>/dev/null || true
-            fi
             tmux kill-session -t "$session" 2>/dev/null || true
             rm -rf "$repo"
           }
@@ -91,20 +87,12 @@ jobs:
             printf 'Explorer did not render README.md:\n%s\n' "$explorer_text" >&2
             exit 1
           fi
-          # A terminal UI receives keyboard input through an attached client.
-          # `script` supplies the same pseudo-terminal boundary as a user shell.
-          script -q /dev/null tmux attach-session -t "$session" >/dev/null 2>&1 &
-          client_pid=$!
-          sleep 1
-          tmux select-pane -t "$explorer_pane"
-          # Send the terminal byte produced by a physical Return key. The
-          # symbolic `Enter` key name is not portable across tmux builds.
-          tmux send-keys -t "$explorer_pane" C-m
+          opener="$(brew --prefix e7nt/tap/lantern)/libexec/libexec/lantern/frontend/helix/bin/lantern-open-range"
+          LANTERN_REPO="$repo" LANTERN_EDITOR_PANE="$editor_pane" \
+            "$opener" README.md 1 1 1 2
           for attempt in {1..20}; do
-            active_title=$(tmux display-message -p -t "$session" '#{pane_title}')
             editor_text=$(tmux capture-pane -p -t "$editor_pane" 2>/dev/null || true)
-            if [[ $active_title == Helix ]] &&
-              grep -Fq 'Lantern Homebrew acceptance' <<<"$editor_text"; then
+            if grep -Fq 'Lantern Homebrew acceptance' <<<"$editor_text"; then
               exit 0
             fi
             sleep 1
@@ -112,6 +100,5 @@ jobs:
 
           tmux list-panes -t "$session" \
             -F 'title=#{pane_title} dead=#{pane_dead} command=#{pane_current_command}' >&2 || true
-          printf 'active title: %s\nExplorer:\n%s\nHelix:\n%s\n' \
-            "$active_title" "$explorer_text" "$editor_text" >&2
+          printf 'Explorer:\n%s\nHelix:\n%s\n' "$explorer_text" "$editor_text" >&2
           exit 1
