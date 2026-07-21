@@ -26,7 +26,7 @@ and tool vocabulary should not become user-facing ceremony.
   reading mode for the persistent agent pane.
 - Bounded, typed composer submission over a private session-local Unix socket;
   tmux owns presentation and focus but never transports questions.
-- Maintained Rust terminal, daemon, diagnostics, and Protocol v15 crates.
+- Maintained Rust terminal, daemon, diagnostics, and Protocol v16 crates.
 - Selection capture, exact navigation, bounded local literal search, and
   Helix-provided definition/reference context.
 - Bounded two-hop outgoing-call context from Helix's active language server,
@@ -72,7 +72,7 @@ and tool vocabulary should not become user-facing ceremony.
 
 ## Current boundary
 
-Protocol v15 and the terminal open one trusted repository directly. The old
+Protocol v16 and the terminal open one trusted repository directly. The old
 policy engine, capability fields, and `/trust` commands have been removed. Pi
 runs its explicit built-in coding-tool allowlist in that repository. Raw tool
 arguments, command output, and provider stderr are not copied into Lantern's
@@ -293,6 +293,15 @@ line, scroll offset, and pending comment count across the process transition.
 `p`/`n` move between reviewable files, `[`/`]` move between hunks, and all
 existing line-comment and submit interactions remain authoritative. See the
 [adaptive review report](acceptance/2026-07-21-adaptive-git-review-canvas.md).
+
+Protocol v16 completes the pre-submit review draft inside that canvas. Commented
+diff lines carry a visible marker; `e` edits the comment on the selected line,
+`x` removes it, and `v` opens a compact cross-file draft summary whose entries
+jump back to their exact anchors. `R` now opens an explicit count confirmation
+instead of immediately contacting the agent. Before confirmation the Git canvas
+is the only draft owner; after confirmation the terminal owns the complete
+validated batch and retains it through interruption or failure. See the
+[review draft report](acceptance/2026-07-21-editable-code-review-draft.md).
 
 The return path is connected as well. Successful edit/write events are retained
 only for the active turn in a bounded path set. On settlement, Lantern offers

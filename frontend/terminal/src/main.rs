@@ -74,8 +74,7 @@ enum Input {
     DaemonStartupTimeout,
     Question(String),
     PlanComment(String),
-    CodeReviewComment(CodeReviewComment),
-    SubmitCodeReview,
+    SubmitCodeReview(Vec<CodeReviewComment>),
     ControlError(String),
 }
 
@@ -744,37 +743,14 @@ fn queue_plan_comment(
     Ok(())
 }
 
-fn queue_code_review_comment(
-    state: &mut UiState,
-    comment: CodeReviewComment,
-) -> Result<(), String> {
-    if state.active_id.is_some() {
-        return Err("wait for the active agent turn to finish".into());
-    }
-    let mut comments = state.code_review_comments.clone();
-    comments.push(comment);
-    validate_code_review(&comments)?;
-    state.code_review_comments = comments;
-    let added = state
-        .code_review_comments
-        .last()
-        .expect("code review comment just added");
-    state.line(format!(
-        "Added code review comment {} · {} · diff line {} · submit the review when ready",
-        state.code_review_comments.len(),
-        added.anchor.review.relative_path.display(),
-        added.anchor.diff_line + 1,
-    ));
-    Ok(())
-}
-
 fn submit_code_review(
     state: &mut UiState,
     repository: &Path,
     daemon_stdin: &Arc<Mutex<BufWriter<ChildStdin>>>,
+    comments: Vec<CodeReviewComment>,
 ) -> io::Result<()> {
-    if state.code_review_comments.is_empty() {
-        state.line("No code review comments have been added yet.");
+    if let Err(message) = validate_code_review(&comments) {
+        state.line(message);
         return Ok(());
     }
     let Some(id) = state.begin_operation() else {
@@ -783,6 +759,7 @@ fn submit_code_review(
     };
     state.pending_agent_intent = Some(AgentIntent::Implement);
     state.submitting_code_review = true;
+    state.code_review_comments = comments;
     send_request(
         daemon_stdin,
         &Request::ReviewCode {
@@ -932,19 +909,17 @@ fn spawn_control_listener(path: &Path, sender: SyncSender<Input>) -> io::Result<
                     ControlRequest::AddPlanComment { .. } => Err(format!(
                         "plan comment must contain 1 to {MAX_PLAN_COMMENT_BYTES} bytes"
                     )),
-                    ControlRequest::AddCodeReviewComment { comment } => {
-                        validate_code_review(std::slice::from_ref(comment)).map(|()| request)
+                    ControlRequest::SubmitCodeReview { comments } => {
+                        validate_code_review(comments).map(|()| request)
                     }
-                    ControlRequest::SubmitCodeReview => Ok(request),
                 }
             })();
             let input = match result {
                 Ok(ControlRequest::SubmitQuestion { question }) => Input::Question(question),
                 Ok(ControlRequest::AddPlanComment { comment }) => Input::PlanComment(comment),
-                Ok(ControlRequest::AddCodeReviewComment { comment }) => {
-                    Input::CodeReviewComment(comment)
+                Ok(ControlRequest::SubmitCodeReview { comments }) => {
+                    Input::SubmitCodeReview(comments)
                 }
-                Ok(ControlRequest::SubmitCodeReview) => Input::SubmitCodeReview,
                 Err(message) => Input::ControlError(message),
             };
             if sender.send(input).is_err() {
@@ -1906,14 +1881,8 @@ fn run(
                 }
                 false
             }
-            Input::CodeReviewComment(comment) => {
-                if let Err(message) = queue_code_review_comment(&mut state, comment) {
-                    state.line(format!("Could not add code review comment: {message}"));
-                }
-                false
-            }
-            Input::SubmitCodeReview => {
-                submit_code_review(&mut state, &repository, &daemon_stdin)?;
+            Input::SubmitCodeReview(comments) => {
+                submit_code_review(&mut state, &repository, &daemon_stdin, comments)?;
                 false
             }
             Input::ControlError(message) => {
@@ -2087,34 +2056,21 @@ mod tests {
             },
             comment: "Keep the old error type".into(),
         };
-        let mut stream = UnixStream::connect(&socket).expect("connect code review client");
+        let mut stream = UnixStream::connect(&socket).expect("connect review submit client");
         serde_json::to_writer(
             &mut stream,
-            &ControlRequest::AddCodeReviewComment {
-                comment: code_comment.clone(),
+            &ControlRequest::SubmitCodeReview {
+                comments: vec![code_comment.clone()],
             },
         )
-        .expect("write code review comment");
-        stream.write_all(b"\n").expect("frame code review comment");
-        drop(stream);
-        match receiver
-            .recv_timeout(Duration::from_secs(1))
-            .expect("receive code review comment")
-        {
-            Input::CodeReviewComment(comment) => assert_eq!(comment, code_comment),
-            _ => panic!("expected a code review comment"),
-        }
-
-        let mut stream = UnixStream::connect(&socket).expect("connect review submit client");
-        serde_json::to_writer(&mut stream, &ControlRequest::SubmitCodeReview)
-            .expect("write code review submit");
+        .expect("write code review submit");
         stream.write_all(b"\n").expect("frame code review submit");
         drop(stream);
         assert!(matches!(
             receiver
                 .recv_timeout(Duration::from_secs(1))
                 .expect("receive code review submit"),
-            Input::SubmitCodeReview
+            Input::SubmitCodeReview(comments) if comments == vec![code_comment]
         ));
         fs::remove_file(&socket).expect("remove control socket");
         fs::remove_dir(&directory).expect("remove control fixture");
@@ -2579,7 +2535,7 @@ mod tests {
         };
         let mut state = UiState::new(Path::new("."));
         state.daemon = DaemonState::Ready;
-        queue_code_review_comment(&mut state, comment).unwrap();
+        state.code_review_comments = vec![comment];
         state.active_id = Some(7);
         state.submitting_code_review = true;
         handle_daemon_event(

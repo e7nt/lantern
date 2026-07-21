@@ -12,9 +12,9 @@ use crossterm::{execute, queue};
 use lantern_git_rail::{Cancellation, Commit, DiffHunk, GitRail, GitResult, Status, SyncState};
 use lantern_protocol::{
     AgentGitFocus, CodeReviewAnchor, CodeReviewComment, ControlRequest, GitReviewContext,
-    GitReviewScope, GitReviewState, MAX_AGENT_GIT_FOCUS_BYTES, MAX_CODE_REVIEW_COMMENT_BYTES,
-    MAX_CODE_REVIEW_COMMENTS, MAX_SELECTION_BYTES, validate_agent_git_focus, validate_code_review,
-    validate_git_review,
+    GitReviewScope, GitReviewState, MAX_AGENT_GIT_FOCUS_BYTES, MAX_CODE_REVIEW_BYTES,
+    MAX_CODE_REVIEW_COMMENT_BYTES, MAX_SELECTION_BYTES, validate_agent_git_focus,
+    validate_code_review, validate_git_review,
 };
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -83,7 +83,7 @@ struct GitResume {
     review: GitReviewContext,
     diff_line: usize,
     offset: usize,
-    pending_review_comments: usize,
+    comments: Vec<CodeReviewComment>,
 }
 
 #[derive(Clone, Copy)]
@@ -149,7 +149,12 @@ enum View {
     ReviewInput {
         anchor: CodeReviewAnchor,
         value: String,
+        editing: Option<usize>,
     },
+    ReviewSummary {
+        selected: usize,
+    },
+    ReviewConfirm,
     Branches {
         branches: Vec<String>,
         selected: usize,
@@ -176,7 +181,7 @@ struct State {
     network: Option<NetworkOperation>,
     repository_generation: u64,
     help: bool,
-    pending_review_comments: usize,
+    review_comments: Vec<CodeReviewComment>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -232,7 +237,7 @@ impl State {
             network: None,
             repository_generation: 0,
             help: false,
-            pending_review_comments: 0,
+            review_comments: Vec::new(),
         })
     }
 
@@ -815,7 +820,7 @@ impl State {
             review,
             diff_line,
             offset,
-            pending_review_comments: self.pending_review_comments,
+            comments: self.review_comments.clone(),
         };
         let payload = serde_json::to_vec(&resume)
             .map_err(|error| format!("Cannot encode Git review position: {error}"))?;
@@ -848,9 +853,17 @@ impl State {
     fn start_code_review_comment(&mut self, rail: &GitRail) {
         match self.code_review_anchor(rail) {
             Ok(anchor) => {
+                let editing = self
+                    .review_comments
+                    .iter()
+                    .position(|comment| comment.anchor == anchor);
+                let value = editing
+                    .map(|index| self.review_comments[index].comment.clone())
+                    .unwrap_or_default();
                 self.view = View::ReviewInput {
                     anchor,
-                    value: String::new(),
+                    value,
+                    editing,
                 };
                 self.notice = None;
             }
@@ -859,7 +872,12 @@ impl State {
     }
 
     fn submit_code_review_comment(&mut self, rail: &GitRail) {
-        let View::ReviewInput { anchor, value } = &self.view else {
+        let View::ReviewInput {
+            anchor,
+            value,
+            editing,
+        } = &self.view
+        else {
             return;
         };
         let review = anchor.review.clone();
@@ -872,26 +890,78 @@ impl State {
             self.notice = Some(message);
             return;
         }
-        let request = ControlRequest::AddCodeReviewComment { comment };
-        match send_control_request(&request) {
-            Ok(()) => {
-                self.pending_review_comments += 1;
-                self.restore_review(rail, &review);
-                if let View::Diff { cursor, offset, .. } = &mut self.view {
-                    *cursor = diff_line;
-                    *offset = diff_line.saturating_sub(1);
-                }
-                self.notice = Some(format!(
-                    "Added review comment {}. Add more or press R to submit.",
-                    self.pending_review_comments
-                ));
-            }
-            Err(message) => self.notice = Some(message),
+        let mut comments = self.review_comments.clone();
+        if let Some(index) = editing {
+            comments[*index] = comment;
+        } else {
+            comments.push(comment);
         }
+        if let Err(message) = validate_code_review(&comments) {
+            self.notice = Some(message);
+            return;
+        }
+        self.review_comments = comments;
+        self.restore_review(rail, &review);
+        if let View::Diff { cursor, offset, .. } = &mut self.view {
+            *cursor = diff_line;
+            *offset = diff_line.saturating_sub(1);
+        }
+        self.notice = Some(format!(
+            "Review draft has {} comment{}. Press v to inspect or R to submit.",
+            self.review_comments.len(),
+            if self.review_comments.len() == 1 {
+                ""
+            } else {
+                "s"
+            }
+        ));
     }
 
     fn submit_code_review(&mut self) -> Result<(), String> {
-        send_control_request(&ControlRequest::SubmitCodeReview)
+        validate_code_review(&self.review_comments)?;
+        send_control_request(&ControlRequest::SubmitCodeReview {
+            comments: self.review_comments.clone(),
+        })
+    }
+
+    fn comment_at_cursor(&self, rail: &GitRail) -> Option<usize> {
+        let anchor = self.code_review_anchor(rail).ok()?;
+        self.review_comments
+            .iter()
+            .position(|comment| comment.anchor == anchor)
+    }
+
+    fn edit_comment_at_cursor(&mut self, rail: &GitRail) {
+        let Some(index) = self.comment_at_cursor(rail) else {
+            self.notice = Some("This line has no review comment.".into());
+            return;
+        };
+        let comment = self.review_comments[index].clone();
+        self.view = View::ReviewInput {
+            anchor: comment.anchor,
+            value: comment.comment,
+            editing: Some(index),
+        };
+    }
+
+    fn delete_comment_at_cursor(&mut self, rail: &GitRail) {
+        let Some(index) = self.comment_at_cursor(rail) else {
+            self.notice = Some("This line has no review comment.".into());
+            return;
+        };
+        self.review_comments.remove(index);
+        self.notice = Some("Removed the review comment from this line.".into());
+    }
+
+    fn open_review_comment(&mut self, rail: &GitRail, index: usize) {
+        let Some(comment) = self.review_comments.get(index).cloned() else {
+            return;
+        };
+        self.restore_review(rail, &comment.anchor.review);
+        if let View::Diff { cursor, offset, .. } = &mut self.view {
+            *cursor = comment.anchor.diff_line;
+            *offset = comment.anchor.diff_line.saturating_sub(1);
+        }
     }
 
     fn restore_review_context(&mut self, rail: &GitRail, path: &Path, open_diff: bool) {
@@ -899,7 +969,7 @@ impl State {
             return;
         };
         let _ = fs::remove_file(path);
-        if bytes.len() > MAX_SELECTION_BYTES + 4 * 1024 {
+        if bytes.len() > MAX_SELECTION_BYTES + MAX_CODE_REVIEW_BYTES + 8 * 1024 {
             self.notice = Some("Saved Git review context exceeded its bound.".into());
             return;
         }
@@ -911,12 +981,12 @@ impl State {
             self.notice = Some(message);
             return;
         }
-        if resume.pending_review_comments > MAX_CODE_REVIEW_COMMENTS {
-            self.notice = Some("Saved Git review count was invalid.".into());
+        if !resume.comments.is_empty() && validate_code_review(&resume.comments).is_err() {
+            self.notice = Some("Saved Git review draft was invalid.".into());
             return;
         }
         self.restore_review(rail, &resume.review);
-        self.pending_review_comments = resume.pending_review_comments;
+        self.review_comments = resume.comments;
         if open_diff {
             if let View::Diff {
                 hunks,
@@ -1344,7 +1414,8 @@ fn draw(stdout: &mut Stdout, state: &State) -> io::Result<()> {
             stdout,
             change,
             hunks,
-            (*selected, *offset, *cursor, state.pending_review_comments),
+            (*selected, *offset, *cursor),
+            &state.review_comments,
             width,
             height,
         )?,
@@ -1352,8 +1423,26 @@ fn draw(stdout: &mut Stdout, state: &State) -> io::Result<()> {
             draw_menu(stdout, "Actions", &ACTIONS, *selected, width, height)?
         }
         View::Input { kind, value } => draw_input(stdout, *kind, value, width, height)?,
-        View::ReviewInput { anchor, value } => {
+        View::ReviewInput { anchor, value, .. } => {
             draw_review_input(stdout, anchor, value, width, height)?
+        }
+        View::ReviewSummary { selected } => {
+            let rows = state
+                .review_comments
+                .iter()
+                .map(|comment| {
+                    format!(
+                        "{}:{}  {}",
+                        comment.anchor.review.relative_path.display(),
+                        comment.anchor.diff_line + 1,
+                        comment.comment
+                    )
+                })
+                .collect::<Vec<_>>();
+            draw_menu(stdout, "Review draft", &rows, *selected, width, height)?;
+        }
+        View::ReviewConfirm => {
+            draw_review_confirm(stdout, state.review_comments.len(), width, height)?
         }
         View::Branches { branches, selected } => {
             let mut rows = vec!["+ Create branch".to_owned()];
@@ -1423,6 +1512,8 @@ fn draw_help(stdout: &mut Stdout, view: &View, width: u16, height: u16) -> io::R
                 "p/n  previous/next file",
                 "[/]  previous/next hunk",
                 "c/right click  comment",
+                "e/x  edit/remove comment",
+                "v  inspect review draft",
                 "R  submit review",
                 "space  stage / unstage",
                 "↵/o  open in Helix",
@@ -1450,6 +1541,7 @@ fn draw_help(stdout: &mut Stdout, view: &View, width: u16, height: u16) -> io::R
         ),
         View::Input { .. } => return Ok(()),
         View::ReviewInput { .. } => return Ok(()),
+        View::ReviewSummary { .. } | View::ReviewConfirm => return Ok(()),
     };
     queue!(
         stdout,
@@ -1609,6 +1701,29 @@ fn draw_review_input(
     )
 }
 
+fn draw_review_confirm(
+    stdout: &mut Stdout,
+    count: usize,
+    width: u16,
+    height: u16,
+) -> io::Result<()> {
+    queue!(
+        stdout,
+        MoveTo(0, 2),
+        SetForegroundColor(TEXT),
+        Print(clipped(
+            &format!(
+                "Submit {count} review comment{} as one correction turn?",
+                if count == 1 { "" } else { "s" }
+            ),
+            width as usize,
+        )),
+        MoveTo(0, height.saturating_sub(1)),
+        SetForegroundColor(MUTED),
+        Print(clipped("↵/y submit  Esc keep editing", width as usize))
+    )
+}
+
 fn draw_commit_diff(
     stdout: &mut Stdout,
     title: &str,
@@ -1701,11 +1816,12 @@ fn draw_diff(
     stdout: &mut Stdout,
     change: &Change,
     hunks: &[DiffHunk],
-    position: (usize, usize, usize, usize),
+    position: (usize, usize, usize),
+    comments: &[CodeReviewComment],
     width: u16,
     height: u16,
 ) -> io::Result<()> {
-    let (selected, offset, cursor, pending_comments) = position;
+    let (selected, offset, cursor) = position;
     let Some(hunk) = hunks.get(selected) else {
         return Ok(());
     };
@@ -1729,6 +1845,7 @@ fn draw_diff(
         .enumerate()
     {
         let selected = index == cursor;
+        let comment_count = comments_at_line(comments, change, hunk, index);
         let color = if line.starts_with('+') && !line.starts_with("+++") {
             ACCENT
         } else if line.starts_with('-') && !line.starts_with("---") {
@@ -1745,7 +1862,10 @@ fn draw_diff(
             MoveTo(0, row as u16 + 2),
             SetBackgroundColor(if selected { SELECTED } else { CANVAS }),
             SetForegroundColor(color),
-            Print(clipped(line, width as usize)),
+            Print(clipped(
+                &format!("{}{}", if comment_count > 0 { "● " } else { "  " }, line),
+                width as usize,
+            )),
             ResetColor,
             SetBackgroundColor(CANVAS)
         )?;
@@ -1755,10 +1875,29 @@ fn draw_diff(
         MoveTo(0, height.saturating_sub(1)),
         SetForegroundColor(MUTED),
         Print(clipped(
-            &format!("c add  R send +{pending_comments}"),
+            &format!(
+                "c add  e edit  x remove  v draft  R submit +{}",
+                comments.len()
+            ),
             width as usize
         ))
     )
+}
+
+fn comments_at_line(
+    comments: &[CodeReviewComment],
+    change: &Change,
+    hunk: &DiffHunk,
+    diff_line: usize,
+) -> usize {
+    comments
+        .iter()
+        .filter(|comment| {
+            comment.anchor.review.relative_path == change.path
+                && comment.anchor.review.diff.as_bytes() == hunk.display()
+                && comment.anchor.diff_line == diff_line
+        })
+        .count()
 }
 
 fn diff_visible_start(cursor: usize, offset: usize, available: usize) -> usize {
@@ -1863,7 +2002,13 @@ fn run() -> Result<RunOutcome, String> {
                     continue;
                 }
                 if key.code == KeyCode::Char('?')
-                    && !matches!(&state.view, View::Input { .. } | View::ReviewInput { .. })
+                    && !matches!(
+                        &state.view,
+                        View::Input { .. }
+                            | View::ReviewInput { .. }
+                            | View::ReviewSummary { .. }
+                            | View::ReviewConfirm
+                    )
                 {
                     state.help = true;
                     continue;
@@ -1920,10 +2065,14 @@ fn run() -> Result<RunOutcome, String> {
                         KeyCode::Char('p') => state.move_review_file(&rail, -1),
                         KeyCode::Char('n') => state.move_review_file(&rail, 1),
                         KeyCode::Char('c') => state.start_code_review_comment(&rail),
-                        KeyCode::Char('R') => match state.submit_code_review() {
-                            Ok(()) => break RunOutcome::Closed,
-                            Err(message) => state.notice = Some(message),
-                        },
+                        KeyCode::Char('e') => state.edit_comment_at_cursor(&rail),
+                        KeyCode::Char('x') => state.delete_comment_at_cursor(&rail),
+                        KeyCode::Char('v') if !state.review_comments.is_empty() => {
+                            state.view = View::ReviewSummary { selected: 0 }
+                        }
+                        KeyCode::Char('R') if !state.review_comments.is_empty() => {
+                            state.view = View::ReviewConfirm
+                        }
                         KeyCode::Char(' ') => state.toggle_hunk(&rail),
                         KeyCode::Enter | KeyCode::Char('o') => state.open_selected_in_helix(),
                         KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -1967,6 +2116,56 @@ fn run() -> Result<RunOutcome, String> {
                         {
                             state.edit_input(code)
                         }
+                        _ => {}
+                    },
+                    View::ReviewSummary { selected } => match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') => {
+                            let selected = *selected;
+                            state.open_review_comment(&rail, selected);
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => *selected = selected.saturating_sub(1),
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            *selected =
+                                (*selected + 1).min(state.review_comments.len().saturating_sub(1))
+                        }
+                        KeyCode::Enter => {
+                            let selected = *selected;
+                            state.open_review_comment(&rail, selected);
+                        }
+                        KeyCode::Char('e') => {
+                            let index = *selected;
+                            let comment = state.review_comments[index].clone();
+                            state.view = View::ReviewInput {
+                                anchor: comment.anchor,
+                                value: comment.comment,
+                                editing: Some(index),
+                            };
+                        }
+                        KeyCode::Char('x') => {
+                            let removed = state.review_comments[*selected].clone();
+                            state.review_comments.remove(*selected);
+                            if state.review_comments.is_empty() {
+                                state.restore_review(&rail, &removed.anchor.review);
+                                if let View::Diff { cursor, offset, .. } = &mut state.view {
+                                    *cursor = removed.anchor.diff_line;
+                                    *offset = removed.anchor.diff_line.saturating_sub(1);
+                                }
+                                state.notice = Some("Review draft is now empty.".into());
+                            } else {
+                                *selected = (*selected).min(state.review_comments.len() - 1);
+                            }
+                        }
+                        KeyCode::Char('R') => state.view = View::ReviewConfirm,
+                        _ => {}
+                    },
+                    View::ReviewConfirm => match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') => {
+                            state.view = View::ReviewSummary { selected: 0 }
+                        }
+                        KeyCode::Enter | KeyCode::Char('y') => match state.submit_code_review() {
+                            Ok(()) => break RunOutcome::Closed,
+                            Err(message) => state.notice = Some(message),
+                        },
                         _ => {}
                     },
                     View::Branches { .. } => match key.code {
@@ -2079,9 +2278,8 @@ fn run() -> Result<RunOutcome, String> {
                     let (_, height) = terminal::size()
                         .map_err(|cause| format!("cannot read terminal size: {cause}"))?;
                     if mouse.row == height.saturating_sub(1) {
-                        match state.submit_code_review() {
-                            Ok(()) => break RunOutcome::Closed,
-                            Err(message) => state.notice = Some(message),
+                        if !state.review_comments.is_empty() {
+                            state.view = View::ReviewConfirm;
                         }
                     } else {
                         let row = mouse.row.saturating_sub(2) as usize;
@@ -2115,7 +2313,10 @@ fn run() -> Result<RunOutcome, String> {
                         state.move_menu(-1)
                     }
                     View::CommitDiff { offset, .. } => *offset = offset.saturating_sub(3),
-                    View::Input { .. } | View::ReviewInput { .. } => {}
+                    View::Input { .. }
+                    | View::ReviewInput { .. }
+                    | View::ReviewSummary { .. }
+                    | View::ReviewConfirm => {}
                 },
                 MouseEventKind::ScrollDown => match &mut state.view {
                     View::Changes => state.move_selection(1),
@@ -2126,7 +2327,10 @@ fn run() -> Result<RunOutcome, String> {
                     View::CommitDiff { lines, offset, .. } => {
                         *offset = (*offset + 3).min(lines.len().saturating_sub(1));
                     }
-                    View::Input { .. } | View::ReviewInput { .. } => {}
+                    View::Input { .. }
+                    | View::ReviewInput { .. }
+                    | View::ReviewSummary { .. }
+                    | View::ReviewConfirm => {}
                 },
                 _ => {}
             },
@@ -2201,7 +2405,7 @@ mod tests {
             network: None,
             repository_generation: 0,
             help: false,
-            pending_review_comments: 0,
+            review_comments: Vec::new(),
         }
     }
 
@@ -2336,6 +2540,14 @@ mod tests {
         assert_eq!(review.relative_path, Path::new("tracked.txt"));
         assert!(review.diff.contains("changed 18"));
         assert!(!review.diff.contains("changed 02"));
+        let draft = CodeReviewComment {
+            anchor: CodeReviewAnchor {
+                review: review.clone(),
+                diff_line: 1,
+                line: review.diff.lines().nth(1).unwrap().into(),
+            },
+            comment: "Keep this behavior explicit.".into(),
+        };
         let selected_hunk = state.refresh_focus().expect("selected hunk").hunk_identity;
 
         fs::write(root.join("external.txt"), "external\n").expect("external edit");
@@ -2372,7 +2584,7 @@ mod tests {
                 review: review.clone(),
                 diff_line: 1,
                 offset: 1,
-                pending_review_comments: 4,
+                comments: vec![draft.clone()],
             })
             .unwrap(),
         )
@@ -2388,7 +2600,7 @@ mod tests {
                 ..
             }
         ));
-        assert_eq!(restored.pending_review_comments, 4);
+        assert_eq!(restored.review_comments, vec![draft.clone()]);
         assert!(!resume.exists());
 
         fs::write(
@@ -2397,7 +2609,7 @@ mod tests {
                 review,
                 diff_line: 1,
                 offset: 1,
-                pending_review_comments: 4,
+                comments: vec![draft.clone()],
             })
             .unwrap(),
         )
@@ -2409,7 +2621,7 @@ mod tests {
             collapsed.changes[collapsed.selected].path,
             Path::new("tracked.txt")
         );
-        assert_eq!(collapsed.pending_review_comments, 4);
+        assert_eq!(collapsed.review_comments, vec![draft]);
 
         fs::write(
             root.join("tracked.txt"),
@@ -2459,7 +2671,7 @@ mod tests {
 
         state.start_code_review_comment(&rail);
         state.submit_code_review_comment(&rail);
-        assert_eq!(state.pending_review_comments, 0);
+        assert!(state.review_comments.is_empty());
         assert!(
             state
                 .notice
@@ -2467,10 +2679,40 @@ mod tests {
                 .is_some_and(|notice| notice.contains("must contain"))
         );
         state.edit_input(KeyCode::Char('f'));
+        state.submit_code_review_comment(&rail);
+        assert_eq!(state.review_comments.len(), 1);
+        let View::Diff {
+            change,
+            hunks,
+            selected,
+            ..
+        } = &state.view
+        else {
+            panic!("review input should return to the diff");
+        };
+        assert_eq!(
+            comments_at_line(
+                &state.review_comments,
+                change,
+                &hunks[*selected],
+                anchor.diff_line
+            ),
+            1
+        );
+        state.edit_comment_at_cursor(&rail);
         assert!(matches!(
             state.view,
-            View::ReviewInput { ref value, .. } if value == "f"
+            View::ReviewInput {
+                editing: Some(0),
+                ..
+            }
         ));
+        state.edit_input(KeyCode::Char('x'));
+        state.submit_code_review_comment(&rail);
+        assert_eq!(state.review_comments[0].comment, "fx");
+        state.delete_comment_at_cursor(&rail);
+        assert!(state.review_comments.is_empty());
+        assert!(matches!(state.view, View::Diff { .. }));
         fs::remove_dir_all(root).expect("remove review fixture");
     }
 }
