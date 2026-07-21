@@ -22,6 +22,19 @@ test('release publication is tag-only, least privilege, and commit pinned', asyn
 	assert.match(workflow, /publish:[\s\S]+if: github\.event_name == 'push'/);
 });
 
+test('Homebrew acceptance installs and launches both supported architectures', async () => {
+	const workflow = await readFile(
+		path.join(root, '.github/workflows/homebrew-install.yml'),
+		'utf8',
+	);
+	assert.match(workflow, /runner: macos-14\n\s+arch: arm64/);
+	assert.match(workflow, /runner: macos-15-intel\n\s+arch: x86_64/);
+	assert.match(workflow, /brew install e7nt\/tap\/lantern/);
+	assert.match(workflow, /lantern --detached/);
+	assert.match(workflow, /\^Helix\\\\t0\$/);
+	assert.match(workflow, /\^Lantern\\\\t0\$/);
+});
+
 test('formula renderer emits architecture-pinned AGPL metadata', async () => {
 	const sha = 'a'.repeat(64);
 	const version = '1.2.3';
