@@ -1,0 +1,10 @@
+{"type":"initialized","protocol_version":15}
+{"type":"workbench_opened","repository":"/workspace/project"}
+{"type":"accepted","id":1}
+{"type":"tool_started","id":1,"tool":"edit","relative_path":"src/lib.rs"}
+{"type":"tool_finished","id":1,"tool":"edit","relative_path":"src/lib.rs","success":true}
+{"type":"text_delta","id":1,"delta":"Addressed the complete review and ran the focused test."}
+{"type":"completed","id":1,"evidence_count":1}
+{"type":"settled","id":1}
+{"type":"cancelled","id":1,"cancellation_latency_ms":12}
+{"type":"error","id":null,"message":"invalid protocol request","recovery":"send one valid JSON request per line"}

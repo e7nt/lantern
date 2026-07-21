@@ -30,7 +30,7 @@ This requires Pi `0.80.6` and a private OpenAI Codex login completed through
 Pi's interactive `/login` flow. It writes a local timestamped report under
 `reports/` and exits unsuccessfully when any deterministic contract fails.
 Build Lantern first with `cargo build`; `run_live_trace.py` then exercises the
-real daemon through Protocol v14. It measures a grounded repository explanation,
+real daemon through Protocol v15. It measures a grounded repository explanation,
 repository-relative evidence use, tool efficiency, time to first tool and text,
 an under-three-second warm grounded follow-up, settling time, and cancellation
 while a tool-driven turn is active. Override
@@ -74,7 +74,7 @@ typed `preparing_index` state within one second. It does not wait for an answer;
 the gate protects truthful cold-start feedback before provider latency.
 
 `run_external_edit_journey.py` creates disposable Git repositories outside the
-Lantern checkout. It submits a Protocol v14 symbol-grounded change, verifies the
+Lantern checkout. It submits a Protocol v15 symbol-grounded change, verifies the
 exact implementation and test files, runs the focused repository test, requires
 an unstaged reviewable diff, and separately interrupts a tool-driven read. Its
 report contains only bounded tool metadata and outcome measurements.
@@ -91,6 +91,9 @@ anchor while rejecting Markdown wrappers, frontmatter, and false implementation
 claims. The plan-progress dataset requires a complete checkpoint to mark only
 diff-supported work complete, retain untouched tasks, and avoid inventing
 broader verification.
+The code-review dataset requires one concise correction result to acknowledge
+every submitted concern and its focused verification without inventing broader
+test coverage or API changes.
 Live Pi outputs will be recorded as local JSON under `reports/`, which is
 ignored. Model-judged grounding and understanding metrics remain a promotion
 gate; they require an explicitly configured local or user-selected judge and

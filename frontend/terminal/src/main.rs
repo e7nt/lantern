@@ -15,12 +15,12 @@ use lantern_diagnostics::{
     DaemonState as DiagnosticDaemonState, bundle_from_stderr, summarize_stderr,
 };
 use lantern_protocol::{
-    AgentGitFocus, AgentIntent, BoundedTail, ChangeProposal, ControlRequest, Event, Evidence,
-    EvidenceSource, GitReviewContext, GroundingState, MAX_AGENT_TOUCHED_PATHS,
+    AgentGitFocus, AgentIntent, BoundedTail, ChangeProposal, CodeReviewComment, ControlRequest,
+    Event, Evidence, EvidenceSource, GitReviewContext, GroundingState, MAX_AGENT_TOUCHED_PATHS,
     MAX_DIAGNOSTIC_BYTES, MAX_PLAN_COMMENT_BYTES, MAX_QUESTION_BYTES, MAX_SELECTION_BYTES,
     PROTOCOL_VERSION, PlanReviewComment, Request, SelectionContext, SymbolContext,
     SymbolContextExport, infer_agent_intent, read_frame, search_term, validate_agent_git_focus,
-    validate_git_review, validate_plan_review,
+    validate_code_review, validate_git_review, validate_plan_review,
 };
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -74,6 +74,8 @@ enum Input {
     DaemonStartupTimeout,
     Question(String),
     PlanComment(String),
+    CodeReviewComment(CodeReviewComment),
+    SubmitCodeReview,
     ControlError(String),
 }
 
@@ -110,6 +112,8 @@ struct UiState {
     pending_agent_intent: Option<AgentIntent>,
     plan_review_comments: Vec<PlanReviewComment>,
     submitting_plan_review: bool,
+    code_review_comments: Vec<CodeReviewComment>,
+    submitting_code_review: bool,
 }
 
 impl UiState {
@@ -133,6 +137,8 @@ impl UiState {
             pending_agent_intent: None,
             plan_review_comments: Vec::new(),
             submitting_plan_review: false,
+            code_review_comments: Vec::new(),
+            submitting_code_review: false,
         }
     }
 
@@ -281,6 +287,7 @@ impl UiState {
         self.navigated_for = None;
         self.pending_agent_intent = None;
         self.submitting_plan_review = false;
+        self.submitting_code_review = false;
         self.line(format!("Agent unavailable: {reason}"));
         let diagnostics = diagnostic_summary(diagnostics);
         if !diagnostics.is_empty() {
@@ -737,6 +744,55 @@ fn queue_plan_comment(
     Ok(())
 }
 
+fn queue_code_review_comment(
+    state: &mut UiState,
+    comment: CodeReviewComment,
+) -> Result<(), String> {
+    if state.active_id.is_some() {
+        return Err("wait for the active agent turn to finish".into());
+    }
+    let mut comments = state.code_review_comments.clone();
+    comments.push(comment);
+    validate_code_review(&comments)?;
+    state.code_review_comments = comments;
+    let added = state
+        .code_review_comments
+        .last()
+        .expect("code review comment just added");
+    state.line(format!(
+        "Added code review comment {} · {} · diff line {} · submit the review when ready",
+        state.code_review_comments.len(),
+        added.anchor.review.relative_path.display(),
+        added.anchor.diff_line + 1,
+    ));
+    Ok(())
+}
+
+fn submit_code_review(
+    state: &mut UiState,
+    repository: &Path,
+    daemon_stdin: &Arc<Mutex<BufWriter<ChildStdin>>>,
+) -> io::Result<()> {
+    if state.code_review_comments.is_empty() {
+        state.line("No code review comments have been added yet.");
+        return Ok(());
+    }
+    let Some(id) = state.begin_operation() else {
+        state.line("The agent is already working.");
+        return Ok(());
+    };
+    state.pending_agent_intent = Some(AgentIntent::Implement);
+    state.submitting_code_review = true;
+    send_request(
+        daemon_stdin,
+        &Request::ReviewCode {
+            id,
+            repository: repository.to_owned(),
+            comments: state.code_review_comments.clone(),
+        },
+    )
+}
+
 fn read_review_context(path: &Path) -> Result<SelectionContext, String> {
     let bytes = fs::read(path)
         .map_err(|cause| format!("cannot read selected Git review context: {cause}"))?;
@@ -876,11 +932,19 @@ fn spawn_control_listener(path: &Path, sender: SyncSender<Input>) -> io::Result<
                     ControlRequest::AddPlanComment { .. } => Err(format!(
                         "plan comment must contain 1 to {MAX_PLAN_COMMENT_BYTES} bytes"
                     )),
+                    ControlRequest::AddCodeReviewComment { comment } => {
+                        validate_code_review(std::slice::from_ref(comment)).map(|()| request)
+                    }
+                    ControlRequest::SubmitCodeReview => Ok(request),
                 }
             })();
             let input = match result {
                 Ok(ControlRequest::SubmitQuestion { question }) => Input::Question(question),
                 Ok(ControlRequest::AddPlanComment { comment }) => Input::PlanComment(comment),
+                Ok(ControlRequest::AddCodeReviewComment { comment }) => {
+                    Input::CodeReviewComment(comment)
+                }
+                Ok(ControlRequest::SubmitCodeReview) => Input::SubmitCodeReview,
                 Err(message) => Input::ControlError(message),
             };
             if sender.send(input).is_err() {
@@ -1643,6 +1707,15 @@ fn handle_daemon_event(
         }
         Event::Completed { id, .. } => {
             state.activity = Some("Finishing…".into());
+            if state.active_id == Some(id) && state.submitting_code_review {
+                let count = state.code_review_comments.len();
+                state.code_review_comments.clear();
+                state.submitting_code_review = false;
+                state.line(format!(
+                    "Addressed {count} submitted code review comment{} · inspect the new Git diff",
+                    if count == 1 { "" } else { "s" }
+                ));
+            }
             if state.active_id == Some(id)
                 && !matches!(
                     state.pending_agent_intent,
@@ -1678,6 +1751,7 @@ fn handle_daemon_event(
                 state.navigated_for = None;
                 state.pending_agent_intent = None;
                 state.submitting_plan_review = false;
+                state.submitting_code_review = false;
             }
         }
         Event::Settled { id } => {
@@ -1704,6 +1778,7 @@ fn handle_daemon_event(
                 state.navigated_for = None;
                 state.pending_agent_intent = None;
                 state.submitting_plan_review = false;
+                state.submitting_code_review = false;
             }
         }
     }
@@ -1829,6 +1904,16 @@ fn run(
                 if let Err(message) = queue_plan_comment(&mut state, &selection_path, comment) {
                     state.line(format!("Could not add plan comment: {message}"));
                 }
+                false
+            }
+            Input::CodeReviewComment(comment) => {
+                if let Err(message) = queue_code_review_comment(&mut state, comment) {
+                    state.line(format!("Could not add code review comment: {message}"));
+                }
+                false
+            }
+            Input::SubmitCodeReview => {
+                submit_code_review(&mut state, &repository, &daemon_stdin)?;
                 false
             }
             Input::ControlError(message) => {
@@ -1986,6 +2071,51 @@ mod tests {
             Input::PlanComment(comment) => assert_eq!(comment, "Make this measurable"),
             _ => panic!("expected a plan comment"),
         }
+
+        let code_comment = CodeReviewComment {
+            anchor: lantern_protocol::CodeReviewAnchor {
+                review: GitReviewContext {
+                    relative_path: "src/lib.rs".into(),
+                    state: lantern_protocol::GitReviewState::Modified,
+                    scope: lantern_protocol::GitReviewScope::Hunk,
+                    start_line: 1,
+                    end_line: 2,
+                    diff: "@@ -1 +1 @@\n-old\n+new".into(),
+                },
+                diff_line: 2,
+                line: "+new".into(),
+            },
+            comment: "Keep the old error type".into(),
+        };
+        let mut stream = UnixStream::connect(&socket).expect("connect code review client");
+        serde_json::to_writer(
+            &mut stream,
+            &ControlRequest::AddCodeReviewComment {
+                comment: code_comment.clone(),
+            },
+        )
+        .expect("write code review comment");
+        stream.write_all(b"\n").expect("frame code review comment");
+        drop(stream);
+        match receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("receive code review comment")
+        {
+            Input::CodeReviewComment(comment) => assert_eq!(comment, code_comment),
+            _ => panic!("expected a code review comment"),
+        }
+
+        let mut stream = UnixStream::connect(&socket).expect("connect review submit client");
+        serde_json::to_writer(&mut stream, &ControlRequest::SubmitCodeReview)
+            .expect("write code review submit");
+        stream.write_all(b"\n").expect("frame code review submit");
+        drop(stream);
+        assert!(matches!(
+            receiver
+                .recv_timeout(Duration::from_secs(1))
+                .expect("receive code review submit"),
+            Input::SubmitCodeReview
+        ));
         fs::remove_file(&socket).expect("remove control socket");
         fs::remove_dir(&directory).expect("remove control fixture");
     }
@@ -2428,6 +2558,58 @@ mod tests {
         )
         .unwrap();
         assert_eq!(state.last_agent_intent, Some(AgentIntent::Plan));
+    }
+
+    #[test]
+    fn code_review_comments_survive_interruption_and_clear_only_after_completion() {
+        let comment = CodeReviewComment {
+            anchor: lantern_protocol::CodeReviewAnchor {
+                review: GitReviewContext {
+                    relative_path: "src/lib.rs".into(),
+                    state: lantern_protocol::GitReviewState::Modified,
+                    scope: lantern_protocol::GitReviewScope::Hunk,
+                    start_line: 1,
+                    end_line: 2,
+                    diff: "@@ -1 +1 @@\n-old\n+new".into(),
+                },
+                diff_line: 2,
+                line: "+new".into(),
+            },
+            comment: "Preserve the old error".into(),
+        };
+        let mut state = UiState::new(Path::new("."));
+        state.daemon = DaemonState::Ready;
+        queue_code_review_comment(&mut state, comment).unwrap();
+        state.active_id = Some(7);
+        state.submitting_code_review = true;
+        handle_daemon_event(
+            Event::Cancelled {
+                id: 7,
+                cancellation_latency_ms: 1,
+            },
+            &mut state,
+            Path::new("."),
+            Path::new("unused"),
+            Path::new("unused-focus"),
+        )
+        .unwrap();
+        assert_eq!(state.code_review_comments.len(), 1);
+
+        state.active_id = Some(8);
+        state.submitting_code_review = true;
+        handle_daemon_event(
+            Event::Completed {
+                id: 8,
+                evidence_count: 0,
+            },
+            &mut state,
+            Path::new("."),
+            Path::new("unused"),
+            Path::new("unused-focus"),
+        )
+        .unwrap();
+        assert!(state.code_review_comments.is_empty());
+        assert!(!state.submitting_code_review);
     }
 
     #[test]

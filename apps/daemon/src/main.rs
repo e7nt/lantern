@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Instant;
 
+mod code_review;
 mod plan;
 
 use plan::{
@@ -930,6 +931,7 @@ enum AgentContext {
     Selection(SelectionContext),
     Symbol(SymbolContext),
     PlanReview(String),
+    CodeReview(String),
 }
 
 struct PiOperation {
@@ -1113,6 +1115,7 @@ fn run_pi_operation(operation: PiOperation) {
             (Some(context.selection.clone()), Some(context), None, None)
         }
         AgentContext::PlanReview(prompt) => (None, None, None, Some(prompt)),
+        AgentContext::CodeReview(prompt) => (None, None, None, Some(prompt)),
     };
     let result = (|| -> Result<(), String> {
         if let Some(selection) = &selection {
@@ -2437,6 +2440,77 @@ fn main() -> io::Result<()> {
                         investigation_capture: None,
                         revision_capture: Some(revision_capture),
                         plan_progress: None,
+                    });
+                }));
+            }
+            Request::ReviewCode {
+                id,
+                repository,
+                comments,
+            } => {
+                let Some(repository) = opened_repository(&workbench, &repository, &writer, id)
+                else {
+                    continue;
+                };
+                let Some(cancellation) = admit(id, &operations, &writer) else {
+                    continue;
+                };
+                let review_context = match code_review::context(&repository, &comments) {
+                    Ok(context) => context,
+                    Err(message) => {
+                        error(
+                            &writer,
+                            Some(id),
+                            message,
+                            "reopen the current Git hunks, add the comments again, and resubmit the review",
+                        );
+                        settle(id, &operations, &writer);
+                        continue;
+                    }
+                };
+                let Some(driver) =
+                    persistent_pi(&mut pi_driver, &repository, &writer, id, PiProfile::Coding)
+                else {
+                    settle(id, &operations, &writer);
+                    continue;
+                };
+                let Ok(plan_progress) = prepare_plan_progress(
+                    AgentIntent::Implement,
+                    &repository,
+                    &mut read_only_pi_driver,
+                    &pending_plan_revision,
+                    &writer,
+                    id,
+                ) else {
+                    settle(id, &operations, &writer);
+                    continue;
+                };
+                let Some(query) = prepare_agent_query(
+                    AgentIntent::Implement,
+                    "Address the submitted code review.".into(),
+                    &repository,
+                    &last_investigation,
+                    id,
+                    &operations,
+                    &writer,
+                ) else {
+                    continue;
+                };
+                let operation_writer = writer.clone();
+                let active_operations = operations.clone();
+                workers.push(thread::spawn(move || {
+                    run_pi_operation(PiOperation {
+                        id,
+                        driver,
+                        query,
+                        context: AgentContext::CodeReview(review_context),
+                        cancellation,
+                        operations: active_operations,
+                        writer: operation_writer,
+                        intent: AgentIntent::Implement,
+                        investigation_capture: None,
+                        revision_capture: None,
+                        plan_progress,
                     });
                 }));
             }

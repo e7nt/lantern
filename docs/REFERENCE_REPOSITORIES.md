@@ -204,7 +204,7 @@ silently perform Git operations.
 
 The protocol proofs above landed in Phase 1 foundation slices on 2026-07-16.
 They are preserved in [Protocol v4](../protocol/v4/README.md); the maintained
-contract is now [Protocol v14](../protocol/v14/README.md). The lifecycle keeps the
+contract is now [Protocol v15](../protocol/v15/README.md). The lifecycle keeps the
 pane busy through settlement without rendering acceptance as UI noise, bounds a
 frame at 1 MiB, drains malformed frames before continuing, prevents an active
 ID from being replaced, and joins daemon workers during shutdown. The follow-up
@@ -247,6 +247,13 @@ turn. A second, read-only profile receives the bounded reviewed diff and
 completion summary to draft one plan checkpoint. Lantern adopts the existing
 profile separation and rejects hidden plan edits, prose heuristics, automatic
 task scheduling, and durable execution state.
+
+Protocol v15 adopts the pull-request review boundary, not its collaboration
+product: exact diff-line anchors, several pending comments, one explicit
+submission, and a fresh diff after correction. Lantern keeps Lazygit-inspired
+Git review compact and reuses OpenCode-style single admission plus Pi's coding
+profile. It rejects remote threads, identities, reactions, per-comment model
+calls, and automatic “resolved” claims.
 
 ## Next inspections
 

@@ -3,7 +3,7 @@ use std::fmt;
 use std::io::{self, BufRead};
 use std::path::{Component, Path, PathBuf};
 
-pub const PROTOCOL_VERSION: u32 = 14;
+pub const PROTOCOL_VERSION: u32 = 15;
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const MAX_EVENT_BYTES: usize = 256 * 1024;
 pub const MAX_DIAGNOSTIC_BYTES: usize = 8 * 1024;
@@ -20,6 +20,9 @@ pub const MAX_AGENT_GIT_FOCUS_BYTES: usize = 16 * 1024;
 pub const MAX_PLAN_REVIEW_COMMENTS: usize = 32;
 pub const MAX_PLAN_COMMENT_BYTES: usize = 8 * 1024;
 pub const MAX_PLAN_REVIEW_BYTES: usize = 64 * 1024;
+pub const MAX_CODE_REVIEW_COMMENTS: usize = 32;
+pub const MAX_CODE_REVIEW_COMMENT_BYTES: usize = 8 * 1024;
+pub const MAX_CODE_REVIEW_BYTES: usize = 128 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -343,6 +346,11 @@ pub enum Request {
         repository: PathBuf,
         comments: Vec<PlanReviewComment>,
     },
+    ReviewCode {
+        id: u64,
+        repository: PathBuf,
+        comments: Vec<CodeReviewComment>,
+    },
     PreviewSelection {
         id: u64,
         repository: PathBuf,
@@ -360,6 +368,8 @@ pub enum Request {
 pub enum ControlRequest {
     SubmitQuestion { question: String },
     AddPlanComment { comment: String },
+    AddCodeReviewComment { comment: CodeReviewComment },
+    SubmitCodeReview,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -367,6 +377,74 @@ pub enum ControlRequest {
 pub struct PlanReviewComment {
     pub anchor: SelectionContext,
     pub comment: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CodeReviewAnchor {
+    pub review: GitReviewContext,
+    pub diff_line: usize,
+    pub line: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CodeReviewComment {
+    pub anchor: CodeReviewAnchor,
+    pub comment: String,
+}
+
+pub fn validate_code_review(comments: &[CodeReviewComment]) -> Result<(), String> {
+    if comments.is_empty() || comments.len() > MAX_CODE_REVIEW_COMMENTS {
+        return Err(format!(
+            "code review must contain 1 to {MAX_CODE_REVIEW_COMMENTS} comments"
+        ));
+    }
+    let mut total = 0_usize;
+    for item in comments {
+        validate_git_review(&item.anchor.review)?;
+        if item.anchor.review.scope != GitReviewScope::Hunk {
+            return Err("code review comments must anchor to one diff hunk".into());
+        }
+        if !matches!(
+            item.anchor.review.state,
+            GitReviewState::Modified | GitReviewState::Staged
+        ) {
+            return Err("code review comments currently require a modified or staged hunk".into());
+        }
+        let line = item
+            .anchor
+            .review
+            .diff
+            .lines()
+            .nth(item.anchor.diff_line)
+            .ok_or("code review line is outside its diff hunk")?;
+        if line != item.anchor.line {
+            return Err("code review line does not match its diff hunk".into());
+        }
+        let code_line = (line.starts_with('+') && !line.starts_with("+++"))
+            || (line.starts_with('-') && !line.starts_with("---"))
+            || line.starts_with(' ');
+        if !code_line {
+            return Err("select a code line inside the diff hunk".into());
+        }
+        let comment = item.comment.trim();
+        if comment.is_empty() || comment.len() > MAX_CODE_REVIEW_COMMENT_BYTES {
+            return Err(format!(
+                "each code review comment must contain 1 to {MAX_CODE_REVIEW_COMMENT_BYTES} bytes"
+            ));
+        }
+        total = total
+            .checked_add(item.anchor.review.diff.len())
+            .and_then(|size| size.checked_add(comment.len()))
+            .ok_or("code review size overflow")?;
+    }
+    if total > MAX_CODE_REVIEW_BYTES {
+        return Err(format!(
+            "code review exceeds the {MAX_CODE_REVIEW_BYTES} byte limit"
+        ));
+    }
+    Ok(())
 }
 
 pub fn validate_plan_review(comments: &[PlanReviewComment]) -> Result<(), String> {
@@ -1135,6 +1213,52 @@ mod tests {
         assert!(validate_plan_review(&[modified]).is_err());
         assert!(validate_plan_review(&[]).is_err());
         assert!(validate_plan_review(&vec![comment; MAX_PLAN_REVIEW_COMMENTS + 1]).is_err());
+    }
+
+    #[test]
+    fn code_review_requires_an_exact_changed_line_inside_one_hunk() {
+        let review = GitReviewContext {
+            relative_path: "src/lib.rs".into(),
+            state: GitReviewState::Modified,
+            scope: GitReviewScope::Hunk,
+            start_line: 4,
+            end_line: 6,
+            diff: "@@ -4 +4 @@\n-old()\n+new()".into(),
+        };
+        let comment = CodeReviewComment {
+            anchor: CodeReviewAnchor {
+                review,
+                diff_line: 2,
+                line: "+new()".into(),
+            },
+            comment: "Preserve the old error behavior.".into(),
+        };
+        assert!(validate_code_review(std::slice::from_ref(&comment)).is_ok());
+
+        let mut stale_line = comment.clone();
+        stale_line.anchor.line = "+different()".into();
+        assert!(
+            validate_code_review(&[stale_line])
+                .unwrap_err()
+                .contains("does not match")
+        );
+
+        let mut header = comment.clone();
+        header.anchor.diff_line = 0;
+        header.anchor.line = "@@ -4 +4 @@".into();
+        assert!(
+            validate_code_review(&[header])
+                .unwrap_err()
+                .contains("code line")
+        );
+
+        let mut file_scope = comment;
+        file_scope.anchor.review.scope = GitReviewScope::File;
+        assert!(
+            validate_code_review(&[file_scope])
+                .unwrap_err()
+                .contains("one diff hunk")
+        );
     }
 
     #[test]
