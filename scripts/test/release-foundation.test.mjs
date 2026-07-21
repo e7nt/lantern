@@ -30,10 +30,13 @@ test('Homebrew acceptance installs and launches both supported architectures', a
 	assert.match(workflow, /runner: macos-14\n\s+arch: arm64/);
 	assert.match(workflow, /runner: macos-15-intel\n\s+arch: x86_64/);
 	assert.match(workflow, /brew install e7nt\/tap\/lantern/);
+	assert.match(workflow, /brew info --json=v2 e7nt\/tap\/lantern/);
+	assert.match(workflow, /lantern \$installed_version/);
 	assert.match(workflow, /\[\[ -L \$candidate \]\]/);
 	assert.match(workflow, /realpath "\$candidate"/);
 	assert.match(workflow, /\/Library\/Frameworks\/Python\.framework\/Versions\/3\.12/);
 	assert.match(workflow, /lantern --detached/);
+	assert.match(workflow, /grep -Fxq 'Explorer\|0'/);
 	assert.match(workflow, /grep -Fxq 'Helix\|0'/);
 	assert.match(workflow, /grep -Fxq 'Lantern\|0'/);
 });
