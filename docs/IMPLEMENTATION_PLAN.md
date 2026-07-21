@@ -591,8 +591,13 @@ The detailed interaction contract is in
   a clean checkout; fresh supported-machine validation remains.
 - `P8-15` Publish protocol and storage compatibility policies.
 - `P8-16` Produce signed or checksummed daemon binaries for macOS and Linux.
+  The tag workflow now produces checksummed, attested macOS workbench archives;
+  Linux release artifacts remain.
 - `P8-17` Package, checksum, and validate installable Lantern builds containing
-  the supported Helix, Lazygit, pane, and daemon revisions.
+  the supported Helix, focused Git rail, pane, daemon, semantic worker, and Pi
+  revisions. The architecture-specific Homebrew package and tap-update pipeline
+  are implemented; fresh Apple Silicon and Intel installation plus upgrade
+  evidence remain before the first public tag.
 - `P8-18` Add dependency, license, secret, and vulnerability checks to CI. The
   least-privilege deterministic Rust, terminal, evaluation, and semantic jobs
   are implemented; supply-chain audit jobs remain.
