@@ -74,6 +74,19 @@ jobs:
             -F '#{pane_title}|#{pane_id}' | awk -F '|' '$1 == "Explorer" { print $2 }')
           editor_pane=$(tmux list-panes -t "$session" \
             -F '#{pane_title}|#{pane_id}' | awk -F '|' '$1 == "Helix" { print $2 }')
+          explorer_ready=false
+          for attempt in {1..20}; do
+            explorer_text=$(tmux capture-pane -p -t "$explorer_pane" 2>/dev/null || true)
+            if grep -Fq 'README.md' <<<"$explorer_text"; then
+              explorer_ready=true
+              break
+            fi
+            sleep 1
+          done
+          if ! $explorer_ready; then
+            printf 'Explorer did not render README.md:\n%s\n' "$explorer_text" >&2
+            exit 1
+          fi
           tmux send-keys -t "$explorer_pane" Enter
           for attempt in {1..20}; do
             active_title=$(tmux display-message -p -t "$session" '#{pane_title}')
@@ -87,4 +100,6 @@ jobs:
 
           tmux list-panes -t "$session" \
             -F 'title=#{pane_title} dead=#{pane_dead} command=#{pane_current_command}' >&2 || true
+          printf 'active title: %s\nExplorer:\n%s\nHelix:\n%s\n' \
+            "$active_title" "$explorer_text" "$editor_text" >&2
           exit 1
