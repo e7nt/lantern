@@ -1,0 +1,8 @@
+{"method":"initialize","protocol_version":13}
+{"method":"open_workbench","repository":"/workspace/project"}
+{"method":"ask_agent","id":1,"repository":"/workspace/project","query":"Turn this into a plan","intent":"plan"}
+{"method":"ask_agent","id":2,"repository":"/workspace/project","query":"Write this down","intent":"persist_plan"}
+{"method":"review_plan","id":3,"repository":"/workspace/project","comments":[{"anchor":{"relative_path":".lantern/plans/active.md","language":"markdown","start_line":7,"start_column":1,"end_line":7,"end_column":20,"text":"Original objective.","document_modified":false},"comment":"Make this measurable."},{"anchor":{"relative_path":".lantern/plans/active.md","language":"markdown","start_line":17,"start_column":1,"end_line":17,"end_column":15,"text":"- Second task.","document_modified":false},"comment":"Move this outside the first release."}]}
+{"method":"ask_agent","id":4,"repository":"/workspace/project","query":"Apply that","intent":"apply_plan_revision"}
+{"method":"cancel","id":3}
+{"method":"shutdown"}

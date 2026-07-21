@@ -1,8 +1,8 @@
 use lantern_diagnostics::{Code as DiagnosticCode, Record as DiagnosticRecord};
 use lantern_protocol::{
     AgentIntent, Event, Evidence, EvidenceSource, GroundingState, MAX_FILES, MAX_FRAME_BYTES,
-    PROTOCOL_VERSION, Request, SelectionContext, SymbolCall, SymbolContext, SymbolLocation,
-    WorkbenchTool,
+    PROTOCOL_VERSION, PlanReviewComment, Request, SelectionContext, SymbolCall, SymbolContext,
+    SymbolLocation, WorkbenchTool,
 };
 use std::fs;
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
@@ -102,11 +102,11 @@ impl Daemon {
 }
 
 #[test]
-fn golden_wire_fixtures_match_the_v12_types() {
-    for line in include_str!("../../../protocol/v12/requests.jsonl").lines() {
+fn golden_wire_fixtures_match_the_v13_types() {
+    for line in include_str!("../../../protocol/v13/requests.jsonl").lines() {
         serde_json::from_str::<Request>(line).expect("golden request must deserialize");
     }
-    for line in include_str!("../../../protocol/v12/events.jsonl").lines() {
+    for line in include_str!("../../../protocol/v13/events.jsonl").lines() {
         serde_json::from_str::<Event>(line).expect("golden event must deserialize");
     }
 }
@@ -655,6 +655,8 @@ elif [[ ${LANTERN_FAKE_PI_MODE:?} == investigation ]]; then
     printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Goal\nObserved\nRead existing flow.\nAffected flow\nrequest\nLikely changes\nnone yet\nOpen questions\nconfiguration\nAcceptance criteria\nexplicit behavior\nExclusions\nimplementation\nRisks\nstale configuration\nReadiness\nBlocked"}}'
 elif [[ ${LANTERN_FAKE_PI_MODE:?} == plan ]]; then
     printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Objective\nPersist the accepted plan.\nRepository evidence\n- apps/daemon/src/main.rs\nAcceptance criteria\n- Create one editable Markdown file.\nExclusions\n- Task dashboard.\nDecisions\n- Use create-new semantics.\nTasks\n1. Serialize the plan.\nRisks and unknowns\n- Existing active plan.\nVerification\n- Prove byte-identical duplicate rejection."}}'
+elif [[ ${LANTERN_FAKE_PI_MODE:?} == plan-review ]]; then
+    printf '%s\n' '{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"Objective\nRevised measurable objective.\nRepository evidence\n- src/lib.rs:1\nAcceptance criteria\n- One measurable check.\nExclusions\n- Deferred task.\nDecisions\n- Preserve the first task.\nTasks\n- First task.\nRisks and unknowns\n- One risk.\nVerification\n- Run one test."}}'
 elif [[ ${LANTERN_FAKE_PI_MODE:?} == tools ]]; then
     printf '%s\n' '{"type":"tool_execution_start","toolCallId":"call-read","toolName":"read","args":{"path":"sample.rs"}}'
     printf '%s\n' '{"type":"tool_execution_end","toolCallId":"call-read","toolName":"read","result":{"content":[]},"isError":false}'
@@ -1302,6 +1304,99 @@ fn completed_plan_is_saved_once_without_a_second_model_turn() {
     assert!(implementation_prompt.contains("Current developer-editable plan"));
     assert!(implementation_prompt.contains("Persist the developer-edited plan"));
     assert!(!implementation_prompt.contains("Persist the accepted plan."));
+    fs::remove_dir_all(root).expect("remove repository fixture");
+    fs::remove_dir_all(driver).expect("remove driver fixture");
+}
+
+#[cfg(unix)]
+#[test]
+fn multiple_plan_comments_stage_one_revision_before_explicit_application() {
+    let root = fixture("plan-review", "fn existing_flow() {}\n");
+    let driver = fixture("plan-review-driver", "private\n");
+    let pi_bin = fake_pi(&driver);
+    let plan = "---\nlantern_plan: 1\nstatus: active\n---\n\n# Active implementation plan\n\nObjective\nOriginal objective.\nRepository evidence\n- src/lib.rs:1\nAcceptance criteria\n- One check.\nExclusions\n- No dashboard.\nDecisions\n- One path.\nTasks\n- First task.\n- Second task.\nRisks and unknowns\n- One risk.\nVerification\n- One test.\n";
+    let plan_path = root.join(".lantern/plans/active.md");
+    fs::create_dir_all(plan_path.parent().unwrap()).expect("create plan directory");
+    fs::write(&plan_path, plan).expect("write active plan");
+    let anchored = |text: &str| {
+        let offset = plan.find(text).expect("anchor in plan");
+        let line = plan[..offset].bytes().filter(|byte| *byte == b'\n').count() + 1;
+        SelectionContext {
+            relative_path: ".lantern/plans/active.md".into(),
+            language: Some("markdown".into()),
+            start_line: line,
+            start_column: 1,
+            end_line: line,
+            end_column: text.chars().count() + 1,
+            text: text.into(),
+            document_modified: false,
+        }
+    };
+    let comments = vec![
+        PlanReviewComment {
+            anchor: anchored("Original objective."),
+            comment: "Make this measurable.".into(),
+        },
+        PlanReviewComment {
+            anchor: anchored("- Second task."),
+            comment: "Move this outside the first release.".into(),
+        },
+    ];
+    let mut daemon = Daemon::spawn_with_pi(&pi_bin, &driver, "plan-review");
+    daemon.initialize();
+    daemon.open(&root);
+    daemon.send(&Request::ReviewPlan {
+        id: 43,
+        repository: root.clone(),
+        comments,
+    });
+    let mut proposal = None;
+    loop {
+        match daemon.next() {
+            Event::ToolStarted {
+                id: 43,
+                tool: WorkbenchTool::Edit | WorkbenchTool::Write | WorkbenchTool::Bash,
+                ..
+            } => panic!("plan review exposed a mutating tool"),
+            Event::ChangeProposal {
+                id: 43,
+                proposal: staged,
+            } => proposal = Some(staged),
+            Event::Settled { id: 43 } => break,
+            _ => {}
+        }
+    }
+    let proposal = proposal.expect("one staged plan revision");
+    assert!(
+        proposal
+            .replacement
+            .contains("Revised measurable objective")
+    );
+    assert_eq!(fs::read_to_string(&plan_path).unwrap(), plan);
+    let prompt = fs::read_to_string(driver.join("prompt.json")).expect("read review prompt");
+    assert!(prompt.contains("Make this measurable"));
+    assert!(prompt.contains("Move this outside the first release"));
+
+    daemon.send(&Request::AskAgent {
+        id: 44,
+        repository: root.clone(),
+        query: "Apply that".into(),
+        intent: AgentIntent::ApplyPlanRevision,
+    });
+    let mut applied = false;
+    loop {
+        match daemon.next() {
+            Event::PlanRevisionApplied { id: 44, .. } => applied = true,
+            Event::Settled { id: 44 } => break,
+            _ => {}
+        }
+    }
+    assert!(applied);
+    assert!(
+        fs::read_to_string(&plan_path)
+            .unwrap()
+            .contains("Revised measurable objective")
+    );
     fs::remove_dir_all(root).expect("remove repository fixture");
     fs::remove_dir_all(driver).expect("remove driver fixture");
 }

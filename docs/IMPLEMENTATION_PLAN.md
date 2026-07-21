@@ -297,7 +297,7 @@ diagnostic redaction, and general supervision remain promotion work.
 
 The historical `P1-07` slice added locked workspace configuration and a
 dedicated policy crate. ADR 003 superseded that direction. Protocol v5 removed
-the policy crate, capability negotiation, and `/trust`; Protocol v12 retains the
+the policy crate, capability negotiation, and `/trust`; Protocol v13 retains the
 single trusted-workbench path, adds repository questions without requiring
 editor context, and carries verified local-semantic evidence. Protocol v4 and
 v5 fixtures remain historical evidence only.
@@ -326,7 +326,7 @@ terminal derives compact reasons locally and reuses the existing streamed
 evidence and exact-range navigation path; it performs no additional scan,
 index, or model request.
 
-The maintained Protocol v12 product now exposes Pi's pinned coding-tool set in
+The maintained Protocol v13 product now exposes Pi's pinned coding-tool set in
 the trusted repository and submits `Ctrl-a` composer questions through a
 bounded private Unix socket. Plain questions are the only conversational path;
 selection and LSP context enrich it without creating a fallback agent mode.
@@ -456,8 +456,9 @@ responses continue to stream as they arrive.
 - `P5-04` Define the portable plan schema and Markdown serialization.
 - `P5-05` Support plan tasks, dependencies, decisions, alternatives, risks, and
   verification requirements.
-- `P5-06` Add plan comments and agent suggestions without silently overwriting
-  user text.
+- `P5-06` Add bounded multi-place plan comments and one coherent, previewed
+  agent revision without silently overwriting user text. Implemented in
+  Protocol v13; real-journey validation remains.
 - `P5-07` Add visible checkpoints for the brief, architecture, and
   implementation phases.
 - `P5-08` Version plan revisions and preserve resolved decisions.

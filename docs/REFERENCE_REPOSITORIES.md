@@ -204,7 +204,7 @@ silently perform Git operations.
 
 The protocol proofs above landed in Phase 1 foundation slices on 2026-07-16.
 They are preserved in [Protocol v4](../protocol/v4/README.md); the maintained
-contract is now [Protocol v12](../protocol/v12/README.md). The lifecycle keeps the
+contract is now [Protocol v13](../protocol/v13/README.md). The lifecycle keeps the
 pane busy through settlement without rendering acceptance as UI noise, bounds a
 frame at 1 MiB, drains malformed frames before continuing, prevents an active
 ID from being replaced, and joins daemon workers during shutdown. The follow-up
@@ -226,6 +226,20 @@ sanitized export replaces entire content categories and caps rejected payloads
 before logging them. Lantern uses a narrower diagnostic schema that cannot
 represent content at all. Unstructured stderr is counted and discarded rather
 than copied through heuristic redaction.
+
+## Active-plan review adoption record
+
+Protocol v13 combines three narrow reference concepts. Helix remains the
+authority for exact saved selections. OpenCode's single admission boundary is
+retained for the one review turn. A pull-request review's pending-comment
+pattern informs local collection and explicit submission: developers can mark
+several locations before asking for one coherent revision.
+
+Lantern deliberately rejects the surrounding pull-request product surface:
+there are no reviewers, reactions, threads, server state, or sidebar. It also
+rejects partial model edits. Pi receives the bounded collection in a read-only
+profile and must return one complete plan body; Lantern previews that body and
+applies it only against its exact reviewed base.
 
 ## Next inspections
 

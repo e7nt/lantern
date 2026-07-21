@@ -3,7 +3,7 @@ use std::fmt;
 use std::io::{self, BufRead};
 use std::path::{Component, Path, PathBuf};
 
-pub const PROTOCOL_VERSION: u32 = 12;
+pub const PROTOCOL_VERSION: u32 = 13;
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const MAX_EVENT_BYTES: usize = 256 * 1024;
 pub const MAX_DIAGNOSTIC_BYTES: usize = 8 * 1024;
@@ -17,6 +17,9 @@ pub const MAX_SYMBOL_CALLS: usize = 8;
 pub const MAX_SYMBOL_NAME_BYTES: usize = 256;
 pub const MAX_AGENT_TOUCHED_PATHS: usize = 64;
 pub const MAX_AGENT_GIT_FOCUS_BYTES: usize = 16 * 1024;
+pub const MAX_PLAN_REVIEW_COMMENTS: usize = 32;
+pub const MAX_PLAN_COMMENT_BYTES: usize = 8 * 1024;
+pub const MAX_PLAN_REVIEW_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -133,6 +136,7 @@ pub enum AgentIntent {
     Investigate,
     Plan,
     PersistPlan,
+    ApplyPlanRevision,
     Implement,
 }
 
@@ -192,6 +196,15 @@ pub fn infer_agent_intent(query: &str, previous: Option<AgentIntent>) -> AgentIn
         "persist the plan",
     ]) {
         return AgentIntent::PersistPlan;
+    }
+    if contains_any(&[
+        "apply that",
+        "apply the review",
+        "apply these comments",
+        "address all of them",
+        "address these comments",
+    ]) {
+        return AgentIntent::ApplyPlanRevision;
     }
     if informational && !exploratory {
         return AgentIntent::Understand;
@@ -325,6 +338,11 @@ pub enum Request {
         context: SymbolContext,
         intent: AgentIntent,
     },
+    ReviewPlan {
+        id: u64,
+        repository: PathBuf,
+        comments: Vec<PlanReviewComment>,
+    },
     PreviewSelection {
         id: u64,
         repository: PathBuf,
@@ -341,6 +359,48 @@ pub enum Request {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlRequest {
     SubmitQuestion { question: String },
+    AddPlanComment { comment: String },
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PlanReviewComment {
+    pub anchor: SelectionContext,
+    pub comment: String,
+}
+
+pub fn validate_plan_review(comments: &[PlanReviewComment]) -> Result<(), String> {
+    if comments.is_empty() || comments.len() > MAX_PLAN_REVIEW_COMMENTS {
+        return Err(format!(
+            "plan review must contain 1 to {MAX_PLAN_REVIEW_COMMENTS} comments"
+        ));
+    }
+    let mut total = 0_usize;
+    for item in comments {
+        validate_selection(&item.anchor)?;
+        if item.anchor.relative_path != Path::new(".lantern/plans/active.md") {
+            return Err("plan review comments must anchor to the active plan".into());
+        }
+        if item.anchor.document_modified {
+            return Err("save the active plan before adding review comments".into());
+        }
+        let comment = item.comment.trim();
+        if comment.is_empty() || comment.len() > MAX_PLAN_COMMENT_BYTES {
+            return Err(format!(
+                "each plan comment must contain 1 to {MAX_PLAN_COMMENT_BYTES} bytes"
+            ));
+        }
+        total = total
+            .checked_add(item.anchor.text.len())
+            .and_then(|size| size.checked_add(comment.len()))
+            .ok_or("plan review size overflow")?;
+    }
+    if total > MAX_PLAN_REVIEW_BYTES {
+        return Err(format!(
+            "plan review exceeds the {MAX_PLAN_REVIEW_BYTES} byte limit"
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -444,6 +504,10 @@ pub enum Event {
         proposal: ChangeProposal,
     },
     PlanSaved {
+        id: u64,
+        relative_path: PathBuf,
+    },
+    PlanRevisionApplied {
         id: u64,
         relative_path: PathBuf,
     },
@@ -982,6 +1046,13 @@ mod tests {
             ),
             AgentIntent::PersistPlan
         );
+        for query in ["Apply that", "Apply the review", "Address all of them"] {
+            assert_eq!(
+                infer_agent_intent(query, Some(AgentIntent::Plan)),
+                AgentIntent::ApplyPlanRevision,
+                "{query}"
+            );
+        }
         for query in [
             "Proceed with the first task",
             "Implement the accepted plan",
@@ -1030,6 +1101,32 @@ mod tests {
         assert!(serde_json::from_str::<Request>(missing).is_err());
         let unknown = r#"{"method":"ask_agent","id":1,"repository":"/repo","query":"Explain this","intent":"auto"}"#;
         assert!(serde_json::from_str::<Request>(unknown).is_err());
+    }
+
+    #[test]
+    fn plan_review_is_bounded_saved_and_anchored_to_the_active_plan() {
+        let comment = PlanReviewComment {
+            anchor: SelectionContext {
+                relative_path: ".lantern/plans/active.md".into(),
+                language: Some("markdown".into()),
+                start_line: 10,
+                start_column: 1,
+                end_line: 10,
+                end_column: 12,
+                text: "One task".into(),
+                document_modified: false,
+            },
+            comment: "Move this after the protocol change".into(),
+        };
+        assert!(validate_plan_review(std::slice::from_ref(&comment)).is_ok());
+        let mut wrong_path = comment.clone();
+        wrong_path.anchor.relative_path = "src/lib.rs".into();
+        assert!(validate_plan_review(&[wrong_path]).is_err());
+        let mut modified = comment.clone();
+        modified.anchor.document_modified = true;
+        assert!(validate_plan_review(&[modified]).is_err());
+        assert!(validate_plan_review(&[]).is_err());
+        assert!(validate_plan_review(&vec![comment; MAX_PLAN_REVIEW_COMMENTS + 1]).is_err());
     }
 
     #[test]
