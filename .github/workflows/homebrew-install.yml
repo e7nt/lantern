@@ -87,7 +87,9 @@ jobs:
             printf 'Explorer did not render README.md:\n%s\n' "$explorer_text" >&2
             exit 1
           fi
-          tmux send-keys -t "$explorer_pane" Enter
+          # Send the terminal byte produced by a physical Return key. The
+          # symbolic `Enter` key name is not portable across tmux builds.
+          tmux send-keys -t "$explorer_pane" C-m
           for attempt in {1..20}; do
             active_title=$(tmux display-message -p -t "$session" '#{pane_title}')
             editor_text=$(tmux capture-pane -p -t "$editor_pane" 2>/dev/null || true)
