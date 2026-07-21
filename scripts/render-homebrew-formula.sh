@@ -49,6 +49,7 @@ class Lantern < Formula
     system "tar", "-C", pi_runtime, "-cf", pi_runtime/"node_modules.tar", "node_modules"
     rm_r pi_runtime/"node_modules"
     runtime_path = [
+      Formula["git"].opt_bin,
       Formula["node@22"].opt_bin,
       Formula["python@3.12"].opt_bin,
       Formula["tmux"].opt_bin,

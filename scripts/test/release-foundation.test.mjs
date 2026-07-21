@@ -52,6 +52,7 @@ test('formula renderer emits architecture-pinned AGPL metadata', async () => {
 	assert.match(stdout, /semantic_runtime\/"vendor\.tar"/);
 	assert.match(stdout, /pi_runtime\/"node_modules\.tar"/);
 	assert.match(stdout, /\(bin\/"lantern"\)\.write_env_script/);
+	assert.match(stdout, /Formula\["git"\]\.opt_bin/);
 	assert.match(stdout, /def post_install/);
 	assert.equal((stdout.match(/sha256 "a{64}"/g) ?? []).length, 2);
 	assert.match(stdout, /assert_match "lantern #\{version\}"/);
