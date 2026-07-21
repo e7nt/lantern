@@ -60,6 +60,10 @@ three maintained environments: Linux, Apple Silicon macOS, and Intel macOS.
   formula now keeps the native semantic vendor tree archived during Homebrew's
   linkage pass and extracts it in `post_install`, preserving the released
   runtime without disabling linkage checks for the rest of the keg.
+- The same acceptance exposed Pi's prebuilt clipboard module to Homebrew's
+  ad-hoc signing pass on Intel and caught a wrapper destination typo. The
+  formula now preserves Pi's locked `node_modules` tree through `post_install`
+  and writes the launcher explicitly to `bin/lantern`.
 
 ## Required evidence before the first tag
 
