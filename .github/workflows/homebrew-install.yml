@@ -45,7 +45,11 @@ jobs:
           git -C "$repo" commit -qm "initial"
 
           session=$(lantern --detached "$repo")
+          client_pid=''
           cleanup() {
+            if [[ -n $client_pid ]]; then
+              kill "$client_pid" 2>/dev/null || true
+            fi
             tmux kill-session -t "$session" 2>/dev/null || true
             rm -rf "$repo"
           }
@@ -87,6 +91,12 @@ jobs:
             printf 'Explorer did not render README.md:\n%s\n' "$explorer_text" >&2
             exit 1
           fi
+          # A terminal UI receives keyboard input through an attached client.
+          # `script` supplies the same pseudo-terminal boundary as a user shell.
+          script -q /dev/null tmux attach-session -t "$session" >/dev/null 2>&1 &
+          client_pid=$!
+          sleep 1
+          tmux select-pane -t "$explorer_pane"
           # Send the terminal byte produced by a physical Return key. The
           # symbolic `Enter` key name is not portable across tmux builds.
           tmux send-keys -t "$explorer_pane" C-m
