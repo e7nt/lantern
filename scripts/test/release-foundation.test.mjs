@@ -8,9 +8,10 @@ import test from 'node:test';
 const exec = promisify(execFile);
 const root = path.resolve(import.meta.dirname, '../..');
 
-test('release workflow is tag-only, least privilege, and commit pinned', async () => {
+test('release publication is tag-only, least privilege, and commit pinned', async () => {
 	const workflow = await readFile(path.join(root, '.github/workflows/release.yml'), 'utf8');
 	assert.match(workflow, /tags: \["v\*"\]/);
+	assert.match(workflow, /workflow_dispatch:/);
 	assert.match(workflow, /permissions:\n  contents: read/);
 	assert.doesNotMatch(workflow, /pull_request_target|workflow_run/);
 	for (const line of workflow.split('\n').filter((candidate) => candidate.includes('uses:'))) {
@@ -18,6 +19,7 @@ test('release workflow is tag-only, least privilege, and commit pinned', async (
 	}
 	assert.match(workflow, /visibility --jq \.visibility\) == PUBLIC/);
 	assert.match(workflow, /HOMEBREW_TAP_TOKEN/);
+	assert.match(workflow, /publish:[\s\S]+if: github\.event_name == 'push'/);
 });
 
 test('formula renderer emits architecture-pinned AGPL metadata', async () => {

@@ -15,6 +15,8 @@ or writing to the public tap.
 ## Implemented boundary
 
 - Annotated `vMAJOR.MINOR.PATCH` tags are the only release trigger.
+- A manual workflow run may build private validation artifacts, but its publish
+  job is structurally disabled.
 - `VERSION` and every Rust package must match the tag.
 - GitHub-hosted Apple Silicon and Intel runners build the pinned Helix patch set
   and locked Lantern workspace.
