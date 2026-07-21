@@ -21,6 +21,9 @@ and tool vocabulary should not become user-facing ceremony.
 
 - Reproducible pinned Helix and maintained Lantern runtime preparation.
 - The 80/20 Helix/agent composition and on-demand 10% focused Git rail.
+- A persistent, Git-aware folder tree in the upper work region. It opens files
+  in the existing Helix process, propagates changed/comment state to collapsed
+  folders, refreshes without blocking input, and supports keyboard and mouse.
 - Mouse and keyboard interaction across the surfaces.
 - A `Ctrl-a` contextual composer over Helix and reversible `F2` full-screen
   reading mode for the persistent agent pane.

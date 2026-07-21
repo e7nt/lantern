@@ -73,6 +73,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "lantern-explorer"
+version = "0.1.1"
+dependencies = [
+ "crossterm",
+ "lantern-git-rail",
+ "lantern-protocol",
+ "serde_json",
+]
+
+[[package]]
 name = "lantern-git-rail"
 version = "0.1.1"
 dependencies = [

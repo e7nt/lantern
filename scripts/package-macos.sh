@@ -41,6 +41,7 @@ for path in \
 	"$HELIX_ROOT/target/release/hx" \
 	"$ROOT/target/release/lantern-daemon" \
 	"$ROOT/target/release/lantern-git-rail" \
+	"$ROOT/target/release/lantern-explorer" \
 	"$ROOT/target/release/lantern-terminal" \
 	"$ROOT/target/release/lantern-submit"; do
 	if [[ ! -x $path ]]; then
@@ -90,6 +91,7 @@ cp -R "$ROOT/frontend/helix/bin" "$INSTALL_ROOT/frontend/helix/bin"
 cp -R "$ROOT/frontend/helix/config" "$INSTALL_ROOT/frontend/helix/config"
 install -m 0755 "$ROOT/target/release/lantern-daemon" "$INSTALL_ROOT/bin/lantern-daemon"
 install -m 0755 "$ROOT/target/release/lantern-git-rail" "$INSTALL_ROOT/bin/lantern-git-rail"
+install -m 0755 "$ROOT/target/release/lantern-explorer" "$INSTALL_ROOT/bin/lantern-explorer"
 install -m 0755 "$ROOT/target/release/lantern-terminal" "$INSTALL_ROOT/bin/lantern-terminal"
 install -m 0755 "$ROOT/target/release/lantern-submit" "$INSTALL_ROOT/bin/lantern-submit"
 install -m 0644 "$ROOT/LICENSE" "$INSTALL_ROOT/LICENSE"

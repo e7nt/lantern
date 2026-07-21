@@ -230,6 +230,19 @@ impl GitRail {
         })
     }
 
+    /// Returns the repository files Git considers part of the workbench.
+    /// Ignored files and `.git` internals stay out of the explorer without a
+    /// second ignore-file implementation.
+    pub fn workspace_files(&self) -> GitResult<Vec<PathBuf>> {
+        self.paths([
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "-z",
+        ])
+    }
+
     pub fn diff(&self, path: &Path, staged: bool) -> GitResult<Vec<u8>> {
         validate_path(path)?;
         let mut arguments = vec![
@@ -912,6 +925,32 @@ mod tests {
         assert!(!hunks[0].patch().windows(6).any(|value| value == b"+seven"));
         assert_eq!(hunks[0].navigation_lines(), Some((1, 2)));
         assert_eq!(hunks[1].navigation_lines(), Some((6, 8)));
+    }
+
+    #[test]
+    fn workspace_files_include_tracked_and_untracked_but_not_ignored_paths() {
+        let root = repository();
+        fs::write(root.join(".gitignore"), "ignored/\n").expect("write ignore file");
+        fs::write(root.join("tracked.rs"), "fn tracked() {}\n").expect("write tracked file");
+        fs::write(root.join("new.ts"), "export const value = 1;\n").expect("write new file");
+        fs::create_dir(root.join("ignored")).expect("create ignored directory");
+        fs::write(root.join("ignored/cache.bin"), "private\n").expect("write ignored file");
+        assert!(
+            Command::new("git")
+                .args(["add", ".gitignore", "tracked.rs"])
+                .current_dir(&root)
+                .status()
+                .expect("stage fixture")
+                .success()
+        );
+
+        let files = GitRail::open(&root)
+            .expect("open rail")
+            .workspace_files()
+            .expect("list workbench files");
+        assert!(files.contains(&PathBuf::from("tracked.rs")));
+        assert!(files.contains(&PathBuf::from("new.ts")));
+        assert!(!files.contains(&PathBuf::from("ignored/cache.bin")));
     }
 
     #[test]

@@ -33,7 +33,9 @@ newer, and Pi 0.80.6. From a clean checkout:
 Preparation fetches one pinned Helix revision, applies Lantern's audited patch
 set, builds the locked Rust workspace, and installs the locked semantic worker.
 Pi authentication remains private; start `pi`, use `/login`, and choose OpenAI
-Codex before launching Lantern. See
+Codex before launching Lantern. Every developer uses their own Pi-managed
+OpenAI identity; Lantern does not bundle or share an API key, read the resulting
+credential, or fall back to another provider. See
 [the frontend guide](frontend/helix/README.md) for the complete interaction.
 
 The supported macOS install and upgrade path is:
