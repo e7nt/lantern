@@ -55,6 +55,11 @@ three maintained environments: Linux, Apple Silicon macOS, and Intel macOS.
 - The downloaded 482,048,273-byte arm64 and 484,980,447-byte x86_64 archives
   match their generated SHA-256 digests and contain one architecture-specific
   top-level directory each.
+- The first public install acceptance exposed Homebrew attempting to rewrite a
+  vendored Python extension with an intentionally compact Mach-O header. The
+  formula now keeps the native semantic vendor tree archived during Homebrew's
+  linkage pass and extracts it in `post_install`, preserving the released
+  runtime without disabling linkage checks for the rest of the keg.
 
 ## Required evidence before the first tag
 
